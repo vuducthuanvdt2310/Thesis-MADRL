@@ -1,4 +1,5 @@
 import time
+import os
 import numpy as np
 from functools import reduce
 import torch
@@ -25,8 +26,20 @@ class CRunner(Runner):
         best_reward = float('-inf')
         best_bw = []
         record = 0
+        start_episode = 0
 
-        for episode in range(episodes):
+        # Load training state if available and model_dir is set
+        if self.model_dir is not None:
+            state_path = os.path.join(self.model_dir, 'training_state.pt')
+            if os.path.exists(state_path):
+                state = torch.load(state_path)
+                start_episode = state.get('episode', 0)
+                best_reward = state.get('best_reward', float('-inf'))
+                best_bw = state.get('best_bw', [])
+                record = state.get('record', 0)
+                print(f"Resuming training from episode {start_episode} with best reward {best_reward}")
+
+        for episode in range(start_episode, episodes):
             
             if episode % self.eval_interval == 0 and self.use_eval:
                 re, bw_res = self.eval()
@@ -34,6 +47,14 @@ class CRunner(Runner):
                 print("Eval average reward: ", re, " Eval ordering fluctuation measurement (downstream to upstream): ", bw_res)
                 if(re > best_reward and episode > 0):
                     self.save()
+                    # Save training state
+                    training_state = {
+                        'episode': episode,
+                        'best_reward': best_reward,
+                        'best_bw': best_bw,
+                        'record': record
+                    }
+                    torch.save(training_state, os.path.join(self.save_dir, "training_state.pt"))
                     print("A better model is saved!")
                     best_reward = re
                     best_bw = bw_res

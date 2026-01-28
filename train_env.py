@@ -23,6 +23,18 @@ def parse_args(args, parser):
 if __name__ == "__main__":
     parser = get_config()
     all_args = parse_args(sys.argv[1:], parser)
+    
+    # --- Manual Configuration for Resuming Training ---
+    # Set this path to your saved model directory to resume training.
+    # Example: "results/MyEnv/Ineventory Management/happo/check/run_seed_1/models"
+    # Leave as None or empty string "" to start training from scratch.
+    RESUME_MODEL_DIR = None  # Set to None to start from scratch, or set to a valid model directory path to resume 
+    
+    if RESUME_MODEL_DIR:
+        all_args.model_dir = RESUME_MODEL_DIR
+        print(f"Manually configured to resume from: {all_args.model_dir}")
+    # --------------------------------------------------
+
     seeds = all_args.seed
 
     print("all config: ", all_args)
@@ -42,8 +54,7 @@ if __name__ == "__main__":
     for seed in seeds:
         print("-------------------------------------------------Training starts for seed: " + str(seed)+ "---------------------------------------------------")
 
-        run_dir = Path(os.path.split(os.path.dirname(os.path.abspath(__file__)))[
-                        0] + "/results") / all_args.env_name / all_args.scenario_name / all_args.algorithm_name / all_args.experiment_name
+        run_dir = Path(os.path.dirname(os.path.abspath(__file__))) / "results" / all_args.env_name / all_args.scenario_name / all_args.algorithm_name / all_args.experiment_name
         if not run_dir.exists():
             os.makedirs(str(run_dir))
 

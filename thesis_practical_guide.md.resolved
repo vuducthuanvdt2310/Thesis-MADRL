@@ -1,0 +1,974 @@
+# 🎓 THESIS PRACTICAL GUIDE: Running Experiments on Multi-Echelon Inventory
+
+**Your Role:** PhD Student conducting experiments  
+**Your Goal:** Run this code, understand it academically, and modify it for thesis experiments
+
+---
+
+## **AREA 1: The "Brain" vs. "World" Map (Code Structure)** 🗺️
+
+### **📍 The ENVIRONMENT (The "World" - Supply Chain Simulation)**
+
+**Primary File:** [envs/serial.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/serial.py) (for 3-stage supply chain)  
+**Alternative:** [envs/net_2x3.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/net_2x3.py) (for 6-stage network)
+
+**Key Methods to Know:**
+- [__init__()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/generator.py#9-41) - Initializes the supply chain
+- [reset()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/serial.py#100-128) - Starts a new episode (200 time steps)
+- **[step(actions)](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/serial.py#129-148)** ⭐ - **MOST IMPORTANT!** This is where the magic happens:
+  - Takes agent actions as input
+  - Updates inventory, processes orders, calculates costs
+  - Returns: observations, rewards, done flags, info
+
+**Location:** Lines 78-339 in [envs/serial.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/serial.py)
+
+**Evidence it's a Gym Environment:**
+```python
+class Env(object):  # Line 78
+    def reset(self, train=True, normalize=True):  # Line 100
+    def step(self, actions, one_hot=True):  # Line 129
+```
+
+---
+
+### **🧠 The AGENT (The "Brain" - RL Algorithm)**
+
+**Algorithm Used:** **HAPPO** (Heterogeneous-Agent Proximal Policy Optimization)
+
+**Key Files:**
+1. **[algorithms/happo_policy.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_policy.py)** - The policy (brain)
+   - Contains Actor (decision maker) and Critic (quality judge)
+   - Wraps neural networks together
+   
+2. **[algorithms/happo_trainer.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_trainer.py)** - The learning mechanism
+   - Implements PPO updates
+   - Calculates gradients and updates weights
+   - **Lines 174-225**: [train()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/base_runner.py#126-159) method - where learning happens
+   
+3. **[algorithms/actor_critic.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/actor_critic.py)** - Neural network architecture
+   - Actor: Maps observations → actions
+   - Critic: Maps observations → value predictions
+
+**The Learning Flow:**
+```
+Observation → Actor Network → Action Probabilities → Sample Action
+Observation → Critic Network → Value Prediction
+(Action + Reward + Value) → HAPPO Trainer → Updated Networks
+```
+
+---
+
+### **🏃 The RUNNER (The "Main" Script - Ties Everything Together)**
+
+**PRIMARY ENTRY POINT:** [train_env.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/train_env.py) ⭐⭐⭐
+
+**What it does:**
+```python
+# Line 24-25: Load configuration
+parser = get_config()
+all_args = parse_args(sys.argv[1:], parser)
+
+# Line 30-40: Setup GPU/CPU
+device = torch.device("cuda:0") or torch.device("cpu")
+
+# Line 68-69: Create environments
+envs = make_train_env(all_args)
+eval_envs = make_eval_env(all_args)
+
+# Line 82-83: Start training
+runner = Runner(config)
+reward, bw = runner.run()
+```
+
+**Secondary Runner:** [runners/separated/runner.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py)
+- Contains the main training loop
+- **Line 16-132**: [run()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py#16-133) method orchestrates everything
+- Handles: data collection, training, evaluation, model saving
+
+---
+
+## **AREA 2: The "Execution Guide" (How to Run This)** 🚀
+
+### **STEP 1: Install Dependencies**
+
+**Check [requirements.txt](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/requirements.txt):**
+```
+numpy==1.23.4
+torch==1.13.0
+absl-py==1.3.0
+gym==0.26.2
+tensorboardX==2.5.1
+```
+
+**🔧 Installation Command:**
+```bash
+# Navigate to the project directory first
+cd d:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management
+
+# Install all dependencies
+pip install -r requirements.txt
+```
+
+**⚠️ Potential Issues:**
+- **Python Version:** This code requires **Python 3.8**
+- **PyTorch GPU:** If you have NVIDIA GPU, install CUDA-compatible PyTorch:
+  ```bash
+  pip install torch==1.13.0+cu117 --index-url https://download.pytorch.org/whl/cu117
+  ```
+- **Windows Path Issues:** If installation fails, try:
+  ```bash
+  pip install --upgrade pip
+  pip install -r requirements.txt --no-cache-dir
+  ```
+
+---
+
+### **STEP 2: Training Command (Full Training Run)**
+
+**🎯 BASIC COMMAND (Recommended for First Run):**
+```bash
+python train_env.py
+```
+
+**That's it!** All parameters use sensible defaults from [config.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/config.py).
+
+**📊 What You'll See:**
+```
+choose to use gpu...
+-------------------------------------------------Training starts for seed: 0---------------------------------------------------
+share_observation_space:  [Box(...)]
+observation_space:  [Box(...)]
+action_space:  [Discrete(21), Discrete(21), Discrete(21)]
+
+Eval average reward:  -517.68  Eval ordering fluctuation measurement:  [0.50, 0.19, 0.11]
+
+ Algo happo Exp check updates 0/3000 episodes, total num timesteps 1000/3000000.0, FPS 28.
+
+Reward for thread 1: [-215.07, -76.78, -83.41] -125.09  Inventory: [8.0, 48.0, 31.0]
+```
+
+**⏱️ Training Duration:**
+- **GPU:** 2-4 hours for 3 million steps
+- **CPU:** 10-15 hours
+
+---
+
+### **🔬 QUICK TEST (For Development/Debugging):**
+
+**Modify the config for faster testing:**
+
+**Option A: Command-line override**
+```bash
+python train_env.py --num_env_steps 10000 --eval_interval 10
+```
+
+**Option B: Edit [config.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/config.py) temporarily**
+Open [config.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/config.py), find line 42-43:
+```python
+# BEFORE (Full training):
+parser.add_argument("--num_env_steps", type=int, default=300e4)
+
+# AFTER (Quick test - 10k steps):
+parser.add_argument("--num_env_steps", type=int, default=10000)
+```
+
+**Other Useful Test Arguments:**
+```bash
+# Run on CPU instead of GPU
+python train_env.py --cuda False
+
+# Change experiment name (organizes results)
+python train_env.py --experiment_name "test_run_1"
+
+# Train with fewer parallel environments (uses less RAM)
+python train_env.py --n_rollout_threads 2
+```
+
+---
+
+### **STEP 3: Testing/Evaluation Command**
+
+**❌ NO SEPARATE TEST SCRIPT!**
+
+This code **automatically evaluates during training** every 5 episodes (controlled by `--eval_interval 5`).
+
+**To test a saved model manually:**
+
+**You'll need to modify the code slightly.** Here's how:
+
+1. **Open [train_env.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/train_env.py)**
+2. **Find line 82-83:**
+   ```python
+   runner = Runner(config)
+   reward, bw = runner.run()
+   ```
+3. **Add before `runner.run()`:**
+   ```python
+   # Load saved model
+   if all_args.model_dir is not None:
+       runner.restore()
+   ```
+4. **Run with model path:**
+   ```bash
+   python train_env.py --model_dir "../results/MyEnv/Ineventory Management/happo/check/run_seed_1/models" --use_eval True --n_eval_rollout_threads 10
+   ```
+
+**🎯 Better Solution:** Use the evaluation episodes that automatically run during training. The best model is saved automatically!
+
+---
+
+### **🚨 PATH HAZARDS (Files with Hardcoded Paths)**
+
+**CRITICAL FILES TO CHECK:**
+
+#### **1. [envs/serial.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/serial.py) - Line 27-29**
+```python
+# CURRENT HARDCODED PATH:
+if(MERTON_DEMAND):
+    EVAL_PTH = "./test_data/test_demand_merton/"  # ← RELATIVE PATH (OKAY)
+else:
+    EVAL_PTH = "./test_data/test_demand_stationary/"
+```
+
+**✅ Status:** Uses **relative paths** - should work on any machine  
+**⚠️ BUT:** Must run from project root directory!
+
+**How to Fix if Broken:**
+```python
+# Use absolute path:
+EVAL_PTH = "d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/test_data/test_demand_merton/"
+```
+
+#### **2. [train_env.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/train_env.py) - Line 45-46**
+```python
+# Results save location:
+run_dir = Path(os.path.split(os.path.dirname(os.path.abspath(__file__)))[0] + "/results")
+```
+
+**✅ Status:** Dynamically constructed - creates `../results` folder  
+**⚠️ Warning:** Results saved OUTSIDE project folder at:
+```
+d:\thuan\thesis\results\MyEnv\Ineventory Management\happo\check\run_seed_1\
+```
+
+**How to Change Results Location:**
+```python
+# Edit line 45-46:
+run_dir = Path("d:/thuan/thesis/my_experiment_results")  # Custom location
+```
+
+#### **3. [envs/net_2x3.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/net_2x3.py) - Line 30**
+```python
+EVAL_PTH = "./test_data/test_demand_net/"  # ← RELATIVE PATH
+```
+
+**✅ Status:** Relative path (okay)
+
+---
+
+### **📋 PRE-FLIGHT CHECKLIST:**
+
+Before running, verify:
+- [ ] You're in the correct directory: `d:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management`
+- [ ] Python 3.8 installed: `python --version`
+- [ ] Dependencies installed: `pip list | grep torch`
+- [ ] Test data exists: `dir test_data\test_demand_merton`
+- [ ] Enough disk space: ~1GB for results
+
+---
+
+## **AREA 3: Academic Methodology** 📚
+
+### **The `step()` Function - Academic Breakdown**
+
+**Location:** `envs/serial.py`, Lines 129-147
+
+---
+
+### **🔍 STATE SPACE (What the AI Sees)**
+
+Each agent observes **7 values** (defined by `OBS_DIM = LEAD_TIME + 3 = 7`):
+
+**For Agent i (at each time step):**
+
+**Code Location:** `envs/serial.py`, Lines 229-255 (`get_step_obs`)
+
+**Observation Vector:**
+```python
+# Line 241-243 (Agent 0 - Retailer):
+obs_0 = [
+    self.inventory[0],           # Current inventory level
+    self.backlog[0],             # Unfulfilled demand (backorders)
+    self.demand_list[step-1],    # Last period's customer demand
+    self.order[0][0],            # Pipeline order t-4 (oldest)
+    self.order[0][1],            # Pipeline order t-3
+    self.order[0][2],            # Pipeline order t-2
+    self.order[0][3]             # Pipeline order t-1 (newest)
+]
+
+# Line 249-251 (Agents 1,2 - Distributor, Manufacturer):
+obs_i = [
+    self.inventory[i],           # Current inventory level
+    self.backlog[i],             # Unfulfilled orders from downstream
+    action[i-1],                 # Order received from downstream agent
+    self.order[i][0],            # Pipeline order t-4
+    self.order[i][1],            # Pipeline order t-3
+    self.order[i][2],            # Pipeline order t-2
+    self.order[i][3]             # Pipeline order t-1
+]
+```
+
+**📊 Normalized Values:**
+```python
+# Line 241: All values divided by (ACTION_DIM - 1) = 20
+obs_normalized = obs / 20.0  # Scales to [0, 1] range approximately
+```
+
+**For Your Thesis:**
+> "Each agent observes a 7-dimensional state vector consisting of current inventory level, backlog quantity, downstream demand or orders, and four periods of pipeline inventory (orders in transit with a 4-period lead time). States are normalized to the range [0,1] by dividing by the maximum action value."
+
+---
+
+### **🎬 ACTION SPACE (What Decisions Can Be Made)**
+
+**Code Location:** `envs/serial.py`, Line 20
+
+```python
+ACTION_DIM = 21  # Line 20
+```
+
+**Discrete Action Space:**
+- Each agent can order: **0, 1, 2, 3, ..., 19, or 20 units**
+- Total of **21 possible actions**
+- PyTorch outputs action probabilities, then samples or takes argmax
+
+**Action Processing:**
+```python
+# Line 132-136 in step():
+if(one_hot):
+    action_ = [np.argmax(i) for i in actions]  # Convert one-hot to integer
+else:
+    action_ = actions  # Use directly
+
+action = self.action_map(action_)  # Maps to actual order quantities
+```
+
+**For Your Thesis:**
+> "Agents select ordering quantities from a discrete action space A = {0, 1, 2, ..., 20}, representing the number of units to order from the upstream supplier each period."
+
+---
+
+### **💰 REWARD FUNCTION (The Success Formula)**
+
+**⭐ MOST IMPORTANT FOR YOUR THESIS!**
+
+**Code Location:** `envs/serial.py`, Lines 276-323 (`state_update` method)
+
+**The Core Reward Formula (Line 321):**
+
+```python
+reward = - self.inventory[i]*H[i] - self.backlog[i]*B[i] - ordering_cost - fixed_cost
+```
+
+**Breaking It Down:**
+
+#### **Component 1: Holding Cost**
+```python
+- self.inventory[i] * H[i]
+```
+- **Penalty for storing inventory**
+- `H[i]` = Holding cost coefficient (Line 14: `H = [1, 1, 1, 1, 1]`)
+- Higher inventory → More negative reward
+- **Rationale:** Storage has costs (warehouse rent, spoilage)
+
+#### **Component 2: Backlog Cost (Stockout Penalty)**
+```python
+- self.backlog[i] * B[i]
+```
+- **Penalty for NOT having enough stock**
+- `B[i]` = Backlog cost coefficient (Line 15: `B = [1, 1, 1, 1, 1]`)
+- Unfulfilled orders → Angry customers → More negative reward
+- **Rationale:** Lost sales, customer dissatisfaction
+
+#### **Component 3: Ordering Cost (Optional)**
+```python
+# Lines 311-314:
+if(PRICE_DISCOUNT):
+    ordering_cost = DISCOUNT[int(action[i]/5)] * C[i] * action[i]
+else:
+    ordering_cost = 0  # DEFAULT: No ordering cost
+```
+- **Cost per unit ordered**
+- Can enable quantity discounts (order more = lower unit price)
+- **Default:** DISABLED (`PRICE_DISCOUNT = False`, Line 34)
+
+#### **Component 4: Fixed Cost (Optional)**
+```python
+# Lines 316-319:
+if(FIXED_COST and actual_order > 0):
+    fixed_cost = F_C  # F_C = 5 (Line 39)
+else:
+    fixed_cost = 0  # DEFAULT
+```
+- **One-time cost per order** (like delivery fee)
+- Encourages larger, less frequent orders
+- **Default:** DISABLED (`FIXED_COST = False`, Line 38)
+
+---
+
+### **📐 Complete Reward Formula (For Your Thesis):**
+
+**Standard Version (Current Settings):**
+```
+r_t^i = -I_t^i × h_i - B_t^i × b_i
+```
+
+Where:
+- `r_t^i` = Reward for agent i at time t
+- `I_t^i` = Inventory level (non-negative)
+- `B_t^i` = Backlog quantity (unfulfilled orders)
+- `h_i` = Holding cost coefficient = 1
+- `b_i` = Backlog cost coefficient = 1
+
+**Extended Version (All Features Enabled):**
+```
+r_t^i = -I_t^i × h_i - B_t^i × b_i - c_i × a_t^i × d(a_t^i) - f_i × 𝟙(a_t^i > 0)
+```
+
+Where:
+- `c_i × a_t^i × d(a_t^i)` = Variable ordering cost with quantity discount
+- `f_i × 𝟙(a_t^i > 0)` = Fixed ordering cost (indicator function)
+
+**Processed Reward (Line 270):**
+```python
+processed_reward = ALPHA * individual_reward + (1-ALPHA) * mean_reward
+```
+- `ALPHA = 0.5` (Line 23)
+- **Meaning:** 50% individual cost + 50% team average
+- **Purpose:** Balance individual vs cooperative behavior
+
+---
+
+### **🎯 Optimization Objective:**
+
+**For Your Thesis:**
+> "The multi-agent system aims to maximize the cumulative discounted reward over a 200-period horizon:
+> 
+> J = E[Σ_{t=0}^{199} γ^t × Σ_{i=1}^{3} r_t^i]
+> 
+> where γ = 0.95 is the discount factor (config.py, line 133). The reward function penalizes both excess inventory (holding costs) and stock shortages (backlog costs), creating a trade-off between overstocking and understocking."
+
+---
+
+## **AREA 4: The "Improvement Zone" (For Experiments)** 🔬
+
+This is where you'll spend most of your thesis time! Here's EXACTLY where to make changes.
+
+---
+
+### **🎛️ EXPERIMENT TYPE 1: Improve Learning (Hyperparameters)**
+
+**File:** `config.py`
+
+**Key Hyperparameters to Tune:**
+
+#### **1. Learning Rate**
+```python
+# Line 97-100:
+parser.add_argument("--lr", type=float, default=1e-4)
+parser.add_argument("--critic_lr", type=float, default=1e-4)
+```
+**What it does:** Controls how fast the AI learns  
+**Typical range:** 1e-5 to 1e-3  
+**For thesis:** Test: `[1e-5, 5e-5, 1e-4, 5e-4, 1e-3]`
+
+#### **2. Discount Factor (γ)**
+```python
+# Line 133:
+parser.add_argument("--gamma", type=float, default=0.95)
+```
+**What it does:** How much to value future rewards  
+**Typical range:** 0.90 to 0.99  
+**For thesis:** Test: `[0.90, 0.95, 0.99]`
+
+#### **3. GAE Lambda (λ)**
+```python
+# Line 135:
+parser.add_argument("--gae_lambda", type=float, default=0.95)
+```
+**What it does:** Bias-variance trade-off in advantage estimation  
+**Typical range:** 0.90 to 1.0  
+
+#### **4. Entropy Coefficient**
+```python
+# Line 123-124:
+parser.add_argument("--entropy_coef", type=float, default=0.01)
+```
+**What it does:** Encourages exploration (randomness)  
+**Higher = more exploration**  
+**For thesis:** Test: `[0.001, 0.01, 0.05]`
+
+#### **5. PPO Epochs**
+```python
+# Line 115-116:
+parser.add_argument("--ppo_epoch", type=int, default=15)
+```
+**What it does:** How many times to update on same data  
+**Typical range:** 5 to 20  
+
+#### **6. Neural Network Size**
+```python
+# Line 69-72:
+parser.add_argument("--hidden_size", type=int, default=128)
+parser.add_argument("--layer_N", type=int, default=2)
+```
+**What it does:** Brain capacity  
+**For thesis:** Test: `hidden_size=[64, 128, 256]`
+
+---
+
+### **💰 EXPERIMENT TYPE 2: Change Behavior (Reward Engineering)**
+
+**File:** `envs/serial.py`
+
+**The specific line to edit:** **Line 321**
+
+**Current:**
+```python
+reward = - self.inventory[i]*H[i] - self.backlog[i]*B[i] - ordering_cost - fixed_cost
+```
+
+#### **Scenario A: Agent is "scared of stockouts"**
+
+**Problem:** Agent orders too much (excess inventory)  
+**Solution:** INCREASE backlog penalty
+
+**Edit Lines 14-15:**
+```python
+# BEFORE:
+H = [1, 1, 1, 1, 1]  # Holding cost
+B = [1, 1, 1, 1, 1]  # Backlog cost
+
+# AFTER (Makes stockouts 4x worse):
+H = [1, 1, 1, 1, 1]  # Holding cost (unchanged)
+B = [4, 4, 4, 4, 4]  # Backlog cost (increased)
+```
+
+**For Your Thesis:**
+> "To investigate risk-averse behavior, we increased the backlog penalty coefficient from b=1 to b=4, making stockouts four times more costly than holding inventory."
+
+#### **Scenario B: Agent orders too frequently (small batches)**
+
+**Problem:** Too many small orders → high transaction costs  
+**Solution:** Enable FIXED COST
+
+**Edit Lines 38-39:**
+```python
+# BEFORE:
+FIXED_COST = False
+F_C = 5
+
+# AFTER:
+FIXED_COST = True   # Enable fixed cost
+F_C = 10            # Increase if needed
+```
+
+**This will penalize EVERY order with -10 reward!**
+
+#### **Scenario C: Different costs at different stages**
+
+**Edit Lines 14-15 to make it realistic:**
+```python
+# More realistic supply chain costs:
+H = [1, 0.5, 0.3]  # Holding cost: Retailer > Distributor > Manufacturer
+B = [5, 3, 1]      # Backlog cost: Customer-facing has highest penalty
+```
+
+**Why?**
+- Retailers face customers directly → high stockout cost
+- Manufacturers have space → low holding cost
+
+---
+
+### **📈 EXPERIMENT TYPE 3: Change Environment Difficulty**
+
+**File:** `envs/serial.py`, Lines 1-40
+
+#### **Make Supply Chain HARDER:**
+
+**1. Increase Lead Time (Longer Delays)**
+```python
+# Line 18:
+LEAD_TIME = 4  # Default
+
+# HARDER:
+LEAD_TIME = 6  # Takes 6 periods to receive orders
+```
+**Impact:** Harder to plan, need more safety stock
+
+**2. Increase Demand Variability**
+```python
+# Line 74 (in get_training_data):
+demand_list = generator.merton(EPISODE_LEN, ACTION_DIM-1)
+
+# HARDER: Increase max_demand
+demand_list = generator.merton(EPISODE_LEN, max_demand=30)  # Default is 20
+```
+
+**3. Add Random Shipping Loss**
+```python
+# Line 31-32:
+RANDOM_SHIPPING_LOSS = False  # Default
+LOST_RATE = 0.1
+
+# HARDER:
+RANDOM_SHIPPING_LOSS = True   # Enable losses
+LOST_RATE = 0.2              # 20% of shipments lost!
+```
+
+**4. Change Number of Stages**
+```python
+# Line 19:
+LEVEL_NUM = 3  # Default: Retailer, Distributor, Manufacturer
+
+# HARDER (requires more coordination):
+LEVEL_NUM = 5  # Add more intermediate stages
+
+# WARNING: Must also update:
+# - config.py: --num_agents to 5
+# - H and B lists to have 5 elements
+```
+
+#### **Make Supply Chain EASIER:**
+
+**1. Reduce Lead Time**
+```python
+LEAD_TIME = 2  # Faster delivery
+```
+
+**2. Use Stationary Demand (Simpler)**
+```python
+# Line 25:
+MERTON_DEMAND = False  # Use simple Poisson demand
+```
+
+**3. Increase Action Space (More Flexibility)**
+```python
+# Line 20:
+ACTION_DIM = 41  # Can order 0-40 units instead of 0-20
+```
+
+---
+
+### **🔬 SUGGESTED ABLATION STUDY FOR THESIS:**
+
+**Experiment 1: Impact of Cost Ratios**
+Test different `B/H` ratios:
+- Low: `B=1, H=1` (balanced)
+- Medium: `B=2, H=1` (stockouts 2x worse)
+- High: `B=5, H=1` (stockouts 5x worse)
+
+**Hypothesis:** Higher penalty ratios lead to higher average inventory levels.
+
+**Experiment 2: Lead Time Sensitivity**
+Test: `LEAD_TIME = [2, 4, 6, 8]`
+
+**Hypothesis:** Performance degrades as lead time increases.
+
+**Experiment 3: Centralized vs Decentralized**
+Modify Line 270 to test different `ALPHA` values:
+- `ALPHA=1.0`: Fully independent (selfish agents)
+- `ALPHA=0.5`: Mix (current)
+- `ALPHA=0.0`: Fully cooperative (team reward)
+
+---
+
+## **AREA 5: Outputs & Validation** 📊
+
+### **🗂️ Saved Files (Where to Find Your Results)**
+
+**Results Location:**
+```
+d:\thuan\results\MyEnv\Ineventory Management\happo\check\run_seed_1\
+```
+
+**Directory Structure:**
+```
+run_seed_1/
+├── models/                      ← Trained models saved here
+│   ├── actor_agent0.pt         ← Actor for Agent 0 (Retailer)
+│   ├── actor_agent1.pt         ← Actor for Agent 1 (Distributor)
+│   ├── actor_agent2.pt         ← Actor for Agent 2 (Manufacturer)
+│   ├── critic_agent0.pt        ← Critic for Agent 0
+│   ├── critic_agent1.pt        ← Critic for Agent 1
+│   └── critic_agent2.pt        ← Critic for Agent 2
+└── logs/                        ← Training logs
+    └── events.out.tfevents.*   ← TensorBoard log file
+```
+
+**Parent Directory:**
+```
+results/MyEnv/Ineventory Management/happo/check/
+└── seed_results.txt            ← Final results summary
+```
+
+**What's in `seed_results.txt`:**
+```
+0 -245.67 0.45 0.23 0.12
+1 -238.91 0.42 0.21 0.11
+...
+```
+Format: `seed_id  average_reward  bullwhip_agent0  bullwhip_agent1  bullwhip_agent2`
+
+---
+
+### **📈 Visualization (Creating Graphs)**
+
+**❌ NO BUILT-IN PLOTTING CODE**
+
+But you have **TensorBoard logs**! Here's how to visualize:
+
+#### **Method 1: TensorBoard (Easiest)**
+
+```bash
+# Navigate to results directory
+cd d:\thuan\results\MyEnv\Ineventory Management\happo\check\run_seed_1
+
+# Launch TensorBoard
+tensorboard --logdir=./logs
+
+# Open browser to: http://localhost:6006
+```
+
+**What You'll See:**
+- Average reward over time
+- Loss curves (actor, critic)
+- Entropy (exploration level)
+
+#### **Method 2: Manual Plotting (For Thesis Figures)**
+
+**Create this script:** `plot_results.py`
+
+```python
+import re
+import matplotlib.pyplot as plt
+import numpy as np
+
+# Parse seed_results.txt
+results_file = "d:/thuan/results/MyEnv/Ineventory Management/happo/check/seed_results.txt"
+
+seeds = []
+rewards = []
+bullwhip = []
+
+with open(results_file, 'r') as f:
+    for line in f:
+        parts = line.strip().split()
+        seeds.append(int(parts[0]))
+        rewards.append(float(parts[1]))
+        bullwhip.append([float(parts[2]), float(parts[3]), float(parts[4])])
+
+# Plot 1: Average Reward per Seed
+plt.figure(figsize=(10, 5))
+plt.bar(seeds, rewards)
+plt.xlabel('Random Seed')
+plt.ylabel('Average Reward')
+plt.title('Performance Across Different Seeds')
+plt.savefig('reward_comparison.png', dpi=300)
+plt.show()
+
+# Plot 2: Bullwhip Effect
+bullwhip_array = np.array(bullwhip)
+plt.figure(figsize=(10, 5))
+plt.plot(seeds, bullwhip_array[:, 0], label='Retailer', marker='o')
+plt.plot(seeds, bullwhip_array[:, 1], label='Distributor', marker='s')
+plt.plot(seeds, bullwhip_array[:, 2], label='Manufacturer', marker='^')
+plt.xlabel('Random Seed')
+plt.ylabel('Order Variance Coefficient')
+plt.title('Bullwhip Effect Measurement')
+plt.legend()
+plt.savefig('bullwhip_analysis.png', dpi=300)
+plt.show()
+
+print(f"Mean Reward: {np.mean(rewards):.2f} ± {np.std(rewards):.2f}")
+print(f"Best Seed: {seeds[np.argmax(rewards)]} with reward {max(rewards):.2f}")
+```
+
+**Run it:**
+```bash
+python plot_results.py
+```
+
+#### **Method 3: Extract Training Curves from Console Output**
+
+The training prints rewards during execution. You can **redirect output to a file**:
+
+```bash
+python train_env.py > training_log.txt 2>&1
+```
+
+Then parse `training_log.txt` with Python:
+
+```python
+import re
+import matplotlib.pyplot as plt
+
+log_file = "training_log.txt"
+rewards = []
+
+with open(log_file, 'r') as f:
+    for line in f:
+        # Find lines like: "Reward for thread 1: [-215.07, -76.78, -83.41] -125.09"
+        match = re.search(r'] ([-\d.]+)  Inventory', line)
+        if match:
+            rewards.append(float(match.group(1)))
+
+# Plot
+plt.plot(rewards)
+plt.xlabel('Episode')
+plt.ylabel('Average Reward')
+plt.title('Training Progress')
+plt.savefig('training_curve.png', dpi=300)
+plt.show()
+```
+
+---
+
+### **✅ Validation Checklist for Your Thesis:**
+
+**After training completes, verify:**
+
+1. **Model Saved?**
+   ```bash
+   dir d:\thuan\results\MyEnv\...\run_seed_1\models\
+   # Should see 6 .pt files
+   ```
+
+2. **Results Recorded?**
+   ```bash
+   type d:\thuan\results\MyEnv\...\seed_results.txt
+   # Should see one line per seed
+   ```
+
+3. **Training Completed?**
+   Look for in console:
+   ```
+   Training finished because of no imporvement for 10 evaluations
+   ```
+   OR it reaches 3 million steps
+
+4. **Reasonable Performance?**
+   - Average reward should improve over time
+   - Final reward should be negative (it's cost)
+   - Typical range: -500 to -100 (lower magnitude = better)
+
+5. **Bullwhip Effect Calculated?**
+   - Should be between 0 and 1
+   - Lower = less variance (better coordination)
+
+---
+
+## **FINAL CHECK: Tech Stack Currency** 🔍
+
+**Is this code "standard" for 2024/2025 research?**
+
+### **✅ MODERN & ACCEPTABLE:**
+
+1. **PyTorch (1.13.0)** - ✅ Industry standard
+   - Current version: 2.1+ (as of 2024)
+   - Version 1.13 is **acceptable** for research (released 2022)
+   - Recommendation: Can upgrade to 1.13+ safely
+
+2. **HAPPO Algorithm** - ✅ State-of-the-art
+   - Published: 2021 (fairly recent)
+   - Still competitive for multi-agent RL
+   - Cited in many 2023-2024 papers
+
+3. **OpenAI Gym (0.26.2)** - ⚠️ **DEPRECATED BUT FUNCTIONAL**
+   - Gym is being replaced by **Gymnasium**
+   - For thesis work: **Fine to use as-is**
+   - Note this in limitations: "Uses Gym 0.26.2 (pre-Gymnasium fork)"
+
+### **❌ OUTDATED (But Not Critical):**
+
+1. **No Stable-Baselines3** - Custom implementation
+   - **Good:** Shows deep understanding
+   - **Bad:** Harder to compare with benchmarks
+   
+2. **No Wandb/MLflow** - Basic logging only
+   - Can add yourself for better experiment tracking
+
+---
+
+### **📊 Comparison to Standard Libraries:**
+
+**This code is:**
+- ✅ **Custom implementation** of HAPPO (NOT using Ray RLlib or Stable-Baselines)
+- ✅ Research-grade quality
+- ✅ Published in academic paper (SSRN)
+- ⚠️ Not using latest frameworks (but this is OKAY for thesis)
+
+**For your thesis defense:**
+> "We implement the Heterogeneous-Agent Proximal Policy Optimization (HAPPO) algorithm from scratch using PyTorch 1.13, following the methodology of Kuba et al. (2021). While more recent frameworks like Ray RLlib exist, our custom implementation allows for domain-specific customization of the supply chain environment and reward structure."
+
+**Recommendations for Thesis:**
+
+1. **Cite the original HAPPO paper:**
+   ```
+   Kuba, J. G., Chen, R., Wen, M., Wen, Y., Sun, F., Wang, J., & Yang, Y. (2021).
+   Trust region policy optimisation in multi-agent reinforcement learning.
+   arXiv preprint arXiv:2109.11251.
+   ```
+
+2. **Compare to baselines:**
+   - Run with independent learning (set `use_centralized_V=False`)
+   - Compare to simple heuristics (e.g., base-stock policy)
+
+3. **Acknowledge limitations:**
+   - Gym (not Gymnasium)
+   - Manual hyperparameter tuning
+   - No distributed training
+
+---
+
+## **🎓 QUICK REFERENCE CARD (Print This!)**
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ THESIS QUICK REFERENCE                                       │
+├─────────────────────────────────────────────────────────────┤
+│ START TRAINING:                                              │
+│   cd d:\thuan\thesis\Multi-Agent-...-Management              │
+│   python train_env.py                                        │
+│                                                              │
+│ QUICK TEST (10k steps):                                      │
+│   python train_env.py --num_env_steps 10000                  │
+│                                                              │
+│ MODIFY COSTS (make stockouts worse):                         │
+│   Edit: envs/serial.py, Line 15                             │
+│   Change: B = [4, 4, 4, 4, 4]                               │
+│                                                              │
+│ MODIFY LEARNING RATE:                                        │
+│   Edit: config.py, Line 97                                  │
+│   Change: default=5e-4                                      │
+│                                                              │
+│ RESULTS LOCATION:                                            │
+│   d:\thuan\results\MyEnv\...\run_seed_1\models\             │
+│                                                              │
+│ VISUALIZE:                                                   │
+│   tensorboard --logdir=d:\thuan\results\...\logs            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+**Your next steps:**
+1. ✅ Install dependencies
+2. ✅ Run quick test (10k steps, ~10 minutes)
+3. ✅ Verify it works
+4. ✅ Plan your experiments (which hyperparameters to test?)
+5. ✅ Run full training runs
+6. ✅ Analyze results
+7. ✅ Write thesis! 🎓
+
+Good luck with your research! You've got a solid codebase to work with.

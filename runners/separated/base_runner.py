@@ -161,23 +161,36 @@ class Runner(object):
         for agent_id in range(self.num_agents):
             if self.use_single_network:
                 policy_model = self.trainer[agent_id].policy.model
-                torch.save(policy_model.state_dict(), str(self.save_dir) + "/model_agent" + str(agent_id) + ".pt")
+                torch.save(policy_model.state_dict(), os.path.join(self.save_dir, "model_agent" + str(agent_id) + ".pt"))
             else:
                 policy_actor = self.trainer[agent_id].policy.actor
-                torch.save(policy_actor.state_dict(), str(self.save_dir) + "/actor_agent" + str(agent_id) + ".pt")
+                torch.save(policy_actor.state_dict(), os.path.join(self.save_dir, "actor_agent" + str(agent_id) + ".pt"))
                 policy_critic = self.trainer[agent_id].policy.critic
-                torch.save(policy_critic.state_dict(), str(self.save_dir) + "/critic_agent" + str(agent_id) + ".pt")
+                torch.save(policy_critic.state_dict(), os.path.join(self.save_dir, "critic_agent" + str(agent_id) + ".pt"))
+                if self.trainer[agent_id].policy.actor_optimizer is not None:
+                    torch.save(self.trainer[agent_id].policy.actor_optimizer.state_dict(), os.path.join(self.save_dir, "actor_optimizer_agent" + str(agent_id) + ".pt"))
+                if self.trainer[agent_id].policy.critic_optimizer is not None:
+                    torch.save(self.trainer[agent_id].policy.critic_optimizer.state_dict(), os.path.join(self.save_dir, "critic_optimizer_agent" + str(agent_id) + ".pt"))
 
     def restore(self):
         for agent_id in range(self.num_agents):
             if self.use_single_network:
-                policy_model_state_dict = torch.load(str(self.model_dir) + '/model_agent' + str(agent_id) + '.pt')
+                policy_model_state_dict = torch.load(os.path.join(self.model_dir, 'model_agent' + str(agent_id) + '.pt'))
                 self.policy[agent_id].model.load_state_dict(policy_model_state_dict)
             else:
-                policy_actor_state_dict = torch.load(str(self.model_dir) + '/actor_agent' + str(agent_id) + '.pt')
+                policy_actor_state_dict = torch.load(os.path.join(self.model_dir, 'actor_agent' + str(agent_id) + '.pt'))
                 self.policy[agent_id].actor.load_state_dict(policy_actor_state_dict)
-                policy_critic_state_dict = torch.load(str(self.model_dir) + '/critic_agent' + str(agent_id) + '.pt')
+                policy_critic_state_dict = torch.load(os.path.join(self.model_dir, 'critic_agent' + str(agent_id) + '.pt'))
                 self.policy[agent_id].critic.load_state_dict(policy_critic_state_dict)
+                
+                # Check for and load optimizer states if they exist
+                actor_opt_path = os.path.join(self.model_dir, 'actor_optimizer_agent' + str(agent_id) + '.pt')
+                critic_opt_path = os.path.join(self.model_dir, 'critic_optimizer_agent' + str(agent_id) + '.pt')
+                
+                if os.path.exists(actor_opt_path):
+                    self.policy[agent_id].actor_optimizer.load_state_dict(torch.load(actor_opt_path))
+                if os.path.exists(critic_opt_path):
+                    self.policy[agent_id].critic_optimizer.load_state_dict(torch.load(critic_opt_path))
 
     def log_train(self, train_infos, total_num_steps): 
         for agent_id in range(self.num_agents):

@@ -1,0 +1,55 @@
+# Multi-SKU Multi-Echelon Inventory Environment Configuration
+
+environment:
+  n_skus: 3  # Number of stock-keeping units (products)
+  n_agents: 3  # Number of supply chain echelons (Retailer, Distributor, Manufacturer)
+  max_days: 365  # Length of simulation episode
+  
+  lead_time:
+    distribution: "uniform"  # Distribution type: uniform, deterministic
+    min: 2  # Minimum lead time (days)
+    max: 5  # Maximum lead time (days)
+  
+  data_sources:
+    demand_file: "data/demand_history.csv"  # Path to demand CSV
+    price_file: "data/price_history.csv"  # Path to price CSV
+    use_synthetic: true  # If true, generate synthetic data; if false, load from CSV
+
+# Cost parameters (3 agents × 3 SKUs matrices)
+costs:
+  # Holding cost per unit per day
+  holding_cost: 
+    - [1.0, 0.8, 1.2]  # Retailer: SKU0, SKU1, SKU2
+    - [0.9, 0.7, 1.0]  # Distributor
+    - [0.8, 0.6, 0.9]  # Manufacturer
+  
+  # Backlog (stockout) cost per unit per day
+  backlog_cost:
+    - [5.0, 4.0, 6.0]  # Higher penalty for SKU2 at Retailer
+    - [4.0, 3.0, 5.0]  # Distributor
+    - [3.0, 2.0, 4.0]  # Manufacturer
+  
+  # Fixed ordering cost (one-time fee per order, regardless of quantity)
+  fixed_order_cost:
+    - [2.0, 2.0, 2.0]  # Retailer
+    - [3.0, 3.0, 3.0]  # Distributor
+    - [5.0, 5.0, 5.0]  # Manufacturer
+
+# Pricing parameters
+pricing:
+  # Base procurement price per SKU
+  base_price: [10.0, 7.0, 15.0]
+  
+  # Price bounds (for clipping)
+  min_price: [5.0, 3.0, 8.0]
+  max_price: [20.0, 15.0, 30.0]
+  
+  # Price volatility (std dev of random fluctuations)
+  volatility: 0.1  # ±10% typical variation
+
+# Normalization bounds for observations
+normalization:
+  max_inventory: 100  # Maximum inventory level for normalization
+  max_backlog: 50     # Maximum backlog for normalization
+  max_pipeline: 150   # Maximum pipeline inventory for normalization
+  max_demand: 50      # Maximum demand for normalization
