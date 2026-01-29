@@ -1,0 +1,228 @@
+#!/usr/bin/env python
+"""
+Training script for Multi-DC 2-Echelon Inventory Environment with HAPPO
+
+This script trains a Multi-Agent RL model on the multi-DC environment using HAPPO algorithm.
+Models are saved automatically during training.
+"""
+
+import sys
+import os
+import socket
+import numpy as np
+from pathlib import Path
+import torch
+from config import get_config
+from envs.env_wrappers import SubprocVecEnvMultiDC, DummyVecEnvMultiDC
+from runners.separated.runner import CRunner as Runner
+
+def make_train_env(all_args):
+    """Create parallel training environments for multi-DC."""
+    return SubprocVecEnvMultiDC(all_args)
+
+def make_eval_env(all_args):
+    """Create single evaluation environment for multi-DC."""
+    return DummyVecEnvMultiDC(all_args)
+
+def parse_args(args, parser):
+    all_args = parser.parse_known_args(args)[0]
+    return all_args
+
+
+if __name__ == "__main__":
+    parser = get_config()
+    all_args = parse_args(sys.argv[1:], parser)
+    
+    # ================================================================
+    # DEFAULT CONFIGURATION FOR FULL TRAINING
+    # These values are set as defaults so you can just press "Run"
+    # ================================================================
+    
+    # Environment Configuration
+    all_args.env_name = "MultiDC"
+    all_args.scenario_name = "inventory_2echelon"
+    all_args.num_agents = 5  # 2 DCs + 3 Retailers
+    all_args.episode_length = 365  # Days per episode
+    
+    # Training Configuration
+    # num_env_steps = number of episodes × episode_length
+    # For 10,000 episodes: 10,000 × 365 = 3,650,000
+    all_args.num_env_steps = 365000  # Total training steps
+    all_args.n_rollout_threads = 12   # INCREASED: Parallel environments for speed
+    all_args.n_training_threads = 1   # Set to 1 to avoid CPU contention
+    all_args.algorithm_name = "happo"
+    all_args.experiment_name = "full_training"
+    
+    # Model Saving
+    # Note: Models are automatically saved whenever the evaluation reward
+    # is better than the previous best record.
+    # See runners/separated/runner.py for implementation.
+    # all_args.save_interval is NOT used.
+    
+    # Evaluation
+    all_args.use_eval = True
+    all_args.n_eval_rollout_threads = 1
+    all_args.eval_interval = 500  # INCREASED: Evaluate less frequent to save time
+    all_args.eval_episodes = 5
+    
+    # Logging
+    all_args.log_interval = 10  # Print to console every 10 episodes
+    
+    # ================================================================
+    # PARAMETER EXPLANATIONS:
+    # ================================================================
+    # --algorithm_name happo
+    #   → HAPPO = Heterogeneous-Agent Proximal Policy Optimization
+    #   → Best for environments with different agent types (DCs vs Retailers)
+    #
+    # --experiment_name full_training
+    #   → Name to identify this training run
+    #   → Results saved to: results/MultiDC/inventory_2echelon/happo/full_training/
+    #
+    # --num_env_steps 3650000
+    #   → Total training steps = 10,000 episodes × 365 days
+    #   → Expected training time: ~3-4 hours
+    #
+    # --episode_length 365
+    #   → Each episode simulates 1 year (365 days)
+    #   → Matches your data file length
+    #
+    # --n_rollout_threads 5
+    #   → Runs 5 parallel environments simultaneously
+    #   → 5x faster than single environment
+    #   → Effective throughput: ~9,000 episodes/hour
+    #
+    # --save_interval (Unused)
+    #   → This parameter is NOT used.
+    #   → Models are saved automatically when evaluation reward improves.
+    #   → Checkpoints: "A better model is saved!" will appear in logs.
+    #   → Locations: results/.../models/actor_agentN.pt
+    #
+    # --use_eval True
+    #   → Enables periodic evaluation during training
+    #   → Helps track performance without noise from exploration
+    #
+    # --eval_interval 250
+    #   → Runs evaluation every 250 episodes
+    #   → 40 evaluation runs total over 10,000 episodes
+    #
+    # --log_interval 10
+    #   → Prints progress to console every 10 episodes
+    #   → Helps monitor training in real-time
+    # ================================================================
+    
+    # --- Resume Training (Optional) ---
+    # Set this path to resume from a saved checkpoint
+    RESUME_MODEL_DIR = None
+    
+    if RESUME_MODEL_DIR:
+        all_args.model_dir = RESUME_MODEL_DIR
+        print(f"Resuming from: {all_args.model_dir}")
+    # --------------------------------------------------
+
+    seeds = all_args.seed
+
+    print("="*70)
+    print("Multi-DC 2-Echelon Inventory Training")
+    print("="*70)
+    print(f"Environment: {all_args.env_name}")
+    print(f"Scenario: {all_args.scenario_name}")
+    print(f"Algorithm: {all_args.algorithm_name}")
+    print(f"Agents: {all_args.num_agents} (2 DCs + 3 Retailers)")
+    print(f"Parallel envs: {all_args.n_rollout_threads}")
+    print(f"Episode length: {all_args.episode_length}")
+    print(f"Total steps: {all_args.num_env_steps:,}")
+    print("="*70)
+    
+    # CUDA
+    if all_args.cuda and torch.cuda.is_available():
+        print("Using GPU for training...")
+        device = torch.device("cuda:0")
+        torch.set_num_threads(all_args.n_training_threads)
+        if all_args.cuda_deterministic:
+            torch.backends.cudnn.benchmark = False
+            torch.backends.cudnn.deterministic = True
+    else:
+        print("Using CPU for training...")
+        device = torch.device("cpu")
+        torch.set_num_threads(all_args.n_training_threads)
+
+    for seed in seeds:
+        print(f"\n{'='*70}")
+        print(f"Training starts for seed: {seed}")
+        print(f"{'='*70}\n")
+
+        # Create run directory
+        run_dir = Path(os.path.dirname(os.path.abspath(__file__))) / "results" / all_args.env_name / all_args.scenario_name / all_args.algorithm_name / all_args.experiment_name
+        if not run_dir.exists():
+            os.makedirs(str(run_dir))
+
+        curr_run = 'run_seed_%i' % (seed + 1)
+
+        seed_res_record_file = run_dir / "seed_results.txt"
+        
+        run_dir = run_dir / curr_run
+        if not run_dir.exists():
+            os.makedirs(str(run_dir))
+        
+        # Create models directory for saving
+        models_dir = run_dir / "models"
+        if not models_dir.exists():
+            os.makedirs(str(models_dir))
+        
+        print(f"Results will be saved to: {run_dir}")
+        print(f"Models will be saved to: {models_dir}\n")
+
+        if not os.path.exists(seed_res_record_file):
+            open(seed_res_record_file, 'a+')
+
+        # Set seeds
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        np.random.seed(seed)
+
+        # Create environments
+        print("Creating training environments...")
+        envs = make_train_env(all_args)
+        eval_envs = make_eval_env(all_args) if all_args.use_eval else None
+        num_agents = all_args.num_agents
+        
+        print(f"Environments created: {envs.num_envs} parallel envs")
+        print(f"Agents per env: {num_agents}")
+        print(f"Observation spaces: DCs=27D, Retailers=42D")
+        print(f"Action spaces: DCs=3D continuous, Retailers=6D continuous\n")
+
+        config = {
+            "all_args": all_args,
+            "envs": envs,
+            "eval_envs": eval_envs,
+            "num_agents": num_agents,
+            "device": device,
+            "run_dir": run_dir
+        }
+
+        # Run training
+        print("Starting training...\n")
+        runner = Runner(config)
+        reward, bw = runner.run()
+
+        # Save final results
+        with open(seed_res_record_file, 'a+') as f:
+            f.write(str(seed) + ' ' + str(reward) + ' ')
+            for fluc in bw:
+                f.write(str(fluc) + ' ')
+            f.write('\n')
+
+        print(f"\n{'='*70}")
+        print(f"Training completed for seed {seed}")
+        print(f"Final reward: {reward}")
+        print(f"{'='*70}\n")
+
+        # Close environments
+        envs.close()
+        if all_args.use_eval and eval_envs is not envs:
+            eval_envs.close()
+    
+    print("\n" + "="*70)
+    print("All training runs completed!")
+    print("="*70)

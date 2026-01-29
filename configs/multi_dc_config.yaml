@@ -1,0 +1,61 @@
+# Multi-DC 2-Echelon Inventory Environment Configuration
+
+environment:
+  n_skus: 3  # Number of products
+  max_days: 365  # Episode length
+  
+  lead_time:
+    distribution: "uniform"
+    min: 7
+    max: 14
+
+# Cost parameters
+costs:
+  # DC Costs (2 DCs × 3 SKUs)
+  holding_cost_dc:
+    - [0.8, 0.6, 0.9]  # DC_0: SKU0, SKU1, SKU2
+    - [0.7, 0.5, 0.8]  # DC_1
+
+  backlog_cost_dc:
+    - [3.0, 2.5, 4.0]  # DC_0
+    - [3.0, 2.5, 4.0]  # DC_1
+  
+  fixed_order_cost_dc:
+    - [5.0, 5.0, 5.0]  # DC_0 (ordering from supplier)
+    - [5.0, 5.0, 5.0]  # DC_1
+  
+  # Retailer Costs (3 Retailers × 3 SKUs)
+  holding_cost_retailer:
+    - [1.0, 0.8, 1.2]  # Retailer_0
+    - [0.9, 0.7, 1.0]  # Retailer_1  
+    - [1.1, 0.9, 1.3]  # Retailer_2
+  
+  backlog_cost_retailer:
+    - [5.0, 4.0, 6.0]  # Retailer_0
+    - [4.5, 3.5, 5.5]  # Retailer_1
+    - [5.5, 4.5, 6.5]  # Retailer_2
+  
+  fixed_order_cost_retailer:
+    - [2.0, 2.0, 2.0]  # Retailer_0
+    - [2.0, 2.0, 2.0]  # Retailer_1
+    - [2.0, 2.0, 2.0]  # Retailer_2
+  
+  # Variable costs for ordering from DCs
+  # Shape: (n_retailers, n_dcs, n_skus)
+  variable_cost_retailer:
+    # Retailer_0
+    - [ [3.0, 2.5, 4.0],  # Costs from DC_0
+        [3.2, 2.7, 4.2] ] # Costs from DC_1 (slightly higher)
+    # Retailer_1
+    - [ [3.5, 3.0, 4.5],  # Costs from DC_0
+        [3.0, 2.5, 4.0] ] # Costs from DC_1 (cheaper for R1)
+    # Retailer_2
+    - [ [3.0, 2.5, 4.0],  # Costs from DC_0
+        [3.5, 3.0, 4.5] ] # Costs from DC_1 (more expensive for R2)
+
+# Market Pricing (for DC orders from supplier)
+pricing:
+  base_price: [10.0, 8.0, 15.0]  # Base prices per SKU
+  min_price: [6.0, 4.0, 10.0]    # Price floor
+  max_price: [18.0, 14.0, 25.0]  # Price ceiling
+  volatility: 0.15  # ±15% typical variation

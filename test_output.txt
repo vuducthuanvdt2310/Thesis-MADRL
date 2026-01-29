@@ -1,0 +1,77 @@
+﻿======================================================================
+Minimal Training Test (10 episodes)
+======================================================================
+
+[1] Creating environments...
+[MultiDCEnv] Initialized: 2 DCs, 3 Retailers, 3 SKUs
+python : Traceback (most 
+recent call last):
+At line:1 char:1
++ python 
+test_train_minimal.py 2>&1 
+| Out-File -Encoding utf8 
+test_outp ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~
+    + CategoryInfo          
+    : NotSpecified: (Trace  
+  back (most recent call    
+ last)::String) [], Remo    
+teException
+    + FullyQualifiedErrorId 
+    : NativeCommandError
+ 
+  File "D:\thuan\thesis\Mult
+i-Agent-Deep-Reinforcement-L
+earning-on-Multi-Echelon-Inv
+entory-Management\test_train
+_minimal.py", line 44, in 
+<module>
+    print(f"    \u2713 
+Created {envs.num_envs} 
+parallel environment(s)")
+  File "C:\Users\DELL\AppDat
+a\Local\Programs\Python\Pyth
+on312\Lib\encodings\cp1252.p
+y", line 19, in encode
+    return codecs.charmap_en
+code(input,self.errors,encod
+ing_table)[0]
+           ^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^
+UnicodeEncodeError: 
+'charmap' codec can't 
+encode character '\u2713' 
+in position 4: character 
+maps to <undefined>
+
+During handling of the 
+above exception, another 
+exception occurred:
+
+Traceback (most recent call 
+last):
+  File "D:\thuan\thesis\Mult
+i-Agent-Deep-Reinforcement-L
+earning-on-Multi-Echelon-Inv
+entory-Management\test_train
+_minimal.py", line 79, in 
+<module>
+    print(f"\n\u2717 Error 
+occurred:")
+  File "C:\Users\DELL\AppDat
+a\Local\Programs\Python\Pyth
+on312\Lib\encodings\cp1252.p
+y", line 19, in encode
+    return codecs.charmap_en
+code(input,self.errors,encod
+ing_table)[0]
+           ^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^
+UnicodeEncodeError: 
+'charmap' codec can't 
+encode character '\u2717' 
+in position 2: character 
+maps to <undefined>
