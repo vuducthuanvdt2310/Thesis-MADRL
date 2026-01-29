@@ -31,42 +31,29 @@ def parse_args(args, parser):
 
 if __name__ == "__main__":
     parser = get_config()
-    all_args = parse_args(sys.argv[1:], parser)
-    
     # ================================================================
     # DEFAULT CONFIGURATION FOR FULL TRAINING
-    # These values are set as defaults so you can just press "Run"
+    # These values are set as defaults but CAN be overridden by command line args
+    # e.g., python train_multi_dc.py --experiment_name test_run
     # ================================================================
+    parser.set_defaults(
+        env_name="MultiDC",
+        scenario_name="inventory_2echelon",
+        num_agents=5,        # 2 DCs + 3 Retailers
+        episode_length=365,  # Days per episode
+        num_env_steps=365000, # Total training steps
+        n_rollout_threads=12, # Parallel environments
+        n_training_threads=1, # Training threads
+        algorithm_name="happo",
+        experiment_name="full_training",
+        use_eval=True,
+        n_eval_rollout_threads=1,
+        eval_interval=500,
+        eval_episodes=5,
+        log_interval=10
+    )
     
-    # Environment Configuration
-    all_args.env_name = "MultiDC"
-    all_args.scenario_name = "inventory_2echelon"
-    all_args.num_agents = 5  # 2 DCs + 3 Retailers
-    all_args.episode_length = 365  # Days per episode
-    
-    # Training Configuration
-    # num_env_steps = number of episodes × episode_length
-    # For 10,000 episodes: 10,000 × 365 = 3,650,000
-    all_args.num_env_steps = 365000  # Total training steps
-    all_args.n_rollout_threads = 12   # INCREASED: Parallel environments for speed
-    all_args.n_training_threads = 1   # Set to 1 to avoid CPU contention
-    all_args.algorithm_name = "happo"
-    all_args.experiment_name = "full_training"
-    
-    # Model Saving
-    # Note: Models are automatically saved whenever the evaluation reward
-    # is better than the previous best record.
-    # See runners/separated/runner.py for implementation.
-    # all_args.save_interval is NOT used.
-    
-    # Evaluation
-    all_args.use_eval = True
-    all_args.n_eval_rollout_threads = 1
-    all_args.eval_interval = 500  # INCREASED: Evaluate less frequent to save time
-    all_args.eval_episodes = 5
-    
-    # Logging
-    all_args.log_interval = 10  # Print to console every 10 episodes
+    all_args = parse_args(sys.argv[1:], parser)
     
     # ================================================================
     # PARAMETER EXPLANATIONS:
