@@ -7,8 +7,8 @@ environment:
   
   lead_time:
     distribution: "uniform"  # Distribution type: uniform, deterministic
-    min: 2  # Minimum lead time (days)
-    max: 5  # Maximum lead time (days)
+    min: 7  # Minimum lead time (days)
+    max: 14  # Maximum lead time (days)
   
   data_sources:
     demand_file: "data/demand_history.csv"  # Path to demand CSV
@@ -51,5 +51,5 @@ pricing:
 normalization:
   max_inventory: 100  # Maximum inventory level for normalization
   max_backlog: 50     # Maximum backlog for normalization
-  max_pipeline: 150   # Maximum pipeline inventory for normalization
+  max_pipeline: 300   # Maximum pipeline inventory for normalization (increased for 7-14 day LT)
   max_demand: 50      # Maximum demand for normalization

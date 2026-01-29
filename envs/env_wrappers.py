@@ -3,6 +3,7 @@ import gymnasium as gym
 from gymnasium import spaces
 #from envs.serial import Env
 from envs.net_2x3 import Env
+from envs.multi_dc_env import MultiDCInventoryEnv
 
 
 class MultiDiscrete(gym.Space):
@@ -216,3 +217,262 @@ class DummyVecEnv(object):
 
     def render(self, mode="rgb_array"):
         pass
+
+
+# ============================================================================
+# Multi-DC Environment Wrappers (for heterogeneous agents)
+# ============================================================================
+
+class SubprocVecEnvMultiDC(object):
+    """Vectorized environment wrapper for Multi-DC inventory environment."""
+    
+    def __init__(self, all_args):
+        """
+        Initialize parallel Multi-DC environments.
+        
+        Args:
+            all_args: Configuration arguments with n_rollout_threads
+        """
+        # Create parallel environments
+        self.env_list = [MultiDCInventoryEnv(config_path='configs/multi_dc_config.yaml') 
+                        for i in range(all_args.n_rollout_threads)]
+        self.num_envs = all_args.n_rollout_threads
+        
+        # Get environment properties from first env
+        self.num_agent = self.env_list[0].n_agents  # 5 agents
+        
+        # Multi-DC has heterogeneous agents - DCs vs Retailers
+        self.n_dcs = self.env_list[0].n_dcs  # 2
+        self.n_retailers = self.env_list[0].n_retailers  # 3
+        
+        # Note: This is continuous action space
+        self.discrete_action_space = False
+        self.discrete_action_input = False
+        self.force_discrete_action = False
+        
+        
+        # === UNIFORM ACTION SPACES (All agents 6D) ===
+        # DC agents: use first 3 dimensions, last 3 ignored
+        # Retailer agents: use all 6 dimensions
+        # This uniformity is required for HAPPO runner compatibility
+        
+        self.action_dim = 6  # Uniform for all agents
+        
+        # Initialize empty lists
+        self.action_space = []
+        self.observation_space = []
+        self.share_observation_space = []
+        
+        for agent_id in range(self.num_agent):
+            # Observations remain heterogeneous
+            if agent_id < self.n_dcs:
+                obs_dim = 27  # DC observation
+            else:
+                obs_dim = 42  # Retailer observation
+            
+            self.observation_space.append(
+                spaces.Box(low=0, high=1, shape=(obs_dim,), dtype=np.float32)
+            )
+            
+            # All agents have same 6D action space
+            self.action_space.append(
+                spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
+            )
+        # Shared observation space (concatenate all observations)
+        total_obs_dim = 27 * self.n_dcs + 42 * self.n_retailers  # 180
+        self.share_observation_space = [
+            spaces.Box(low=-np.inf, high=+np.inf, shape=(total_obs_dim,), dtype=np.float32)
+            for _ in range(self.num_agent)
+        ]
+    
+    def step(self, actions):
+        """
+        Step all parallel environments.
+        
+        Args:
+            actions: List of action dicts, one per parallel env
+                Each dict: {agent_id: action_array}
+        
+        Returns:
+            obs, rewards, dones, infos (all stacked)
+        """
+        results = []
+        for env, action_list in zip(self.env_list, actions):
+            # Convert list of actions to dict {agent_id: action_array}
+            action_dict = {agent_id: action_list[agent_id] for agent_id in range(self.num_agent)}
+            result = env.step(action_dict)
+            results.append(result)
+        
+        # Unpack results
+        obs, rews, dones, infos = zip(*results)
+        
+        # Convert to numpy arrays
+        # obs: list of dicts -> array of shape (n_envs, n_agents, obs_dim)
+        obs_arrays = []
+        rew_arrays = []
+        done_arrays = []
+        
+        for env_idx in range(self.num_envs):
+            env_obs = []
+            env_rews = []
+            env_dones = []
+            
+            for agent_id in range(self.num_agent):
+                env_obs.append(obs[env_idx][agent_id])
+                env_rews.append(rews[env_idx][agent_id])
+                env_dones.append(dones[env_idx][agent_id])
+            
+            obs_arrays.append(env_obs)
+            rew_arrays.append(env_rews)
+            done_arrays.append(env_dones)
+        
+        # Use dtype=object for heterogeneous agent observations
+        # Rewards need shape (n_envs, n_agents, 1) for buffer
+        rewards_reshaped = np.expand_dims(np.array(rew_arrays), axis=-1)
+        return np.array(obs_arrays, dtype=object), rewards_reshaped, np.array(done_arrays), infos
+    
+    def reset(self):
+        """Reset all parallel environments."""
+        obs_list = [env.reset() for env in self.env_list]
+        
+        # Convert dict observations to arrays
+        obs_arrays = []
+        for env_obs_dict in obs_list:
+            env_obs = [env_obs_dict[agent_id] for agent_id in range(self.num_agent)]
+            obs_arrays.append(env_obs)
+        
+        # Use dtype=object for heterogeneous agent observations
+        return np.array(obs_arrays, dtype=object), None
+    
+    def close(self):
+        """Close all environments."""
+        pass
+    
+    def render(self, mode="rgb_array"):
+        """Render (no-op for this environment)."""
+        pass
+    
+    def get_property(self):
+        """Get environment properties (inventory, demand, orders)."""
+        # Convert inventory from dict {agent_id: np.array(n_skus)} 
+        # to dict {agent_id: total_inventory} for logging
+        inv = []
+        for env in self.env_list:
+            # Sum inventory across SKUs for each agent
+            inv_dict = {agent_id: np.sum(inv_array) for agent_id, inv_array in env.inventory.items()}
+            inv.append(inv_dict)
+        
+        # Multi-DC tracks actions internally, not as separate orders/demand
+        # Return dictionaries with agent_id keys for logging compatibility
+        demand = [{agent_id: 0 for agent_id in range(self.num_agent)} for env in self.env_list]
+        orders = [{agent_id: 0 for agent_id in range(self.num_agent)} for env in self.env_list]
+        return inv, demand, orders
+    
+    def get_eval_num(self):
+        """Return number of evaluation metrics (for compatibility)."""
+        # Multi-DC doesn't have specific eval metrics like original env
+        # Return 0 to indicate no special evaluation metrics
+        return 0
+    
+    def get_eval_bw_res(self):
+        """Return evaluation bullwhip results (for compatibility)."""
+        # Multi-DC doesn't track bullwhip effect in same way
+        # Return empty list for compatibility
+        return []
+
+
+class DummyVecEnvMultiDC(object):
+    """Single (non-parallel) environment wrapper for Multi-DC."""
+    
+    def __init__(self, all_args):
+        """Initialize single Multi-DC environment for evaluation."""
+        self.env_list = [MultiDCInventoryEnv(config_path='configs/multi_dc_config.yaml')]
+        self.num_envs = 1
+        
+        self.num_agent = self.env_list[0].n_agents
+        self.n_dcs = self.env_list[0].n_dcs
+        self.n_retailers = self.env_list[0].n_retailers
+        
+        self.discrete_action_space = False
+        self.discrete_action_input = False
+        self.force_discrete_action = False
+        
+        
+        # Configure spaces (uniform 6D actions)
+        self.action_space = []
+        self.observation_space = []
+        self.share_observation_space = []
+        
+        self.action_dim = 6  # Uniform for all agents
+        
+        for agent_id in range(self.num_agent):
+            # Heterogeneous observations
+            if agent_id < self.n_dcs:
+                obs_dim = 27
+            else:
+                obs_dim = 42
+            
+            self.observation_space.append(
+                spaces.Box(low=0, high=1, shape=(obs_dim,), dtype=np.float32)
+            )
+            # Uniform 6D actions
+            self.action_space.append(
+                spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
+            )
+        
+        total_obs_dim = 27 * self.n_dcs + 42 * self.n_retailers
+        self.share_observation_space = [
+            spaces.Box(low=-np.inf, high=+np.inf, shape=(total_obs_dim,), dtype=np.float32)
+            for _ in range(self.num_agent)
+        ]
+    
+    def step(self, actions):
+        """Step the single environment."""
+        env = self.env_list[0]
+        action_dict = actions[0]  # First (and only) env
+        
+        obs_dict, rew_dict, done_dict, info_dict = env.step(action_dict)
+        
+        # Convert to arrays
+        obs = [[obs_dict[i] for i in range(self.num_agent)]]
+        rews = [[rew_dict[i] for i in range(self.num_agent)]]
+        dones = [[done_dict[i] for i in range(self.num_agent)]]
+        
+        # Use dtype=object for heterogeneous observations
+        # Rewards need shape (n_envs, n_agents, 1) for buffer
+        rewards_reshaped = np.expand_dims(np.array(rews), axis=-1)
+        return np.array(obs, dtype=object), rewards_reshaped, np.array(dones), [info_dict]
+    
+    def reset(self):
+        """Reset the single environment."""
+        env = self.env_list[0]
+        obs_dict = env.reset()
+        
+        obs = [[obs_dict[i] for i in range(self.num_agent)]]
+        # Use dtype=object for heterogeneous observations
+        return np.array(obs, dtype=object), None
+    
+    def close(self):
+        """Close environment."""
+        pass
+    
+    def render(self, mode="rgb_array"):
+        """Render (no-op)."""
+        pass
+    
+    def get_property(self):
+        """Get environment properties."""
+        env = self.env_list[0]
+        inv = [env.inventory]
+        demand = [{}]
+        orders = [{}]
+        return inv, demand, orders
+    
+    def get_eval_num(self):
+        """Return number of evaluation metrics (for compatibility)."""
+        return 0
+    
+    def get_eval_bw_res(self):
+        """Return evaluation bullwhip results (for compatibility)."""
+        return []
+

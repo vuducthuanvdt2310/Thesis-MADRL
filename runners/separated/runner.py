@@ -145,7 +145,15 @@ class CRunner(Runner):
                     rew = [round(np.mean(l), 2) for l in rew]
                     inv = [round(np.mean(l), 2) for l in inv]
                     act = [round(np.mean(l), 2) for l in act]
-                    print("Reward for thread " + str(t+1) + ": " + str(rew) + " " + str(round(np.mean(rew),2))+"  Inventory: " + str(inv)+"  Order: " + str(act) + " Demand: " + str(np.mean(threads_demand[t], 0)))
+                    
+                    # Check if demand is dict-based (Multi-DC) or array-based (net_2x3)
+                    if len(threads_demand[t]) > 0 and isinstance(threads_demand[t][0], dict):
+                        # Multi-DC: demand is dict-based, skip detailed demand logging
+                        print("Reward for thread " + str(t+1) + ": " + str(rew) + " " + str(round(np.mean(rew),2))+"  Inventory: " + str(inv)+"  Order: " + str(act))
+                    else:
+                        # net_2x3: demand is array-based
+                        print("Reward for thread " + str(t+1) + ": " + str(rew) + " " + str(round(np.mean(rew),2))+"  Inventory: " + str(inv)+"  Order: " + str(act) + " Demand: " + str(np.mean(threads_demand[t], 0)))
+
                 rewards_log = []
                 inv_log = []
                 actions_log = []
@@ -168,7 +176,9 @@ class CRunner(Runner):
                 share_obs = np.array(list(obs[:, agent_id]))
             self.buffer[agent_id].share_obs[0] = share_obs.copy()
             self.buffer[agent_id].obs[0] = np.array(list(obs[:, agent_id])).copy()
-            self.buffer[agent_id].available_actions[0] = None
+            # Only set available_actions for discrete action spaces
+            if self.buffer[agent_id].available_actions is not None:
+                self.buffer[agent_id].available_actions[0] = None
 
     @torch.no_grad()
     def collect(self, step):
@@ -181,28 +191,40 @@ class CRunner(Runner):
 
         for agent_id in range(self.num_agents):
             self.trainer[agent_id].prep_rollout()
+            
+            # For continuous actions, available_actions is None
+            avail_actions = self.buffer[agent_id].available_actions[step] if self.buffer[agent_id].available_actions is not None else None
+            
             value, action, action_log_prob, rnn_state, rnn_state_critic \
                 = self.trainer[agent_id].policy.get_actions(self.buffer[agent_id].share_obs[step],
                                                 self.buffer[agent_id].obs[step],
                                                 self.buffer[agent_id].rnn_states[step],
                                                 self.buffer[agent_id].rnn_states_critic[step],
                                                 self.buffer[agent_id].masks[step],
-                                                self.buffer[agent_id].available_actions[step])
+                                                avail_actions)
 
             value_collector.append(_t2n(value))
             action_collector.append(_t2n(action))
 
-            if self.envs.action_space[agent_id].__class__.__name__ == 'MultiDiscrete':
+            # Handle different action space types
+            action_space_type = self.envs.action_space[agent_id].__class__.__name__
+            
+            if action_space_type == 'MultiDiscrete':
+                # Convert to one-hot for MultiDiscrete
                 for i in range(self.envs.action_space[agent_id].shape):
                     uc_action_env = np.eye(self.envs.action_space[agent_id].high[i] + 1)[action[:, i]]
                     if i == 0:
                         action_env = uc_action_env
                     else:
                         action_env = np.concatenate((action_env, uc_action_env), axis=1)
-            elif self.envs.action_space[agent_id].__class__.__name__ == 'Discrete':
+            elif action_space_type == 'Discrete':
+                # Convert to one-hot for Discrete
                 action_env = np.squeeze(np.eye(self.envs.action_space[agent_id].n)[action.cpu().detach()], 1)
+            elif action_space_type == 'Box':
+                # Continuous actions - pass through directly
+                action_env = action
             else:
-                raise NotImplementedError
+                raise NotImplementedError(f"Action space type {action_space_type} not supported")
             
             temp_actions_env.append(action_env)
 
@@ -290,17 +312,23 @@ class CRunner(Runner):
                     eval_rnn_states[:,agent_id]=_t2n(temp_rnn_state)
                     action = eval_actions.detach().cpu().numpy()
 
-                    if self.envs.action_space[agent_id].__class__.__name__ == 'MultiDiscrete':
+                    # Handle different action space types
+                    action_space_type = self.envs.action_space[agent_id].__class__.__name__
+                    
+                    if action_space_type == 'MultiDiscrete':
                         for i in range(self.envs.action_space[agent_id].shape):
                             uc_action_env = np.eye(self.envs.action_space[agent_id].high[i] + 1)[action[:, i]]
                             if i == 0:
                                 action_env = uc_action_env
                             else:
                                 action_env = np.concatenate((action_env, uc_action_env), axis=1)
-                    elif self.envs.action_space[agent_id].__class__.__name__ == 'Discrete':
+                    elif action_space_type == 'Discrete':
                         action_env = np.squeeze(np.eye(self.envs.action_space[agent_id].n)[action], 1)
+                    elif action_space_type == 'Box':
+                        # Continuous actions - pass through
+                        action_env = action
                     else:
-                        raise NotImplementedError
+                        raise NotImplementedError(f"Action space type {action_space_type} not supported")
 
                     temp_actions_env.append(action_env)
 

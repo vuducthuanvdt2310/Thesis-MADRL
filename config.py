@@ -82,6 +82,10 @@ def get_config():
                         default=True, help="Whether to use Orthogonal initialization for weights and 0 initialization for biases")
     parser.add_argument("--gain", type=float, 
                         default=0.01, help="The gain # of last action layer")
+    parser.add_argument("--std_x_coef", type=float,
+                        default=1.0, help="Coefficient for std in continuous action distribution")
+    parser.add_argument("--std_y_coef", type=float,
+                        default=0.5, help="Coefficient for std output in continuous action distribution")
 
     # recurrent parameters
     parser.add_argument("--use_naive_recurrent_policy", action='store_true',

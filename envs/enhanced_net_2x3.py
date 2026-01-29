@@ -65,11 +65,11 @@ class EnhancedMultiSKUEnv:
         self.max_demand = self.config['normalization']['max_demand']
         
         # Action/Observation space dimensions
-        # Observation: 24 values per agent (8 features × 3 SKUs)
-        #   - inventory (3), backlog (3), pipeline_next_day (3), 
-        #   - pipeline_2_to_3_days (3), pipeline_total (3), 
+        # Observation: 27 values per agent (9 features × 3 SKUs)
+        #   - inventory (3), backlog (3), pipeline_7_to_8_days (3), 
+        #   - pipeline_9_to_10_days (3), pipeline_11_to_14_days (3), pipeline_total (3),
         #   - current_price (3), price_ma (3), recent_demand (3)
-        self.obs_dim = self.n_skus * 8
+        self.obs_dim = self.n_skus * 9
         
         # Action: MultiDiscrete([21, 21, 21]) - order 0-20 units per SKU
         self.action_dim_per_sku = 21
@@ -358,11 +358,12 @@ class EnhancedMultiSKUEnv:
         """
         Build observations for all agents.
         
-        Observation structure (24 values per agent):
+        Observation structure (27 values per agent):
         - Inventory levels (3 SKUs)
         - Backlog levels (3 SKUs)
-        - Pipeline arriving next day (3 SKUs)
-        - Pipeline arriving in 2-3 days (3 SKUs)
+        - Pipeline arriving in 7-8 days (3 SKUs)
+        - Pipeline arriving in 9-10 days (3 SKUs)
+        - Pipeline arriving in 11-14 days (3 SKUs)
         - Total pipeline in transit (3 SKUs)
         - Current procurement prices (3 SKUs)
         - Price 5-day moving average (3 SKUs)
@@ -387,24 +388,34 @@ class EnhancedMultiSKUEnv:
                 obs.append(bl / self.max_backlog if self.normalize else bl)
             
             for sku in range(self.n_skus):
-                # 3. Pipeline arriving next day
-                next_day_arrivals = sum(
-                    order['qty'] for order in self.pipeline[agent_id]
-                    if order['sku'] == sku and order['arrival_day'] == self.current_day + 1
-                )
-                obs.append(next_day_arrivals / self.max_demand if self.normalize else next_day_arrivals)
-            
-            for sku in range(self.n_skus):
-                # 4. Pipeline arriving in 2-3 days
-                near_arrivals = sum(
+                # 3. Pipeline arriving in 7-8 days (short-term for 7-14 day LT)
+                short_term_arrivals = sum(
                     order['qty'] for order in self.pipeline[agent_id]
                     if order['sku'] == sku and 
-                    self.current_day + 2 <= order['arrival_day'] <= self.current_day + 3
+                    self.current_day + 7 <= order['arrival_day'] <= self.current_day + 8
                 )
-                obs.append(near_arrivals / self.max_demand if self.normalize else near_arrivals)
+                obs.append(short_term_arrivals / self.max_demand if self.normalize else short_term_arrivals)
             
             for sku in range(self.n_skus):
-                # 5. Total pipeline in transit
+                # 4. Pipeline arriving in 9-10 days (medium-term)
+                medium_term_arrivals = sum(
+                    order['qty'] for order in self.pipeline[agent_id]
+                    if order['sku'] == sku and 
+                    self.current_day + 9 <= order['arrival_day'] <= self.current_day + 10
+                )
+                obs.append(medium_term_arrivals / self.max_demand if self.normalize else medium_term_arrivals)
+            
+            for sku in range(self.n_skus):
+                # 5. Pipeline arriving in 11-14 days (long-term)
+                long_term_arrivals = sum(
+                    order['qty'] for order in self.pipeline[agent_id]
+                    if order['sku'] == sku and 
+                    self.current_day + 11 <= order['arrival_day'] <= self.current_day + 14
+                )
+                obs.append(long_term_arrivals / self.max_demand if self.normalize else long_term_arrivals)
+            
+            for sku in range(self.n_skus):
+                # 6. Total pipeline in transit
                 total_pipeline = sum(
                     order['qty'] for order in self.pipeline[agent_id]
                     if order['sku'] == sku
@@ -412,19 +423,19 @@ class EnhancedMultiSKUEnv:
                 obs.append(total_pipeline / self.max_pipeline if self.normalize else total_pipeline)
             
             for sku in range(self.n_skus):
-                # 6. Current price
+                # 7. Current price
                 price = self.current_prices[sku]
                 max_price = self.config['pricing']['max_price'][sku]
                 obs.append(price / max_price if self.normalize else price)
             
             for sku in range(self.n_skus):
-                # 7. Price moving average (5-day)
+                # 8. Price moving average (5-day)
                 price_ma = self._get_price_ma(sku, window=5)
                 max_price = self.config['pricing']['max_price'][sku]
                 obs.append(price_ma / max_price if self.normalize else price_ma)
             
             for sku in range(self.n_skus):
-                # 8. Recent demand average (3-day, only for retailer)
+                # 9. Recent demand average (3-day, only for retailer)
                 if agent_id == 0:  # Retailer observes demand
                     demand_avg = self._get_demand_avg(sku, window=3)
                 else:  # Upstream agents see 0 (or could see downstream backlog)
