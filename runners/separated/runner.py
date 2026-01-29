@@ -204,7 +204,8 @@ class CRunner(Runner):
                                                 avail_actions)
 
             value_collector.append(_t2n(value))
-            action_collector.append(_t2n(action))
+            action_numpy = _t2n(action)
+            action_collector.append(action_numpy)
 
             # Handle different action space types
             action_space_type = self.envs.action_space[agent_id].__class__.__name__
@@ -212,17 +213,17 @@ class CRunner(Runner):
             if action_space_type == 'MultiDiscrete':
                 # Convert to one-hot for MultiDiscrete
                 for i in range(self.envs.action_space[agent_id].shape):
-                    uc_action_env = np.eye(self.envs.action_space[agent_id].high[i] + 1)[action[:, i]]
+                    uc_action_env = np.eye(self.envs.action_space[agent_id].high[i] + 1)[action_numpy[:, i]]
                     if i == 0:
                         action_env = uc_action_env
                     else:
                         action_env = np.concatenate((action_env, uc_action_env), axis=1)
             elif action_space_type == 'Discrete':
                 # Convert to one-hot for Discrete
-                action_env = np.squeeze(np.eye(self.envs.action_space[agent_id].n)[action.cpu().detach()], 1)
+                action_env = np.squeeze(np.eye(self.envs.action_space[agent_id].n)[action_numpy], 1)
             elif action_space_type == 'Box':
                 # Continuous actions - pass through directly
-                action_env = action
+                action_env = action_numpy
             else:
                 raise NotImplementedError(f"Action space type {action_space_type} not supported")
             
