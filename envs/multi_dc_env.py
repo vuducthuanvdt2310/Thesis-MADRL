@@ -45,8 +45,13 @@ class MultiDCInventoryEnv:
         self.retailer_ids = list(range(self.n_dcs, self.n_agents))  # [2, 3, 4]
         
         # Lead time parameters
-        self.lt_min = self.config['environment']['lead_time']['min']
-        self.lt_max = self.config['environment']['lead_time']['max']
+        # Supplier → DC lead times
+        self.lt_supplier_to_dc_min = self.config['environment']['lead_time']['supplier_to_dc']['min']
+        self.lt_supplier_to_dc_max = self.config['environment']['lead_time']['supplier_to_dc']['max']
+        
+        # DC → Retailer lead times
+        self.lt_dc_to_retailer_min = self.config['environment']['lead_time']['dc_to_retailer']['min']
+        self.lt_dc_to_retailer_max = self.config['environment']['lead_time']['dc_to_retailer']['max']
         
         # Episode settings
         self.max_days = self.config['environment']['max_days']
@@ -317,10 +322,11 @@ class MultiDCInventoryEnv:
             retailer_id: Destination retailer
             sku: SKU index
             qty: Quantity to ship
-            lead_time_sample: If True, sample lead time Uniform[7,14]; else instant
+            lead_time_sample: If True, sample lead time from DC→Retailer distribution; else instant
         """
         if lead_time_sample:
-            lead_time = np.random.randint(self.lt_min, self.lt_max + 1)
+            # Use DC→Retailer lead time (typically 1 day in current config)
+            lead_time = np.random.randint(self.lt_dc_to_retailer_min, self.lt_dc_to_retailer_max + 1)
         else:
             lead_time = 0  # Instant
         
@@ -342,8 +348,8 @@ class MultiDCInventoryEnv:
                 order_qty = float(action[sku])  # Only access first 3 elements (SKU 0, 1, 2)
                 
                 if order_qty > 0:
-                    # Sample lead time from Uniform[7, 14]
-                    lead_time = np.random.randint(self.lt_min, self.lt_max + 1)
+                    # Sample lead time from supplier→DC distribution (Uniform[7, 14] in current config)
+                    lead_time = np.random.randint(self.lt_supplier_to_dc_min, self.lt_supplier_to_dc_max + 1)
                     arrival_day = self.current_day + lead_time
                     
                     # Add to DC pipeline
@@ -569,11 +575,11 @@ class MultiDCInventoryEnv:
         4. DC_1 inventory (visibility)
         5. DC_0 backlog (reliability signal)
         6. DC_1 backlog (reliability signal)
-        7-8. DC price indicators (if relevant)
-        9. Pipeline from DC_0 (7-8 days)
-        10. Pipeline from DC_1 (7-8 days)
-        11. Pipeline from DC_0 (9-10 days)
-        12. Pipeline from DC_1 (9-10 days)
+        7-8. DC variable cost indicators
+        9. Pipeline from DC_0 (arriving in 0-1 days)
+        10. Pipeline from DC_1 (arriving in 0-1 days)
+        11. Pipeline from DC_0 (arriving in 2+ days - edge cases)
+        12. Pipeline from DC_1 (arriving in 2+ days - edge cases)
         13. Total own pipeline
         14. Recent demand (3-day average)
         """
@@ -605,24 +611,26 @@ class MultiDCInventoryEnv:
             obs.append(cost_dc0 / 20.0)
             obs.append(cost_dc1 / 20.0)
             
-            # 9-12. Pipeline from each DC
-            pipeline_dc0_7_8 = sum(o['qty'] for o in self.pipeline[retailer_id]
+            # 9-12. Pipeline from each DC (updated for 1-day lead time)
+            # Bin 1: Arriving in 0-1 days (most relevant with 1-day DC→Retailer delivery)
+            pipeline_dc0_0_1 = sum(o['qty'] for o in self.pipeline[retailer_id]
                                   if o['sku'] == sku and o['source'] == 'DC_0' and
-                                  self.current_day + 7 <= o['arrival_day'] <= self.current_day + 8)
-            pipeline_dc1_7_8 = sum(o['qty'] for o in self.pipeline[retailer_id]
+                                  self.current_day <= o['arrival_day'] <= self.current_day + 1)
+            pipeline_dc1_0_1 = sum(o['qty'] for o in self.pipeline[retailer_id]
                                   if o['sku'] == sku and o['source'] == 'DC_1' and
-                                  self.current_day + 7 <= o['arrival_day'] <= self.current_day + 8)
-            pipeline_dc0_9_10 = sum(o['qty'] for o in self.pipeline[retailer_id]
-                                   if o['sku'] == sku and o['source'] == 'DC_0' and
-                                   self.current_day + 9 <= o['arrival_day'] <= self.current_day + 10)
-            pipeline_dc1_9_10 = sum(o['qty'] for o in self.pipeline[retailer_id]
-                                   if o['sku'] == sku and o['source'] == 'DC_1' and
-                                   self.current_day + 9 <= o['arrival_day'] <= self.current_day + 10)
+                                  self.current_day <= o['arrival_day'] <= self.current_day + 1)
+            # Bin 2: Arriving in 2+ days (edge cases only)
+            pipeline_dc0_2plus = sum(o['qty'] for o in self.pipeline[retailer_id]
+                                    if o['sku'] == sku and o['source'] == 'DC_0' and
+                                    o['arrival_day'] >= self.current_day + 2)
+            pipeline_dc1_2plus = sum(o['qty'] for o in self.pipeline[retailer_id]
+                                    if o['sku'] == sku and o['source'] == 'DC_1' and
+                                    o['arrival_day'] >= self.current_day + 2)
             
-            obs.append(pipeline_dc0_7_8 / 30.0)
-            obs.append(pipeline_dc1_7_8 / 30.0)
-            obs.append(pipeline_dc0_9_10 / 30.0)
-            obs.append(pipeline_dc1_9_10 / 30.0)
+            obs.append(pipeline_dc0_0_1 / 30.0)
+            obs.append(pipeline_dc1_0_1 / 30.0)
+            obs.append(pipeline_dc0_2plus / 30.0)
+            obs.append(pipeline_dc1_2plus / 30.0)
             
             # 13. Total own pipeline
             total_pipeline = sum(o['qty'] for o in self.pipeline[retailer_id] if o['sku'] == sku)
