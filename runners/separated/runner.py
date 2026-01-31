@@ -46,16 +46,16 @@ class CRunner(Runner):
                 print()
                 print("Eval average reward: ", re, " Eval ordering fluctuation measurement (downstream to upstream): ", bw_res)
                 if(re > best_reward and episode > 0):
-                    self.save()
+                    self.save(reward=re)
                     # Save training state
                     training_state = {
                         'episode': episode,
-                        'best_reward': best_reward,
-                        'best_bw': best_bw,
+                        'best_reward': re,  # Update to new reward
+                        'best_bw': bw_res,
                         'record': record
                     }
                     torch.save(training_state, os.path.join(self.save_dir, "training_state.pt"))
-                    print("A better model is saved!")
+                    print(f"✓ Better model saved! Reward: {re:.2f} (previous best: {best_reward:.2f})")
                     best_reward = re
                     best_bw = bw_res
                     record = 0
@@ -159,6 +159,13 @@ class CRunner(Runner):
                 actions_log = []
                 demand_log = []
             # eval
+        
+        # Training completed normally - return best results
+        print(f"\n{'='*70}")
+        print(f"Training completed successfully!")
+        print(f"Best reward achieved: {best_reward:.2f}")
+        print(f"{'='*70}\n")
+        return best_reward, best_bw
 
     def warmup(self):
         # reset env

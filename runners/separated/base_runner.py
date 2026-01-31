@@ -157,20 +157,23 @@ class Runner(object):
 
         return train_infos
 
-    def save(self):
+    def save(self, reward=None):
+        # Create reward suffix if provided
+        reward_suffix = f"_reward_{reward:.2f}" if reward is not None else ""
+        
         for agent_id in range(self.num_agents):
             if self.use_single_network:
                 policy_model = self.trainer[agent_id].policy.model
-                torch.save(policy_model.state_dict(), os.path.join(self.save_dir, "model_agent" + str(agent_id) + ".pt"))
+                torch.save(policy_model.state_dict(), os.path.join(self.save_dir, f"model_agent{agent_id}{reward_suffix}.pt"))
             else:
                 policy_actor = self.trainer[agent_id].policy.actor
-                torch.save(policy_actor.state_dict(), os.path.join(self.save_dir, "actor_agent" + str(agent_id) + ".pt"))
+                torch.save(policy_actor.state_dict(), os.path.join(self.save_dir, f"actor_agent{agent_id}{reward_suffix}.pt"))
                 policy_critic = self.trainer[agent_id].policy.critic
-                torch.save(policy_critic.state_dict(), os.path.join(self.save_dir, "critic_agent" + str(agent_id) + ".pt"))
+                torch.save(policy_critic.state_dict(), os.path.join(self.save_dir, f"critic_agent{agent_id}{reward_suffix}.pt"))
                 if self.trainer[agent_id].policy.actor_optimizer is not None:
-                    torch.save(self.trainer[agent_id].policy.actor_optimizer.state_dict(), os.path.join(self.save_dir, "actor_optimizer_agent" + str(agent_id) + ".pt"))
+                    torch.save(self.trainer[agent_id].policy.actor_optimizer.state_dict(), os.path.join(self.save_dir, f"actor_optimizer_agent{agent_id}{reward_suffix}.pt"))
                 if self.trainer[agent_id].policy.critic_optimizer is not None:
-                    torch.save(self.trainer[agent_id].policy.critic_optimizer.state_dict(), os.path.join(self.save_dir, "critic_optimizer_agent" + str(agent_id) + ".pt"))
+                    torch.save(self.trainer[agent_id].policy.critic_optimizer.state_dict(), os.path.join(self.save_dir, f"critic_optimizer_agent{agent_id}{reward_suffix}.pt"))
 
     def restore(self):
         for agent_id in range(self.num_agents):
