@@ -16,6 +16,35 @@ from config import get_config
 from envs.env_wrappers import SubprocVecEnvMultiDC, DummyVecEnvMultiDC
 from runners.separated.runner import CRunner as Runner
 
+# ================================================================
+# GOOGLE COLAB CONFIGURATION
+# ================================================================
+def is_running_in_colab():
+    """Check if the script is running in Google Colab."""
+    try:
+        import google.colab
+        return True
+    except ImportError:
+        return False
+
+def mount_google_drive():
+    """Mount Google Drive in Colab."""
+    try:
+        from google.colab import drive
+        drive.mount('/content/drive')
+        print("✓ Google Drive mounted successfully!")
+        return True
+    except Exception as e:
+        print(f"✗ Failed to mount Google Drive: {e}")
+        return False
+
+# Set this to True to force using Google Drive even if not in Colab
+USE_GOOGLE_DRIVE = False
+
+# Configure your Google Drive path here
+# Default: /content/drive/MyDrive/thesis_models
+GOOGLE_DRIVE_PATH = "/content/drive/MyDrive/thesis_models"
+
 def make_train_env(all_args):
     """Create parallel training environments for multi-DC."""
     return SubprocVecEnvMultiDC(all_args)
@@ -30,6 +59,34 @@ def parse_args(args, parser):
 
 
 if __name__ == "__main__":
+    # ================================================================
+    # GOOGLE DRIVE SETUP (for Google Colab)
+    # ================================================================
+    in_colab = is_running_in_colab()
+    use_gdrive = USE_GOOGLE_DRIVE or in_colab
+    
+    if use_gdrive:
+        print("="*70)
+        print("Google Colab Environment Detected")
+        print("="*70)
+        if in_colab:
+            mount_success = mount_google_drive()
+            if not mount_success:
+                print("WARNING: Continuing without Google Drive. Models will be saved locally.")
+                use_gdrive = False
+        print()
+    
+    # Set base directory for saving models
+    if use_gdrive:
+        BASE_SAVE_DIR = Path(GOOGLE_DRIVE_PATH)
+        print(f"Models will be saved to Google Drive: {BASE_SAVE_DIR}")
+    else:
+        BASE_SAVE_DIR = Path(os.path.dirname(os.path.abspath(__file__)))
+        print(f"Models will be saved locally: {BASE_SAVE_DIR / 'results'}")
+    
+    print()
+    # ================================================================
+    
     parser = get_config()
     # ================================================================
     # DEFAULT CONFIGURATION FOR FULL TRAINING
@@ -140,7 +197,7 @@ if __name__ == "__main__":
         print(f"{'='*70}\n")
 
         # Create run directory
-        run_dir = Path(os.path.dirname(os.path.abspath(__file__))) / "results" / all_args.env_name / all_args.scenario_name / all_args.algorithm_name / all_args.experiment_name
+        run_dir = BASE_SAVE_DIR / "results" / all_args.experiment_name
         if not run_dir.exists():
             os.makedirs(str(run_dir))
 
