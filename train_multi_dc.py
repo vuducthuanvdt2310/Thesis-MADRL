@@ -30,12 +30,25 @@ def is_running_in_colab():
 def mount_google_drive():
     """Mount Google Drive in Colab."""
     try:
+        # Check if already mounted
+        if os.path.exists('/content/drive/MyDrive'):
+            print("✓ Google Drive already mounted!")
+            return True
+        
+        # Try to mount
         from google.colab import drive
-        drive.mount('/content/drive')
+        drive.mount('/content/drive', force_remount=False)
         print("✓ Google Drive mounted successfully!")
         return True
     except Exception as e:
-        print(f"✗ Failed to mount Google Drive: {e}")
+        print(f"✗ Failed to mount Google Drive automatically.")
+        print(f"Error: {e}")
+        print("\n" + "="*70)
+        print("MANUAL SETUP REQUIRED:")
+        print("Please run this command in a Colab cell BEFORE running training:")
+        print("  from google.colab import drive")
+        print("  drive.mount('/content/drive')")
+        print("="*70 + "\n")
         return False
 
 # Set this to True to force using Google Drive even if not in Colab
