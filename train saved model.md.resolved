@@ -1,0 +1,92 @@
+# Training Path Issues - Fixed ✅
+
+## Issues Resolved
+
+### 1. Path Separator Issues in [base_runner.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/base_runner.py)
+**Problem:** Mixed path separators (backslashes `\` and forward slashes `/`) caused `OSError` on Windows.
+
+**Solution:** Replaced string concatenation with `os.path.join()` on lines 164, 167, and others:
+```diff
+- torch.save(policy_actor.state_dict(), str(self.save_dir) + "/actor_agent" + str(agent_id) + ".pt")
++ torch.save(policy_actor.state_dict(), os.path.join(self.save_dir, "actor_agent" + str(agent_id) + ".pt"))
+```
+
+### 2. Missing `os` Import in [runner.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py)
+**Problem:** `NameError: name 'os' is not defined` on line 56.
+
+**Solution:** Added `import os` at the top of [runner.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py):
+```python
+import time
+import os  # Added this line
+import numpy as np
+```
+
+### 3. Empty Save Directory Configuration
+**Problem:** `RESUME_MODEL_DIR` was pointing to an empty `saves` directory, causing `FileNotFoundError`.
+
+**Solution:** Set `RESUME_MODEL_DIR = None` in [train_env.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/train_env.py) to start training from scratch.
+
+## ✅ Training Status
+The training is now **running successfully** without errors!
+
+## 📁 Where Saved Models Are Located
+
+Based on the configuration in [config.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/config.py), trained models are saved to:
+
+```
+d:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\
+└── results\
+    └── MyEnv\
+        └── Ineventory Management\
+            └── happo\
+                └── check\
+                    ├── run_seed_1\
+                    │   ├── logs\           # TensorBoard logs
+                    │   └── models\         # ← SAVED MODELS HERE
+                    │       ├── actor_agent0.pt
+                    │       ├── actor_agent1.pt
+                    │       ├── ...
+                    │       ├── critic_agent0.pt
+                    │       ├── critic_agent1.pt
+                    │       ├── ...
+                    │       ├── actor_optimizer_agent0.pt
+                    │       ├── critic_optimizer_agent0.pt
+                    │       └── training_state.pt  # Resume info
+                    ├── run_seed_2\
+                    │   └── models\
+                    └── ...
+```
+
+### Key Files in `models/` Directory:
+- **`actor_agent{N}.pt`** - Actor network weights for agent N
+- **`critic_agent{N}.pt`** - Critic network weights for agent N  
+- **`actor_optimizer_agent{N}.pt`** - Actor optimizer state for agent N
+- **`critic_optimizer_agent{N}.pt`** - Critic optimizer state for agent N
+- **`training_state.pt`** - Training progress (episode, best reward, etc.)
+
+### Configuration Parameters:
+These values from [config.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/config.py#L51-L23) determine the save path:
+
+- `env_name`: `"MyEnv"` (line 52)
+- `scenario_name`: `"Ineventory Management"` (line 15)
+- `algorithm_name`: `"happo"` (line 13)
+- `experiment_name`: `"check"` (line 23)
+- Seed: `0` through `9` (line 25)
+
+## 🔄 How to Resume Training
+
+To resume from a saved model, edit [train_env.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/train_env.py#L31) line 31:
+
+```python
+# Change from:
+RESUME_MODEL_DIR = None
+
+# To (example):
+RESUME_MODEL_DIR = r"d:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\MyEnv\Ineventory Management\happo\check\run_seed_1\models"
+```
+
+The resume feature will:
+- Load all actor/critic weights
+- Load optimizer states  
+- Restore training progress (episode number, best reward)
+- Continue training from where it left off

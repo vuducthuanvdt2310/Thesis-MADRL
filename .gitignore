@@ -1,0 +1,5 @@
+# Exclude nested git repository
+SC_reinforcement_learning - backorder_2612real/
+
+# Exclude training results (models, logs, checkpoints)
+results/

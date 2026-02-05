@@ -1,0 +1,926 @@
+# Complete Environment Code Explanation with Line References
+
+## Overview: How Training Works with 365 Days of Data
+
+### Question 1: Can I only train for 365 steps?
+
+**Answer: NO!** You can train for as many steps as you want. The data **automatically loops**.
+
+**How it works:**
+
+```
+Episode 1: Days 0-365   (uses data rows 0-365)
+Episode 2: Days 0-365   (uses data rows 0-365 again)
+Episode 3: Days 0-365   (loops again)
+...
+For 1000 episodes      (total: 365,000 steps)
+```
+
+**Code responsible for looping:**
+
+File: [data_loader.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/data_loader.py)
+- **Lines 190-191**: Demand wrapping
+- **Lines 208-209**: Price wrapping
+
+```python
+# Line 190-191
+if day >= len(self.demand_data):  # If day exceeds CSV length
+    day = day % len(self.demand_data)  # Wrap: day 400 becomes day 35
+```
+
+**Example:**
+```
+Your CSV has 365 days (0-364)
+Episode runs to day 365 → wraps to day 0
+Episode runs to day 730 → wraps to day 0
+Day 400 → becomes day 35 (400 % 365 = 35)
+```
+
+---
+
+## Complete Environment Walkthrough: [enhanced_net_2x3.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py)
+
+### File Structure Overview
+
+```
+enhanced_net_2x3.py (541 lines total)
+├── Imports & Class Definition (lines 1-43)
+├── __init__() - Initialization (lines 44-114)
+├── reset() - Episode Start (lines 116-154)
+├── step() - Main Loop (lines 156-207)
+├── Helper Methods:
+│   ├── _process_orders() (lines 241-267)
+│   ├── _process_arrivals() (lines 269-288)
+│   ├── _process_demand() (lines 290-311)
+│   ├── _process_echelon_flow() (lines 313-345)
+│   ├── _update_pricing() (lines 347-355)
+│   ├── _calculate_rewards() (lines 357-393)
+│   └── _get_observations() (lines 395-519)
+└── Compatibility Methods (lines 521-541)
+```
+
+---
+
+## PHASE 0: Initialization ([__init__](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/generator.py#9-41))
+
+### Lines 44-114: Setting Up the Environment
+
+**What happens:** When you create `env = EnhancedMultiSKUEnv()`, this code runs once.
+
+#### Line-by-Line Breakdown:
+
+```python
+# Line 44-46: Constructor signature
+def __init__(self, config_path: str = 'configs/multi_sku_config.yaml'):
+    # Load data and configuration
+    self.data_loader = DataLoader(config_path)  # Line 48
+```
+
+**Line 48**: Creates the DataLoader, which:
+- Loads YAML config
+- Loads CSV files OR generates synthetic data
+- Stores 365 days of demand/price data
+
+```python
+# Line 49: Get config dictionary
+self.config = self.data_loader.config
+
+# Lines 52-54: Environment dimensions
+self.n_skus = self.config['environment']['n_skus']        # 3 SKUs
+self.n_agents = self.config['environment']['n_agents']    # 3 agents
+self.max_days = self.config['environment']['max_days']    # 365 days
+```
+
+**Meaning:** 
+- 3 products (iPhone, iPad, AirPods)
+- 3 locations (Retailer, Distributor, Manufacturer)
+- 365-day episodes
+
+```python
+# Lines 57-59: Lead time parameters
+self.lt_min = self.config['environment']['lead_time']['min']  # 2 days
+self.lt_max = self.config['environment']['lead_time']['max']  # 5 days
+self.lt_distribution = self.config['environment']['lead_time']['distribution']  # "uniform"
+```
+
+**Effect:** Orders will randomly take 2, 3, 4, or 5 days to arrive.
+
+```python
+# Lines 62-64: Cost matrices (3 agents × 3 SKUs)
+self.H = np.array(self.config['costs']['holding_cost'], dtype=np.float32)
+self.B = np.array(self.config['costs']['backlog_cost'], dtype=np.float32)
+self.C_FIXED = np.array(self.config['costs']['fixed_order_cost'], dtype=np.float32)
+```
+
+**Structure:**
+```
+self.H = [[1.0, 0.8, 1.2],   # Retailer holding costs per SKU
+          [0.9, 0.7, 1.0],   # Distributor
+          [0.8, 0.6, 0.9]]   # Manufacturer
+```
+
+```python
+# Lines 67-70: Normalization bounds
+self.max_inventory = self.config['normalization']['max_inventory']  # 100
+self.max_backlog = self.config['normalization']['max_backlog']      # 50
+self.max_pipeline = self.config['normalization']['max_pipeline']    # 150
+```
+
+**Purpose:** Scale observations to [0, 1] so neural network trains better.
+
+```python
+# Lines 73-78: Observation and action dimensions
+self.obs_dim = self.n_skus * 8  # 3 SKUs × 8 features = 24
+self.action_dim_per_sku = 21    # Order 0-20 units
+```
+
+**Why 24?** Each agent sees:
+- 3 inventory values
+- 3 backlog values
+- 3 pipeline next-day values
+- 3 pipeline 2-3 day values
+- 3 total pipeline values
+- 3 current prices
+- 3 price moving averages
+- 3 recent demand averages
+= **8 × 3 = 24 total**
+
+```python
+# Lines 81-83: State variables (initialized as None, set in reset())
+self.inventory: np.ndarray = None   # Will be shape (3, 3)
+self.backlog: np.ndarray = None     # Will be shape (3, 3)
+self.pipeline: List[List[Dict]] = None  # Will be list of 3 lists
+```
+
+---
+
+## PHASE 1: Reset (Episode Start)
+
+### Lines 116-154: [reset()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#108-145) method
+
+**When called:** At the start of each training episode (every 365 steps).
+
+**What it does:** Resets all state variables to initial values.
+
+#### Line-by-Line Breakdown:
+
+```python
+# Line 124: Reset day counter
+self.current_day = 0
+self.step_num = 0
+```
+
+**Effect:** Episode starts at day 0.
+
+```python
+# Line 129: Initialize inventory (3 agents × 3 SKUs)
+self.inventory = np.full((self.n_agents, self.n_skus), 10.0, dtype=np.float32)
+```
+
+**Result:**
+```
+self.inventory = [[10.0, 10.0, 10.0],  # Retailer starts with 10 of each SKU
+                  [10.0, 10.0, 10.0],  # Distributor
+                  [10.0, 10.0, 10.0]]  # Manufacturer
+```
+
+```python
+# Line 130: Initialize backlog (all zeros)
+self.backlog = np.zeros((self.n_agents, self.n_skus), dtype=np.float32)
+```
+
+```python
+# Line 131: Initialize pipeline (empty list for each agent)
+self.pipeline = [[] for _ in range(self.n_agents)]
+```
+
+**Structure:**
+```
+self.pipeline = [
+    [],  # Retailer's pipeline (empty at start)
+    [],  # Distributor's pipeline
+    []   # Manufacturer's pipeline
+]
+```
+
+```python
+# Lines 134-137: Load initial prices from day 0
+self.current_prices = np.array(self.data_loader.get_prices(0), dtype=np.float32)
+self.price_history = [[] for _ in range(self.n_skus)]
+for sku in range(self.n_skus):
+    self.price_history[sku].append(self.current_prices[sku])
+```
+
+**Calls:** [data_loader.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/data_loader.py) line 198-214 ([get_prices()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/data_loader.py#198-215))
+
+**Result:** `self.current_prices = [10.5, 7.2, 15.3]` (example)
+
+```python
+# Lines 140-141: Initialize demand history
+self.demand_history = [[] for _ in range(self.n_skus)]
+```
+
+```python
+# Line 148: Get initial observations
+observations = self._get_observations()
+return observations
+```
+
+**Calls:** Lines 395-519 (we'll explain this later)
+
+**Returns:** List of 3 observations, each shape (24,)
+
+---
+
+## PHASE 2: Step Execution (Main Loop)
+
+### Lines 156-207: [step()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#146-216) method
+
+**When called:** Every single timestep during training.
+
+**Flow diagram:**
+```
+step(actions) called
+    ↓
+1. Decode actions (lines 166-185)
+    ↓
+2. Process orders → _process_orders() (line 191)
+    ↓
+3. Process arrivals → _process_arrivals() (line 194)
+    ↓
+4. Process demand → _process_demand() (line 197)
+    ↓
+5. Echelon flow → _process_echelon_flow() (line 200)
+    ↓
+6. Update pricing → _update_pricing() (line 203)
+    ↓
+7. Calculate rewards → _calculate_rewards() (line 206)
+    ↓
+8. Get observations → _get_observations() (line 209)
+    ↓
+Return (obs, rewards, dones, infos)
+```
+
+#### Line-by-Line Breakdown:
+
+```python
+# Lines 166-167: Increment day counter
+self.current_day += 1
+self.step_num += 1
+```
+
+**Example:** Day 0 → Day 1 → Day 2 → ... → Day 365 → **reset() called** → Day 0
+
+```python
+# Lines 170-185: Decode actions (if one-hot encoded)
+if one_hot:
+    decoded_actions = []
+    for agent_action in actions:
+        sku_actions = []
+        for sku in range(self.n_skus):
+            start_idx = sku * self.action_dim_per_sku
+            end_idx = start_idx + self.action_dim_per_sku
+            sku_action = np.argmax(agent_action[start_idx:end_idx])
+            sku_actions.append(sku_action)
+        decoded_actions.append(np.array(sku_actions))
+    actions = decoded_actions
+```
+
+**Input example:**
+```
+# If one_hot=True:
+agent_0_action = [0,0,1,0,...,0,0,1,0,...,0,1,0,...]  # One-hot encoding
+                  ↓
+Decoded to: [2, 1, 0]  # Order 2 units SKU0, 1 unit SKU1, 0 units SKU2
+
+# If one_hot=False:
+actions = [[2, 1, 0], [5, 3, 2], [10, 8, 6]]  # Direct integer actions
+```
+
+```python
+# Line 188: Store actions
+self.last_actions = np.array(actions, dtype=np.float32)
+```
+
+**Why?** Need actions later for reward calculation (line 375).
+
+Now let's dive into each phase:
+
+---
+
+### PHASE 2.1: Process Orders (Variable Lead Time)
+
+#### Lines 241-267: [_process_orders()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#217-243) method
+
+**Purpose:** Place new orders and add them to the pipeline with random arrival times.
+
+```python
+# Line 241: Method signature
+def _process_orders(self, actions: List[np.ndarray]):
+```
+
+**Input:** `actions = [[5, 10, 0], [8, 5, 3], [12, 8, 6]]`
+
+```python
+# Lines 245-246: Loop through each agent
+for agent_id in range(self.n_agents):      # 0, 1, 2
+    for sku in range(self.n_skus):         # 0, 1, 2
+```
+
+```python
+# Line 247: Get order quantity
+order_qty = int(actions[agent_id][sku])
+```
+
+**Example:** agent_id=0, sku=0 → order_qty = 5
+
+```python
+# Lines 249-254: Sample lead time
+if order_qty > 0:
+    if self.lt_distribution == "uniform":
+        lead_time = np.random.randint(self.lt_min, self.lt_max + 1)
+        # Random choice: 2, 3, 4, or 5 days
+    else:
+        lead_time = self.lt_min  # Fallback
+```
+
+**🎲 THE RANDOMNESS:**
+```python
+np.random.randint(2, 6)  # Returns 2, 3, 4, or 5 with equal probability
+```
+
+```python
+# Line 256: Calculate arrival day
+arrival_day = self.current_day + lead_time
+```
+
+**Example:**
+```
+current_day = 100
+lead_time = 3 (randomly sampled)
+arrival_day = 103
+```
+
+```python
+# Lines 259-263: Add to pipeline with TAG
+self.pipeline[agent_id].append({
+    'sku': sku,
+    'qty': order_qty,
+    'arrival_day': arrival_day  # ← THE KEY!
+})
+```
+
+**Result after processing all actions:**
+```
+self.pipeline[0] = [  # Retailer's pipeline
+    {'sku': 0, 'qty': 5, 'arrival_day': 103},   # iPhone order
+    {'sku': 1, 'qty': 10, 'arrival_day': 105},  # iPad order (different LT!)
+]
+```
+
+**Key insight:** Each order knows exactly when it will arrive!
+
+---
+
+### PHASE 2.2: Process Arrivals
+
+#### Lines 269-288: [_process_arrivals()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#244-258) method
+
+**Purpose:** Check which orders arrive TODAY and add them to inventory.
+
+```python
+# Lines 273-276: Filter orders arriving today
+for agent_id in range(self.n_agents):
+    arrived = [
+        order for order in self.pipeline[agent_id]
+        if order['arrival_day'] == self.current_day
+    ]
+```
+
+**Example:**
+```
+current_day = 103
+pipeline = [
+    {'sku': 0, 'qty': 5, 'arrival_day': 103},   # ✓ ARRIVES TODAY
+    {'sku': 1, 'qty': 10, 'arrival_day': 105},  # ✗ Not yet
+]
+
+arrived = [{'sku': 0, 'qty': 5, 'arrival_day': 103}]
+```
+
+```python
+# Lines 279-280: Add to inventory
+for order in arrived:
+    self.inventory[agent_id][order['sku']] += order['qty']
+```
+
+**Effect:**
+```
+Before: self.inventory[0][0] = 8.0
+After:  self.inventory[0][0] = 13.0  (added 5 units)
+```
+
+```python
+# Lines 283-286: Remove arrived orders from pipeline
+self.pipeline[agent_id] = [
+    order for order in self.pipeline[agent_id]
+    if order['arrival_day'] > self.current_day
+]
+```
+
+**Result:**
+```
+pipeline = [
+    {'sku': 1, 'qty': 10, 'arrival_day': 105},  # Only future orders remain
+]
+```
+
+---
+
+### PHASE 2.3: Process Demand
+
+#### Lines 290-311: [_process_demand()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#259-280) method
+
+**Purpose:** Customer demand arrives at the retailer (agent 0).
+
+```python
+# Line 295: Get demand from data loader
+demand = self.data_loader.get_demand(min(self.current_day, self.max_days - 1))
+```
+
+**Calls:** [data_loader.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/data_loader.py) lines 180-196
+
+**What happens:**
+```
+current_day = 100
+↓
+DataLoader checks CSV row 100
+↓
+Returns: [25, 18, 12]  # Demand for 3 SKUs
+```
+
+**If current_day > 365:**
+```
+current_day = 400
+↓
+DataLoader: day = 400 % 365 = 35 (line 191 in data_loader.py)
+↓
+Returns CSV row 35
+```
+
+```python
+# Lines 298-299: Update demand history
+for sku in range(self.n_skus):
+    self.demand_history[sku].append(demand[sku])
+```
+
+**Purpose:** Store for observations (recent demand average).
+
+```python
+# Lines 302-310: Fulfill demand or create backlog
+for sku in range(self.n_skus):
+    if self.inventory[retailer_id][sku] >= demand[sku]:
+        # Fulfill demand
+        self.inventory[retailer_id][sku] -= demand[sku]
+    else:
+        # Create backlog
+        shortage = demand[sku] - self.inventory[retailer_id][sku]
+        self.inventory[retailer_id][sku] = 0
+        self.backlog[retailer_id][sku] += shortage
+```
+
+**Example:**
+```
+Demand for iPhone = 25
+Inventory = 20
+
+Can't fulfill!
+→ inventory[0][0] = 0 (sold out)
+→ backlog[0][0] = 5 (5 angry customers waiting)
+```
+
+---
+
+### PHASE 2.4: Echelon Flow
+
+#### Lines 313-345: [_process_echelon_flow()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#281-308) method
+
+**Purpose:**Upstream echelons ship to downstream.
+
+```python
+# Lines 324-333: Distributor → Retailer
+distributor_id = 1
+retailer_id = 0
+for sku in range(self.n_skus):
+    if self.backlog[retailer_id][sku] > 0:
+        # How much can distributor ship?
+        shipment = min(self.backlog[retailer_id][sku], 
+                      self.inventory[distributor_id][sku])
+        
+        self.inventory[distributor_id][sku] -= shipment
+        self.backlog[retailer_id][sku] -= shipment
+        self.inventory[retailer_id][sku] += shipment
+```
+
+**Example:**
+```
+Retailer backlog = 5
+Distributor inventory = 10
+
+Shipment = min(5, 10) = 5
+→ Distributor inventory: 10 → 5
+→ Retailer backlog: 5 → 0
+→ Retailer inventory: 0 → 5
+```
+
+**Note:** Manufacturer → Distributor logic is simplified (line 336-345), you can extend it.
+
+---
+
+### PHASE 2.5: Update Pricing
+
+#### Lines 347-355: [_update_pricing()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#309-317) method
+
+**Purpose:** Load new prices for the current day.
+
+```python
+# Lines 352-353: Get prices for current day
+day_idx = min(self.current_day, self.max_days - 1)
+self.current_prices = np.array(self.data_loader.get_prices(day_idx), dtype=np.float32)
+```
+
+**Calls:** [data_loader.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/data_loader.py) lines 198-214
+
+**Effect:**
+```
+Day 100: prices = [10.5, 7.2, 15.3]
+Day 101: prices = [10.8, 7.0, 15.8]  ← Agent sees NEW prices!
+```
+
+```python
+# Lines 356-357: Update price history
+for sku in range(self.n_skus):
+    self.price_history[sku].append(self.current_prices[sku])
+```
+
+**Purpose:** Calculate 5-day moving average for observations.
+
+---
+
+### PHASE 2.6: Calculate Rewards
+
+#### Lines 357-393: [_calculate_rewards()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#318-356) method
+
+**Purpose:** Compute cost (negative reward) for each agent.
+
+**Formula:** `Total Cost = Σ(Holding + Backlog + Ordering)`
+
+```python
+# Lines 365-366: Loop through agents and SKUs
+for agent_id in range(self.n_agents):
+    total_cost = 0.0
+    
+    for sku in range(self.n_skus):
+```
+
+```python
+# Lines 369-370: Holding cost
+holding_cost = self.H[agent_id][sku] * max(0, self.inventory[agent_id][sku])
+```
+
+**Example:**
+```
+H[0][0] = 1.0  (Retailer, SKU 0)
+inventory[0][0] = 15.0
+
+holding_cost = 1.0 * 15.0 = 15.0
+```
+
+```python
+# Lines 372-373: Backlog cost
+backlog_cost = self.B[agent_id][sku] * max(0, self.backlog[agent_id][sku])
+```
+
+**Example:**
+```
+B[0][0] = 5.0
+backlog[0][0] = 3.0
+
+backlog_cost = 5.0 * 3.0 = 15.0
+```
+
+```python
+# Lines 375-384: Ordering cost (DYNAMIC PRICING!)
+order_qty = self.last_actions[agent_id][sku]
+if order_qty > 0:
+    fixed_cost = self.C_FIXED[agent_id][sku]
+    # Use price from when order was placed (current_day - 1)
+    price_idx = max(0, min(self.current_day - 1, len(self.price_history[sku]) - 1))
+    variable_cost = self.price_history[sku][price_idx] * order_qty
+    ordering_cost = fixed_cost + variable_cost
+else:
+    ordering_cost = 0
+```
+
+**🔥 THIS IS WHERE DYNAMIC PRICING MATTERS:**
+```
+ordered 10 units when price = $10.50
+↓
+fixed_cost = 2.0
+variable_cost = 10.5 * 10 = 105.0
+ordering_cost = 2.0 + 105.0 = 107.0
+
+VS
+
+ordered 10 units when price = $12.00
+↓
+ordering_cost = 2.0 + 120.0 = 122.0  ($15 more expensive!)
+```
+
+```python
+# Lines 386-387: Sum costs
+total_cost += holding_cost + backlog_cost + ordering_cost
+
+# Line 390: Negative cost = reward
+rewards.append(-total_cost)
+```
+
+**Why negative?** RL maximizes reward, so minimizing cost = maximizing negative cost.
+
+---
+
+### PHASE 2.7: Get Observations
+
+#### Lines 395-519: [_get_observations()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#357-437) method
+
+**Purpose:** Build 24-dimensional observation for each agent.
+
+**Structure:**
+```
+obs = [
+    inventory[0], inventory[1], inventory[2],     # Positions 0-2
+    backlog[0], backlog[1], backlog[2],           # Positions 3-5
+    pipeline_next_day[0], [1], [2],               # Positions 6-8
+    pipeline_2_3_days[0], [1], [2],               # Positions 9-11
+    pipeline_total[0], [1], [2],                  # Positions 12-14
+    current_price[0], [1], [2],                   # Positions 15-17
+    price_ma[0], [1], [2],                        # Positions 18-20
+    recent_demand[0], [1], [2]                    # Positions 21-23
+]
+```
+
+#### Lines 407-412: Inventory values
+
+```python
+for sku in range(self.n_skus):
+    # 1. Inventory
+    inv = self.inventory[agent_id][sku]
+    obs.append(inv / self.max_inventory if self.normalize else inv)
+```
+
+**Example:**
+```
+inventory[0][0] = 15.0
+max_inventory = 100
+
+obs.append(15.0 / 100 = 0.15)  # Normalized to [0, 1]
+```
+
+#### Lines 414-418: Backlog values
+
+```python
+for sku in range(self.n_skus):
+    # 2. Backlog
+    bl = self.backlog[agent_id][sku]
+    obs.append(bl / self.max_backlog if self.normalize else bl)
+```
+
+#### Lines 420-428: Pipelinearriving next day
+
+```python
+for sku in range(self.n_skus):
+    # 3. Pipeline arriving next day
+    next_day_arrivals = sum(
+        order['qty'] for order in self.pipeline[agent_id]
+        if order['sku'] == sku and order['arrival_day'] == self.current_day + 1
+    )
+    obs.append(next_day_arrivals / self.max_demand if self.normalize else next_day_arrivals)
+```
+
+**🔍 HOW IT CHECKS:**
+```
+current_day = 100
+pipeline = [
+    {'sku': 0, 'qty': 10, 'arrival_day': 101},  ← Matches!
+    {'sku': 1, 'qty': 5, 'arrival_day': 103},
+]
+
+next_day_arrivals[0] = 10
+next_day_arrivals[1] = 0
+```
+
+#### Lines 430-438: Pipeline 2-3 days
+
+```python
+for sku in range(self.n_skus):
+    near_arrivals = sum(
+        order['qty'] for order in self.pipeline[agent_id]
+        if order['sku'] == sku and 
+        self.current_day + 2 <= order['arrival_day'] <= self.current_day + 3
+    )
+```
+
+#### Lines 440-447: Total pipeline
+
+```python
+for sku in range(self.n_skus):
+    total_pipeline = sum(
+        order['qty'] for order in self.pipeline[agent_id]
+        if order['sku'] == sku
+    )
+```
+
+#### Lines 449-455: Current prices (🔥 AGENT SEES PRICES!)
+
+```python
+for sku in range(self.n_skus):
+    # 6. Current price
+    price = self.current_prices[sku]
+    max_price = self.config['pricing']['max_price'][sku]
+    obs.append(price / max_price if self.normalize else price)
+```
+
+**THIS IS HOW AGENT DETECTS PRICE CHANGES:**
+```
+Day 100: obs[15] = 10.5 / 20.0 = 0.525
+Day 101: obs[15] = 10.8 / 20.0 = 0.540  ← Agent sees it went up!
+```
+
+#### Lines 457-463: Price moving average
+
+```python
+for sku in range(self.n_skus):
+    # 7. Price moving average (5-day)
+    price_ma = self._get_price_ma(sku, window=5)
+    max_price = self.config['pricing']['max_price'][sku]
+    obs.append(price_ma / max_price if self.normalize else price_ma)
+```
+
+**Calls:** Lines 505-510
+
+```python
+def _get_price_ma(self, sku: int, window: int = 5) -> float:
+    if len(self.price_history[sku]) < window:
+        return np.mean(self.price_history[sku])
+    else:
+        return np.mean(self.price_history[sku][-window:])
+```
+
+**Example:**
+```
+price_history[0] = [10.5, 10.8, 10.3, 10.7, 11.0, 10.9]
+price_ma = mean([10.3, 10.7, 11.0, 10.9, current]) = 10.72
+
+Agent can compare:
+  current_price (10.9) vs price_ma (10.72)
+  → Price is above average, maybe wait to order!
+```
+
+#### Lines 465-475: Recent demand average
+
+```python
+for sku in range(self.n_skus):
+    if agent_id == 0:  # Retailer observes demand
+        demand_avg = self._get_demand_avg(sku, window=3)
+    else:  # Upstream agents see 0
+        demand_avg = 0
+    obs.append(demand_avg / self.max_demand if self.normalize else demand_avg)
+```
+
+---
+
+### PHASE 2.8: Check Termination
+
+#### Lines 212-213: Episode end condition
+
+```python
+done = self.current_day >= self.max_days  # Day 365 → done = True
+dones = [done for _ in range(self.n_agents)]
+```
+
+**Effect:** When day 365 is reached, `done=True`, episode ends, [reset()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#108-145) is called.
+
+---
+
+## Complete Flow Diagram
+
+```
+==================== EPISODE START ====================
+
+reset() called
+  ├─ current_day = 0
+  ├─ inventory = [[10, 10, 10], ...]
+  ├─ pipeline = [[], [], []]
+  ├─ Load prices from day 0
+  └─ Return initial observations
+
+==================== STEP LOOP (Days 0-364) ====================
+
+step(actions) called → current_day += 1
+
+1. _process_orders()
+   ├─ For each agent, each SKU:
+   │  ├─ Get order quantity
+   │  ├─ Sample random lead time (2-5 days)
+   │  └─ Add to pipeline: {'sku', 'qty', 'arrival_day'}
+
+2. _process_arrivals()
+   ├─ Filter pipeline where arrival_day == current_day
+   ├─ Add arrived orders to inventory
+   └─ Remove from pipeline
+
+3. _process_demand()
+   ├─ Get demand from CSV (with wrap-around)
+   ├─ Retailer fulfills or creates backlog
+   └─ Update demand history
+
+4. _process_echelon_flow()
+   └─ Distributor ships to Retailer backlog
+
+5. _update_pricing()
+   ├─ Get prices for current_day from CSV
+   └─ Update price history
+
+6. _calculate_rewards()
+   ├─ For each agent:
+   │  ├─ holding_cost = H × inventory
+   │  ├─ backlog_cost = B × backlog
+   │  └─ ordering_cost = fixed + (price × order_qty)
+   └─ reward = -total_cost
+
+7. _get_observations()
+   ├─ Build 24D vector:
+   │  ├─ Inventory (3)
+   │  ├─ Backlog (3)
+   │  ├─ Pipeline features (9)
+   │  ├─ Prices & price_MA (6)
+   │  └─ Recent demand (3)
+   └─ Normalize to [0, 1]
+
+8. Check termination
+   └─ If current_day >= 365 → done = True
+
+Return (obs, rewards, dones, infos)
+
+==================== EPISODE END (Day 365) ====================
+
+reset() called again → New episode starts
+```
+
+---
+
+## Key Takeaways
+
+### 1. **Data Looping** (Lines in [data_loader.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/data_loader.py))
+- **Line 190-191**: `day = day % len(self.demand_data)` enables infinite training
+- **Line 208-209**: Same for prices
+- **You can train for millions of steps!**
+
+### 2. **Variable Lead Time** (Lines in [enhanced_net_2x3.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py))
+- **Line 252**: `lead_time = np.random.randint(self.lt_min, self.lt_max + 1)`
+- **Line 256**: `arrival_day = self.current_day + lead_time`
+- **Line 260-263**: Tagged pipeline `{'sku', 'qty', 'arrival_day'}`
+- **Line 274-276**: Filter by `arrival_day == current_day`
+
+### 3. **Dynamic Pricing** (Lines in [enhanced_net_2x3.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py))
+- **Line 352-353**: Load new prices each day
+- **Line 377-379**: Use price history for ordering cost
+- **Line 451-453**: Agent observes current price
+- **Line 459-461**: Agent observes price moving average
+- **Agent learns: "Buy when price < average"**
+
+### 4. **Multi-SKU Observations** (Lines 407-475)
+- **24 values total** (8 features × 3 SKUs)
+- **Positions 15-17**: Current prices (how agent detects changes)
+- **Positions 18-20**: Price moving averages (trend detection)
+
+---
+
+## Quick Reference: Line Numbers
+
+| Feature | Lines | Method |
+|---------|-------|--------|
+| **Initialization** | 44-114 | [__init__()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/generator.py#9-41) |
+| **Episode reset** | 116-154 | [reset()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#108-145) |
+| **Main loop** | 156-207 | [step()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#146-216) |
+| **Place orders** | 241-267 | [_process_orders()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#217-243) |
+| **Check arrivals** | 269-288 | [_process_arrivals()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#244-258) |
+| **Customer demand** | 290-311 | [_process_demand()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#259-280) |
+| **Update prices** | 347-355 | [_update_pricing()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#309-317) |
+| **Calculate costs** | 357-393 | [_calculate_rewards()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#318-356) |
+| **Build observations** | 395-519 | [_get_observations()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/enhanced_net_2x3.py#357-437) |
+| **Price wrapping** | data_loader.py 190-191, 208-209 | [get_demand()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/data_loader.py#180-197), [get_prices()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/data_loader.py#198-215) |
+
+---
+
+**Hope this helps you understand every line of the environment! 🎓**

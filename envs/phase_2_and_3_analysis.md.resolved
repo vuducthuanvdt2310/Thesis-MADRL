@@ -1,0 +1,793 @@
+# 📋 PHASE 2: Architecture & Flow
+
+## 🚀 Entry Point: Where It All Begins
+
+**File:** [train_env.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/train_env.py)
+
+This is your **starting line**. When you run `python train_env.py`, this is the first code that executes.
+
+---
+
+## 🎬 The "Happy Path" - What Happens When Training Runs
+
+Let me explain this using a **restaurant kitchen analogy** (bear with me, it'll make sense!):
+
+### 🍽️ **Think of This Code Like a Restaurant Kitchen Training Program**
+
+Imagine you're training a team of chefs to work together efficiently in a restaurant kitchen. Each chef manages a different station (one does appetizers, one does mains, one does desserts). They need to learn:
+- When to prepare dishes
+- How much ingredients to order
+- How to coordinate so customers (demand) are satisfied without wasting food (inventory)
+
+---
+
+## 🔄 The Training Flow (Step-by-Step)
+
+### **STEP 1: Setup Phase (Opening the Kitchen)**
+**File:** [train_env.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/train_env.py) → lines 23-40
+
+```
+┌──────────────────────────────────┐
+│  1. Load Configuration           │
+│     (config.py)                  │
+│     - How many chefs? (agents)   │
+│     - How long to train?         │
+│     - What learning rates?       │
+└──────────┬───────────────────────┘
+           │
+           ▼
+┌──────────────────────────────────┐
+│  2. Check Equipment              │
+│     - GPU available? Use it!     │
+│     - Set random seed for        │
+│       reproducibility            │
+└──────────┬───────────────────────┘
+           │
+           ▼
+┌──────────────────────────────────┐
+│  3. Create "Kitchen Simulator"   │
+│     (envs/serial.py or           │
+│      envs/net_2x3.py)            │
+│     - This is the "game world"   │
+│       where training happens     │
+└──────────────────────────────────┘
+```
+
+**Real Code Flow:**
+1. Parse command-line arguments and config
+2. Set up PyTorch device (GPU or CPU)
+3. Set random seeds for reproducibility
+4. Create training environments and evaluation environments
+5. Initialize the Runner (the main training orchestrator)
+
+---
+
+### **STEP 2: Initialize the Team (Creating the AI Agents)**
+**File:** [runners/separated/base_runner.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/base_runner.py) → [__init__](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/generator.py#47-49) method
+
+```
+┌──────────────────────────────────┐
+│  For each chef (agent):          │
+│                                  │
+│  🧠 Give them a BRAIN            │
+│     (algorithms/happo_policy.py) │
+│     - Actor: decides actions     │
+│     - Critic: evaluates quality  │
+│                                  │
+│  📝 Give them a NOTEBOOK         │
+│     (utils/separated_buffer.py)  │
+│     - Remember experiences       │
+│                                  │
+│  👨‍🏫 Assign a TRAINER             │
+│     (algorithms/happo_trainer.py)│
+│     - Teaches from mistakes      │
+└──────────────────────────────────┘
+```
+
+**Components Created:**
+- **Policy**: The decision-making brain (actor-critic neural networks)
+- **Buffer**: Memory storage for experiences
+- **Trainer**: The learning algorithm (HAPPO)
+
+---
+
+### **STEP 3: The Main Training Loop (The Daily Service)**
+**File:** [runners/separated/runner.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py) → [run()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py#16-133) method (lines 16-132)
+
+This is the **heart of the system**. Think of it as the daily restaurant service that repeats many times:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    TRAINING LOOP                            │
+│  (Repeats for thousands of episodes)                        │
+└─────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+        ┌──────────────────────────────────────┐
+        │  Every 5 episodes: EVALUATION        │
+        │  - Test current skills on test data  │
+        │  - Save if best performance so far   │
+        │  - Stop if no improvement for 10     │
+        │    evaluations (early stopping)      │
+        └──────────────┬───────────────────────┘
+                       │
+                       ▼
+        ┌──────────────────────────────────────┐
+        │  WARMUP: Reset the kitchen           │
+        │  (warmup method)                     │
+        │  - Clear the counter                 │
+        │  - Get initial state                 │
+        └──────────────┬───────────────────────┘
+                       │
+                       ▼
+        ┌──────────────────────────────────────┐
+        │  FOR EACH TIME STEP (200 steps):     │
+        │  ┌────────────────────────────────┐  │
+        │  │ 1. COLLECT                     │  │
+        │  │    - Each chef looks at their  │  │
+        │  │      station (observe state)   │  │
+        │  │    - Each chef decides action  │  │
+        │  │      (how much to order)       │  │
+        │  │    - Critic predicts outcome   │  │
+        │  └────────────┬───────────────────┘  │
+        │               ▼                       │
+        │  ┌────────────────────────────────┐  │
+        │  │ 2. STEP (Execute in Simulator) │  │
+        │  │    - Orders are placed         │  │
+        │  │    - Customers arrive (demand) │  │
+        │  │    - Inventory updates         │  │
+        │  │    - Calculate REWARD/COST     │  │
+        │  └────────────┬───────────────────┘  │
+        │               ▼                       │
+        │  ┌────────────────────────────────┐  │
+        │  │ 3. INSERT                      │  │
+        │  │    - Save experience to memory │  │
+        │  │      (state, action, reward)   │  │
+        │  └────────────────────────────────┘  │
+        └──────────────┬───────────────────────┘
+                       │
+                       ▼
+        ┌──────────────────────────────────────┐
+        │  COMPUTE RETURNS                     │
+        │  - Calculate "how good was each      │
+        │    action in hindsight?"             │
+        │  - Use GAE (Generalized Advantage    │
+        │    Estimation) for stability         │
+        └──────────────┬───────────────────────┘
+                       │
+                       ▼
+        ┌──────────────────────────────────────┐
+        │  TRAIN (Learn from mistakes)         │
+        │  - Update neural networks            │
+        │  - Actor learns better actions       │
+        │  - Critic learns better predictions  │
+        │  - Repeat 15 epochs (ppo_epoch)      │
+        └──────────────┬───────────────────────┘
+                       │
+                       ▼
+        ┌──────────────────────────────────────┐
+        │  LOG PROGRESS                        │
+        │  - Print rewards, inventory, orders  │
+        │  - Show FPS (frames per second)      │
+        └──────────────────────────────────────┘
+```
+
+---
+
+### **STEP 4: How One Time Step Works (The Collect-Step-Insert Cycle)**
+
+**A. COLLECT Phase** ([collect](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/base_runner.py#110-112) method)
+```python
+FOR each parallel environment (5 threads):
+    FOR each agent (3 chefs):
+        1. Observe current state
+           → "We have X inventory, Y backlog, demand was Z"
+        
+        2. Actor network decides action
+           → "I should order 10 units"
+        
+        3. Critic network predicts value
+           → "This state is worth -50 (estimated future cost)"
+```
+
+**B. STEP Phase** (`envs.step()` → Environment simulator)
+```python
+The simulator processes all actions:
+    1. Orders arrive from suppliers
+    2. Customer demand is generated
+    3. Inventory is updated
+    4. Costs are calculated:
+       - Holding cost (storing too much)
+       - Stockout cost (customer can't buy)
+       - Ordering cost (shipping fees)
+    5. NEW STATE is created
+    6. REWARD (typically negative = cost) is returned
+```
+
+**C. INSERT Phase** ([insert](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py#208-233) method)
+```python
+Save to memory buffer:
+    - Previous state observation
+    - Action taken
+    - Reward received
+    - New state
+    - Value prediction
+    
+This is like taking notes:
+"When we had 10 units and ordered 5,
+ we got a cost of -20, and now we have 8 units"
+```
+
+---
+
+### **STEP 5: Learning Phase (Training)**
+**File:** [algorithms/happo_trainer.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_trainer.py) → [train()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/base_runner.py#126-159) method
+
+After collecting 200 steps of experience:
+
+```
+┌─────────────────────────────────────────┐
+│  1. Sample mini-batches from memory     │
+│     (like reviewing your notebook)      │
+└─────────────┬───────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────┐
+│  2. Calculate ADVANTAGES                │
+│     "How much better was this action    │
+│      compared to what we expected?"     │
+│                                         │
+│     If reward > expected: Positive      │
+│     If reward < expected: Negative      │
+└─────────────┬───────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────┐
+│  3. Update ACTOR (policy):              │
+│     - Make good actions more likely     │
+│     - Make bad actions less likely      │
+│     - Use PPO clipping for safety       │
+│       (don't change too drastically)    │
+└─────────────┬───────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────┐
+│  4. Update CRITIC (value function):     │
+│     - Learn to predict outcomes better  │
+│     - Minimize prediction error         │
+└─────────────────────────────────────────┘
+```
+
+**Key Innovation - HAPPO:**
+- Each agent updates its policy **sequentially**
+- Uses trust region to ensure stable learning
+- Coordinates multi-agent updates safely
+
+---
+
+## 🎯 Summary - The Complete Flow
+
+```
+START
+  │
+  ├─→ Load Config & Create Simulator
+  │
+  ├─→ Initialize AI Brains (Policies)
+  │
+  └─→ FOR thousands of episodes:
+       │
+       ├─→ [Every 5 episodes: Evaluate & maybe save]
+       │
+       ├─→ Reset environment (warmup)
+       │
+       ├─→ FOR each of 200 time steps:
+       │    │
+       │    ├─→ Observe state
+       │    ├─→ Decide actions (Actor)
+       │    ├─→ Execute in simulator
+       │    ├─→ Get rewards
+       │    └─→ Store in memory
+       │
+       ├─→ Compute advantages
+       │
+       ├─→ Train networks (15 epochs)
+       │
+       └─→ Log progress
+  
+FINISH → Save best model
+```
+
+---
+
+# 📋 PHASE 3: Code Logic & "The How"
+
+Now let me explain what each major file **actually does** - think of these as job descriptions for each component!
+
+---
+
+## 🗂️ Component Responsibilities
+
+### **1. ALGORITHMS FOLDER** 🧠 (The AI Brain)
+
+#### [algorithms/actor_critic.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/actor_critic.py) - The Neural Network Architectures
+**Job: "The Brain Structure"**
+
+**What it does:**
+- Defines **TWO types of neural networks**:
+  
+  **A. Actor Network** (The Decision Maker)
+  ```
+  Input: Current observation (inventory, demand, etc.)
+    ↓
+  Hidden layers (2 layers × 128 neurons)
+    ↓
+  Output: Action probabilities (which action to take)
+  
+  Example:
+  "Given 15 items in stock and demand of 10,
+   I should order: 
+   - 0 units: 5% probability
+   - 5 units: 70% probability  ← Most likely
+   - 10 units: 25% probability"
+  ```
+
+  **B. Critic Network** (The Quality Judge)
+  ```
+  Input: Centralized observation (sees ALL agents' info)
+    ↓
+  Hidden layers (2 layers × 128 neurons)
+    ↓
+  Output: Value prediction (expected future cost)
+  
+  Example:
+  "This current state is worth -150
+   (I expect -150 total cost from here on)"
+  ```
+
+**Key Methods:**
+- [forward()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/actor_critic.py#149-169) - Takes input, outputs action
+- [evaluate_actions()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_policy.py#95-123) - Judges how good an action was
+
+**Simple Analogy:** 
+The Actor is like a **chef deciding what to cook** based on what's in the fridge. The Critic is like a **food critic predicting** how good the meal will turn out.
+
+---
+
+#### [algorithms/happo_policy.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_policy.py) - The Policy Wrapper
+**Job: "The Coordinator"**
+
+**What it does:**
+- **Wraps** the Actor and Critic together
+- Provides convenient methods to:
+  - Get actions AND value predictions at once
+  - Evaluate past actions
+  - Just get actions (for deployment)
+
+**Key Methods:**
+- [get_actions()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_policy.py#55-82) - Returns: values, actions, log_probs
+- [get_values()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_policy.py#83-94) - Returns: just value predictions
+- [evaluate_actions()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_policy.py#95-123) - Used during training to assess actions
+- [lr_decay()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_policy.py#46-54) - Gradually reduce learning rate over time
+
+**Simple Analogy:**
+This is like a **manager** who coordinates between the chef (actor) and food critic (critic), making sure they work together smoothly.
+
+---
+
+#### [algorithms/happo_trainer.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_trainer.py) - The Learning Algorithm
+**Job: "The Teacher"**
+
+**What it does:**
+- Implements the **HAPPO training algorithm**
+- Takes experiences from memory
+- Calculates how to improve the networks
+- Updates the weights (parameters)
+
+**Key Methods:**
+- [train()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/base_runner.py#126-159) - Main training loop
+  - Samples mini-batches from buffer
+  - Calls ppo_update() for each agent
+  - Returns training statistics
+  
+- [ppo_update()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_trainer.py#92-173) - The actual learning step
+  1. Calculate importance sampling ratio
+  2. Compute policy loss (actor update)
+  3. Compute value loss (critic update)
+  4. Backpropagate gradients
+  5. Update network weights
+
+- [cal_value_loss()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_trainer.py#52-91) - How wrong were our predictions?
+
+**The HAPPO Magic:**
+```
+For each agent (sequentially):
+    1. Calculate advantages (how good were actions?)
+    2. Update policy with PPO clipping:
+       - ratio = new_policy / old_policy
+       - ratio clipped to [0.8, 1.2]  ← Safety!
+       - This prevents drastic changes
+    3. Update value function
+    4. Apply gradient descent
+```
+
+**Simple Analogy:**
+This is the **training program** that reviews the chefs' performance each day:
+- "You ordered too much yesterday → penalize that decision"
+- "You predicted demand perfectly → reinforce that prediction"
+
+---
+
+### **2. ENVS FOLDER** 🌍 (The Simulation World)
+
+#### [envs/serial.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/serial.py) - Serial Supply Chain Environment
+**Job: "The Simple Chain Simulator"**
+
+**What it does:**
+Creates a **3-stage supply chain**:
+```
+Manufacturer → Distributor → Retailer → Customers
+    Agent 3        Agent 2       Agent 1
+```
+
+**Key Components:**
+
+**A. State Variables:**
+- `self.I` - Inventory at each stage
+- `self.B` - Backlog (unfilled orders)
+- `self.P` - Pipeline orders (in transit)
+- `self.demand` - Customer demand history
+
+**B. Key Methods:**
+
+- [reset()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/serial.py#100-128) - Start new episode
+  ```
+  1. Generate demand data
+  2. Initialize inventory to 0
+  3. Return initial observations
+  ```
+
+- [step(actions)](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/serial.py#129-148) - Advance one time period
+  ```
+  1. Map AI output to actual order quantities
+  2. Update state (state_update):
+     - Process incoming shipments
+     - Satisfy customer demand
+     - Update inventory/backlog
+     - Calculate costs
+  3. Get new observations
+  4. Return: obs, rewards, done, info
+  ```
+
+- [state_update(action)](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/serial.py#276-340) - The physics of the supply chain
+  ```
+  FOR each stage (from downstream to upstream):
+      1. Receive shipment from upstream
+      2. Try to fill backlog first
+      3. Then fulfill new orders
+      4. Update inventory
+      5. Calculate costs:
+         - Holding cost: h * max(0, inventory)
+         - Backlog cost: b * max(0, -inventory)
+         - Order cost: (per unit + fixed cost if > 0)
+  ```
+
+**C. Observation Space:**
+Each agent sees (7 values):
+1. Current inventory
+2. Backlog
+3. Last period's demand
+4. Pipeline order (in transit)
+5-7. Other relevant info
+
+**D. Action Space:**
+- Discrete(21) - Can order 0 to 20 units
+- Gets mapped to actual quantities
+
+**Simple Analogy:**
+This is like a **video game level** where three players manage a production line from factory to store, trying to minimize costs while keeping customers happy.
+
+---
+
+#### [envs/net_2x3.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/net_2x3.py) - Network Supply Chain
+**Job: "The Complex Network Simulator"**
+
+**What it does:**
+Creates a **6-agent network**:
+```
+         ┌─→ Warehouse 1 ─→ Retailer 1 ─┐
+Factory ─┤                              ├─→ Customers
+         └─→ Warehouse 2 ─→ Retailer 2 ─┘
+```
+
+More complex than serial because:
+- Multiple paths
+- Demand splitting
+- More coordination needed
+
+**Structure is similar to serial.py but with:**
+- 6 agents instead of 3
+- Network topology instead of chain
+- More complex state updates
+
+---
+
+#### [envs/template.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/template.py) - DIY Blueprint
+**Job: "The Customization Guide"**
+
+**What it does:**
+Provides a **template** with:
+- Skeleton code structure
+- Comments explaining what to implement
+- Examples of required methods
+
+**You can create your own supply chain by:**
+1. Copying template.py
+2. Defining your network structure
+3. Implementing state_update logic
+4. Setting cost parameters
+
+---
+
+#### [envs/env_wrappers.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/env_wrappers.py) - Parallel Environment Manager
+**Job: "The Multi-Threading Boss"**
+
+**What it does:**
+- Runs **multiple environments in parallel**
+- `SubprocVecEnv` - For training (5 parallel threads)
+- `DummyVecEnv` - For evaluation (1 thread)
+
+**Why parallel?**
+- 5× faster data collection!
+- More diverse experiences
+- Better exploration
+
+**How it works:**
+```
+                    Main Process
+                         │
+        ┌────────────────┼────────────────┐
+        │                │                │
+    Thread 1         Thread 2        Thread 3  ...
+   (Environment)    (Environment)   (Environment)
+        │                │                │
+    Seed: 100        Seed: 101       Seed: 102
+```
+
+Each thread runs its own environment independently, then results are collected together.
+
+---
+
+#### [envs/generator.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/generator.py) - Demand Pattern Generator
+**Job: "The Customer Simulator"**
+
+**What it does:**
+Creates realistic **customer demand patterns** using two methods:
+
+**A. Merton Jump Diffusion ([merton](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/generator.py#7-44) class)**
+```python
+Simulates demand with:
+- Gradual trends (drift)
+- Random fluctuations (Brownian motion)
+- Sudden spikes (Poisson jumps)
+
+Example output:
+[10, 11, 12, 11, 25, 13, 14, ...]
+                 ↑ Jump!
+```
+
+**B. Stationary Poisson (`stationary_poisson` class)**
+```python
+Simple random demand:
+- Draw from Poisson distribution
+- Average = 10 units
+- Pattern: [9, 12, 8, 11, 10, ...]
+```
+
+**Why these patterns?**
+- **Merton**: Models real-world demand with promotions/events
+- **Poisson**: Baseline random demand
+
+---
+
+### **3. RUNNERS FOLDER** 🏃 (The Training Orchestrator)
+
+#### [runners/separated/base_runner.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/base_runner.py) - Base Class
+**Job: "The Foundation"**
+
+**What it does:**
+- Defines **common functionality** for all runners
+- Initializes policies, buffers, trainers
+- Provides basic methods:
+  - [save()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/base_runner.py#160-170) - Save model check points
+  - [restore()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/base_runner.py#171-181) - Load saved models
+  - [log_train()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py#234-240) - Log training metrics
+  - [log_env()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/base_runner.py#188-192) - Log environment info
+
+**Key Initialization:**
+```python
+FOR each agent:
+    1. Create policy (actor + critic)
+    2. Create trainer (HAPPO)
+    3. Create replay buffer (memory)
+```
+
+---
+
+#### [runners/separated/runner.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py) - The Main Runner (CRunner)
+**Job: "The Training Director"**
+
+**What it does:**
+**Inherits** from base_runner and implements:
+
+**Main Method: [run()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py#16-133)** (already explained in Phase 2)
+- The master training loop
+- Evaluation logic
+- Early stopping
+- Model saving
+
+**Supporting Methods:**
+
+- [warmup()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py#134-151) - Reset environment
+  ```python
+  1. Call env.reset()
+  2. Get initial observations
+  3. Initialize RNN states
+  4. Store in buffer
+  ```
+
+- [collect(step)](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/base_runner.py#110-112) - Gather experience at one time step
+  ```python
+  FOR each agent:
+      1. Get obs from buffer
+      2. Call policy.get_actions()
+      3. Return: values, actions, log_probs
+  ```
+
+- [insert(data)](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py#208-233) - Save experience to buffer
+  ```python
+  Extract from data tuple:
+  - obs, share_obs
+  - rewards, dones
+  - values, actions
+  
+  Store in buffer for each agent
+  ```
+
+- [eval()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py#241-315) - Test current performance
+  ```python
+  Run multiple test episodes:
+      - No learning (deterministic=True)
+      - Calculate average reward
+      - Track ordering patterns
+  Return: avg_reward, bullwhip_metric
+  ```
+
+---
+
+### **4. UTILS FOLDER** 🛠️ (The Toolbox)
+
+#### [utils/separated_buffer.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/utils/separated_buffer.py) - Replay Buffer
+**Job: "The Memory Bank"**
+
+**What it does:**
+Stores **all experiences** during an episode:
+
+**Data Stored:**
+```python
+Episode Length = 200 steps
+Num Threads = 5
+Num Agents = 3
+
+For each agent, store:
+- observations [200+1, 5, obs_dim]
+- actions [200, 5, 1]
+- rewards [200, 5, 1]
+- value_predictions [200+1, 5, 1]
+- returns [200+1, 5, 1]
+- RNN states [200+1, 5, 2, 128]
+- masks, bad_masks, active_masks
+```
+
+**Key Methods:**
+
+- [insert()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py#208-233) - Add new experience
+- [compute_returns()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/utils/separated_buffer.py#124-170) - Calculate cumulative discounted rewards
+- [feed_forward_generator()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/utils/separated_buffer.py#171-230) - Sample mini-batches for training
+- [naive_recurrent_generator()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/utils/separated_buffer.py#231-312) - For RNN policies
+- [after_update()](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/utils/separated_buffer.py#107-117) - Clean up after training
+
+**The GAE Calculation:**
+```python
+For each time step (backwards):
+    δ = reward + γ * next_value - current_value
+    advantage = δ + γ * λ * next_advantage
+    return = advantage + current_value
+```
+
+**Simple Analogy:**
+Like a **notebook** where chefs write down:
+- "What was in the fridge" (state)
+- "What I decided to cook" (action)
+- "How much it cost" (reward)
+- "How it turned out" (return)
+
+Then during training, they review random pages to learn patterns.
+
+---
+
+#### `utils/valuenorm.py` - Value Normalization
+**Job: "The Stabilizer"**
+
+**What it does:**
+Normalizes value predictions to have:
+- Mean ≈ 0
+- Std ≈ 1
+
+**Why?**
+- Rewards can vary wildly (-1000 to 0)
+- Neural networks learn better with normalized values
+- Prevents gradient explosion
+
+**How it works:**
+```python
+Running statistics:
+- Track mean and std of values seen so far
+- Normalize: (value - mean) / std
+- Denormalize when needed: value * std + mean
+```
+
+---
+
+#### `utils/util.py` - General Utilities
+**Job: "The Swiss Army Knife"**
+
+**Contains helper functions:**
+- `update_linear_schedule()` - Decay learning rate
+- `check()` - Convert numpy to torch tensors
+- `get_shape_from_obs_space()` - Parse gym spaces
+- Gradient norm calculation
+- Loss functions (Huber, MSE)
+
+---
+
+## 🎯 Summary - File Responsibilities
+
+| File | Role | Simple Description |
+|------|------|-------------------|
+| [train_env.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/train_env.py) | Entry Point | "Press START here" |
+| [config.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/config.py) | Settings | "All the knobs and dials" |
+| **ALGORITHMS** | | |
+| [actor_critic.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/actor_critic.py) | Neural Nets | "The brain structure (neurons)" |
+| [happo_policy.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_policy.py) | Policy | "Coordinator for actor + critic" |
+| [happo_trainer.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_trainer.py) | Learning | "The teacher who updates weights" |
+| **ENVS** | | |
+| [serial.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/serial.py) | Simulator | "3-stage supply chain game" |
+| [net_2x3.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/net_2x3.py) | Simulator | "6-agent network game" |
+| [template.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/template.py) | Blueprint | "DIY guide for custom env" |
+| [env_wrappers.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/env_wrappers.py) | Parallelization | "Run 5 games at once" |
+| [generator.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/generator.py) | Demand | "Customer arrival patterns" |
+| **RUNNERS** | | |
+| [base_runner.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/base_runner.py) | Foundation | "Common setup for training" |
+| [runner.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py) | Main Loop | "The training director" |
+| **UTILS** | | |
+| [separated_buffer.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/utils/separated_buffer.py) | Memory | "Notebook for experiences" |
+| `valuenorm.py` | Normalization | "Keep numbers stable" |
+| `util.py` | Helpers | "Miscellaneous tools" |
+
+---
+
+## 🔍 The Most Important Files to Understand
+
+If you're short on time, focus on these **5 critical files**:
+
+1. **[train_env.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/train_env.py)** - Understand the startup flow
+2. **[runners/separated/runner.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/runners/separated/runner.py)** - Understand the training loop
+3. **[envs/serial.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/envs/serial.py)** - Understand the supply chain simulation
+4. **[algorithms/happo_trainer.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/happo_trainer.py)** - Understand how learning happens
+5. **[algorithms/actor_critic.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/algorithms/actor_critic.py)** - Understand the neural network structure
+
+These 5 files contain **80% of the core logic**!
+
+---
+
+**Ready for Phase 4?** Let me know when you'd like me to create the **Glossary of Terms** and identify any **missing parts or code issues**!

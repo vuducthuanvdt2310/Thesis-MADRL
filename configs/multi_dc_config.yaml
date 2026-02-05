@@ -1,0 +1,71 @@
+# Multi-DC 2-Echelon Inventory Environment Configuration
+
+environment:
+  n_skus: 3  # Number of products
+  max_days: 365  # Episode length
+  
+  lead_time:
+    # Supplier → DC (long-distance, variable)
+    supplier_to_dc:
+      distribution: "uniform"
+      min: 7
+      max: 14
+    
+    # DC → Retailer (regional, fast)
+    dc_to_retailer:
+      distribution: "uniform"
+      min: 1
+      max: 1  # Fixed 1-day delivery for easier training
+
+# Cost parameters (Unit: 10,000 VND - e.g., 7.5 = 75,000 VND)
+costs:
+  # DC Costs (2 DCs × 3 SKUs)
+  holding_cost_dc:
+    - [0.08, 0.06, 0.12]  # DC_0: 800, 600, 1200 VND/day - realistic 0.5-2% annual rate
+    - [0.07, 0.05, 0.10]  # DC_1
+
+  backlog_cost_dc:
+    - [1.0, 0.8, 1.5]  # DC_0: 10k, 8k, 15k VND/day - reduced from overly punitive 30-40k
+    - [1.0, 0.8, 1.5]  # DC_1
+  
+  fixed_order_cost_dc:
+    - [5.0, 5.0, 5.0]  # DC_0: 50k VND - reasonable for supplier orders (admin + processing)
+    - [5.0, 5.0, 5.0]  # DC_1
+  
+  # Retailer Costs (3 Retailers × 3 SKUs)
+  # BALANCED to match DC cost magnitude - prevent reward explosion
+  holding_cost_retailer:
+    - [0.06, 0.05, 0.09]  # Retailer_0: 600, 500, 900 VND/day (reduced ~40%)
+    - [0.055, 0.045, 0.075]  # Retailer_1  
+    - [0.065, 0.055, 0.095]  # Retailer_2
+  
+  backlog_cost_retailer:
+    - [0.6, 0.5, 0.7]  # Retailer_0: 6k, 5k, 7k VND/day - SIGNIFICANTLY REDUCED to match DC levels
+    - [0.55, 0.45, 0.65]  # Retailer_1
+    - [0.65, 0.55, 0.75]  # Retailer_2
+  
+  fixed_order_cost_retailer:
+    - [2.5, 2.5, 2.5]  # Retailer_0: 25k VND - reduced to balance ordering costs
+    - [2.5, 2.5, 2.5]  # Retailer_1
+    - [2.5, 2.5, 2.5]  # Retailer_2
+  
+  # Variable costs for ordering from DCs (per unit transportation/handling)
+  # Shape: (n_retailers, n_dcs, n_skus)
+  # REDUCED to balance with DC market prices - prevent high ordering costs
+  variable_cost_retailer:
+    # Retailer_0
+    - [ [0.5, 0.4, 0.7],  # Costs from DC_0: 5k, 4k, 7k VND/unit (reduced ~40%)
+        [0.6, 0.5, 0.8] ] # Costs from DC_1 (slightly higher due to distance)
+    # Retailer_1
+    - [ [0.6, 0.5, 0.8],  # Costs from DC_0
+        [0.5, 0.4, 0.7] ] # Costs from DC_1 (cheaper - closer location)
+    # Retailer_2
+    - [ [0.5, 0.4, 0.7],  # Costs from DC_0
+        [0.6, 0.5, 0.8] ] # Costs from DC_1
+
+# Market Pricing (for DC orders from supplier)
+pricing:
+  base_price: [10.0, 8.0, 15.0]  # Base prices per SKU
+  min_price: [6.0, 4.0, 10.0]    # Price floor
+  max_price: [18.0, 14.0, 25.0]  # Price ceiling
+  volatility: 0.15  # ±15% typical variation
