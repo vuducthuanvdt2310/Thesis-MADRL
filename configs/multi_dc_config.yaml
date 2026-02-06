@@ -28,8 +28,8 @@ constraints:
 
 # Reward parameters
 rewards:
-  survival_reward: 10.0  # Bonus for each step not terminated
-  termination_penalty: 50.0  # Penalty for violation termination
+  survival_reward: 5.0  # Bonus for each step not terminated
+  termination_penalty: 80.0  # Penalty for violation termination
 
 # Cost parameters (Unit: 10,000 VND - e.g., 7.5 = 75,000 VND)
 costs:

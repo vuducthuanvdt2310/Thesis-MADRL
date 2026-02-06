@@ -55,13 +55,36 @@ class CRunner(Runner):
                 print(f"[WARNING] No training_state.pt found. Starting with best_reward = -inf")
 
         for episode in range(start_episode, episodes):
-            
+            # Calculate total steps for logging (used in eval and training logs)
+            total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads
+
             if episode % self.eval_interval == 0 and self.use_eval:
                 re, bw_res = self.eval()
                 print()
                 print("Eval average reward: ", re, " Eval ordering fluctuation measurement (downstream to upstream): ", bw_res)
+                
+                # --- SIMPLE CSV LOGGING ---
+                # This creates a data file that is easy to plot
+                csv_path = os.path.join(str(self.run_dir), "progress.csv")
+                
+                # Create header if file doesn't exist (e.g. first run)
+                if not os.path.exists(csv_path):
+                    with open(csv_path, "w") as f:
+                        f.write("episode,steps,reward\n")
+                
+                # Append current result
+                with open(csv_path, "a") as f:
+                    f.write(f"{episode},{total_num_steps},{re}\n")
+                # -------------------------
+
                 if(re > best_reward and episode > 0):
                     self.save(reward=re)
+                
+                # Log evaluation reward to TensorBoard
+                self.writter.add_scalar("eval/average_reward", re, total_num_steps)
+                self.writter.add_scalar("eval/bullwhip_effect", np.mean(bw_res) if len(bw_res) > 0 else 0, total_num_steps)
+
+                if(re > best_reward and episode > 0):
                     # Save training state
                     training_state = {
                         'episode': episode,
@@ -115,7 +138,7 @@ class CRunner(Runner):
             train_infos = self.train()
             
             # post process
-            total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads           
+            # total_num_steps is now calculated at start of loop
 
             # Log training metrics every 100 steps (instead of every episode)
             # This provides finer-grained TensorBoard charts
@@ -303,11 +326,18 @@ class CRunner(Runner):
                     values[:,agent_id], rewards[:,agent_id], masks[:,agent_id])
 
     def log_train(self, train_infos, total_num_steps):
+        total_agent_reward = 0
         for agent_id in range(self.num_agents):
-            train_infos[agent_id]["average_step_rewards"] = np.mean(self.buffer[agent_id].rewards)
+            agent_rew = np.mean(self.buffer[agent_id].rewards)
+            train_infos[agent_id]["average_step_rewards"] = agent_rew
+            total_agent_reward += agent_rew
+            
             for k, v in train_infos[agent_id].items():
                 agent_k = "agent%i/" % agent_id + k
                 self.writter.add_scalars(agent_k, {agent_k: v}, total_num_steps)
+        
+        # Log total system reward (sum of all agents)
+        self.writter.add_scalar("system/total_average_step_reward", total_agent_reward, total_num_steps)
     
     @torch.no_grad()
     def eval(self):
