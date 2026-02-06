@@ -65,11 +65,16 @@ class MultiDCInventoryEnv:
         
         # Cost parameters
         self._load_cost_parameters()
+        self._load_reward_parameters()
+        
+        # Load constraints
+        self._load_constraints()
         
         # State variables
         self.inventory = {}  # {agent_id: np.array(n_skus)}
         self.backlog = {}
         self.pipeline = {}  # {agent_id: List[order_dicts]}
+        self.last_actions = {i: 0.0 for i in range(self.n_agents)}  # Track last order qty
         
         # Market price tracking (for DCs ordering from supplier)
         self.market_prices = None
@@ -112,6 +117,26 @@ class MultiDCInventoryEnv:
             'min': np.array(self.config['pricing']['min_price'], dtype=np.float32),
             'max': np.array(self.config['pricing']['max_price'], dtype=np.float32)
         }
+
+    def _load_reward_parameters(self):
+        """Load reward parameters from config."""
+        if 'rewards' in self.config and 'survival_reward' in self.config['rewards']:
+            self.survival_reward = float(self.config['rewards']['survival_reward'])
+        else:
+            self.survival_reward = 0.0
+            
+        if 'rewards' in self.config and 'termination_penalty' in self.config['rewards']:
+            self.termination_penalty = float(self.config['rewards']['termination_penalty'])
+        else:
+            self.termination_penalty = 0.0
+
+    def _load_constraints(self):
+        """Load constraints from config."""
+        if 'constraints' in self.config:
+            self.on_shelf_quantity = np.array(self.config['constraints']['on_shelf_quantity'], dtype=np.float32)
+        else:
+            # Default to 0 if not specified
+            self.on_shelf_quantity = np.zeros((self.n_retailers, self.n_skus), dtype=np.float32)
     
     def _define_spaces(self):
         """Define observation and action spaces for each agent type."""
@@ -137,7 +162,7 @@ class MultiDCInventoryEnv:
         self.action_dim_retailer = 6  # Retailers use all 6
         
         # Uniform action space for all agents
-        self.action_space = spaces.Box(0, 50, (self.action_dim,), dtype=np.float32)
+        self.action_space = spaces.Box(0, 70, (self.action_dim,), dtype=np.float32)
         
         # Combined spaces (uniform for compatibility)
         self.observation_spaces = {
@@ -200,6 +225,9 @@ class MultiDCInventoryEnv:
         # Clip actions to valid ranges
         actions = self._clip_actions(actions)
         
+        # Track total orders for logging
+        self.last_actions = {i: 0.0 for i in range(self.n_agents)}
+        
         # === PHASE 1: Retailers place orders to DCs ===
         retailer_orders = self._process_retailer_orders(actions)
         
@@ -225,7 +253,26 @@ class MultiDCInventoryEnv:
         observations = self._get_observations()
         
         # === PHASE 9: Check termination ===
-        done = self.current_day >= self.max_days
+        # Check max days
+        time_limit_reached = self.current_day >= self.max_days
+        
+        # Check on-shelf quantity constraint
+        # Terminate if ANY SKU at ANY retailer drops below the threshold
+        constraint_violated = False
+        for retailer_idx, retailer_id in enumerate(self.retailer_ids):
+            for sku in range(self.n_skus):
+                if self.inventory[retailer_id][sku] < self.on_shelf_quantity[retailer_idx][sku]:
+                    constraint_violated = True
+                    break
+            if constraint_violated:
+                break
+        
+        # Apply termination penalty if violated
+        if constraint_violated:
+            for i in range(self.n_agents):
+                rewards[i] -= self.termination_penalty
+
+        done = time_limit_reached or constraint_violated
         dones = {i: done for i in range(self.n_agents)}
         
         infos = {i: {} for i in range(self.n_agents)}
@@ -239,8 +286,8 @@ class MultiDCInventoryEnv:
             action = np.clip(action, 0, None)  # No negative orders
             
             if agent_id in self.dc_ids:
-                # DC: max 50 per SKU
-                clipped[agent_id] = np.clip(action, 0, 50)
+                # DC: max 70 per SKU
+                clipped[agent_id] = np.clip(action, 0, 70)
             else:
                 # Retailer: max 30 per order
                 clipped[agent_id] = np.clip(action, 0, 30)
@@ -272,8 +319,15 @@ class MultiDCInventoryEnv:
             retailer_orders[1][retailer_id] = {
                 sku: float(dc1_orders[sku]) for sku in range(self.n_skus)
             }
+            
+            # Track total order for logging
+            self.last_actions[retailer_id] = np.sum(dc0_orders) + np.sum(dc1_orders)
         
         return retailer_orders
+        
+    def get_orders(self) -> Dict[int, float]:
+        """Return total quantity ordered by each agent in the last step."""
+        return self.last_actions
     
     def _fulfill_retailer_orders(self, retailer_orders: Dict):
         """
@@ -371,6 +425,10 @@ class MultiDCInventoryEnv:
                         'arrival_day': arrival_day,
                         'source': 'supplier'
                     })
+            
+            # Track total order for logging
+            # Note: DC actions are only first 3 elements
+            self.last_actions[dc_id] = np.sum(action[:self.n_skus])
     
     def _process_arrivals(self):
         """Process all pipeline arrivals for all agents."""
@@ -431,8 +489,8 @@ class MultiDCInventoryEnv:
             row['sku_2_demand']
         ], dtype=np.float32)
         
-        # Retailer-specific multipliers (different store sizes)
-        retailer_multipliers = [1.0, 0.8, 1.2]  # R0 medium, R1 small, R2 large
+        
+        retailer_multipliers = [1.0, 1.0, 1.0]  
         demand = base_demand * retailer_multipliers[retailer_idx]
         
         return demand
@@ -480,7 +538,7 @@ class MultiDCInventoryEnv:
                 
                 total_cost += holding + backlog + ordering
             
-            rewards[dc_id] = -total_cost
+            rewards[dc_id] = -total_cost + self.survival_reward
         
         # Retailer rewards
         for retailer_idx, retailer_id in enumerate(self.retailer_ids):
@@ -509,7 +567,7 @@ class MultiDCInventoryEnv:
                 
                 total_cost += holding + backlog + ordering
             
-            rewards[retailer_id] = -total_cost
+            rewards[retailer_id] = -total_cost + self.survival_reward
         
         return rewards
     

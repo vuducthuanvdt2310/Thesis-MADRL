@@ -363,9 +363,10 @@ class SubprocVecEnvMultiDC(object):
             inv.append(inv_dict)
         
         # Multi-DC tracks actions internally, not as separate orders/demand
+        # Multi-DC tracks actions internally, not as separate orders/demand
         # Return dictionaries with agent_id keys for logging compatibility
         demand = [{agent_id: 0 for agent_id in range(self.num_agent)} for env in self.env_list]
-        orders = [{agent_id: 0 for agent_id in range(self.num_agent)} for env in self.env_list]
+        orders = [env.get_orders() for env in self.env_list]
         return inv, demand, orders
     
     def get_eval_num(self):
@@ -468,7 +469,7 @@ class DummyVecEnvMultiDC(object):
         env = self.env_list[0]
         inv = [env.inventory]
         demand = [{}]
-        orders = [{}]
+        orders = [env.get_orders()]
         return inv, demand, orders
     
     def get_eval_num(self):

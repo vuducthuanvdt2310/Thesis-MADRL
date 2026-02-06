@@ -17,6 +17,20 @@ environment:
       min: 1
       max: 1  # Fixed 1-day delivery for easier training
 
+# Constraints (Termination conditions)
+constraints:
+  # Minimum on-shelf quantity for each Retailer x SKU
+  # If inventory drops below this value for ANY SKU at ANY retailer, the episode terminates.
+  on_shelf_quantity:
+    - [5.0, 5.0, 5.0]  # Retailer_0
+    - [5.0, 5.0, 5.0]  # Retailer_1
+    - [5.0, 5.0, 5.0]  # Retailer_2
+
+# Reward parameters
+rewards:
+  survival_reward: 10.0  # Bonus for each step not terminated
+  termination_penalty: 50.0  # Penalty for violation termination
+
 # Cost parameters (Unit: 10,000 VND - e.g., 7.5 = 75,000 VND)
 costs:
   # DC Costs (2 DCs × 3 SKUs)
