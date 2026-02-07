@@ -109,9 +109,9 @@ if __name__ == "__main__":
     parser.set_defaults(
         env_name="MultiDC",
         scenario_name="inventory_2echelon",
-        num_agents=5,        # 2 DCs + 3 Retailers
+        num_agents=17,        # 2 DCs + 15 Retailers
         episode_length=365,  # Days per episode
-        num_env_steps=365000000, # Total training steps
+        num_env_steps=365000, # Total training steps
         n_rollout_threads=10, # Parallel environments
         n_training_threads=1, # Training threads
         algorithm_name="happo",
@@ -122,7 +122,7 @@ if __name__ == "__main__":
         eval_episodes=5,
         log_interval=1,
         n_warmup_evaluations=3,  # Minimum evaluations before early stopping kicks in
-        n_no_improvement_thres=100  # Allow 20 evaluations without improvement before stopping
+        n_no_improvement_thres=1000  # Allow 20 evaluations without improvement before stopping
     )
     
     all_args = parse_args(sys.argv[1:], parser)
@@ -187,7 +187,7 @@ if __name__ == "__main__":
     print(f"Environment: {all_args.env_name}")
     print(f"Scenario: {all_args.scenario_name}")
     print(f"Algorithm: {all_args.algorithm_name}")
-    print(f"Agents: {all_args.num_agents} (2 DCs + 3 Retailers)")
+    print(f"Agents: {all_args.num_agents} (2 DCs + {all_args.num_agents - 2} Retailers)")
     print(f"Parallel envs: {all_args.n_rollout_threads}")
     print(f"Episode length: {all_args.episode_length}")
     print(f"Total steps: {all_args.num_env_steps:,}")

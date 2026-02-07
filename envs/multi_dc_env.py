@@ -42,8 +42,8 @@ class MultiDCInventoryEnv:
         
         # Network topology
         self.n_dcs = 2  # Distribution Centers
-        self.n_retailers = 3  # Retail locations
-        self.n_agents = self.n_dcs + self.n_retailers  # Total: 5 agents
+        self.n_retailers = self.config['environment'].get('n_retailers', 3)  # Retail locations
+        self.n_agents = self.n_dcs + self.n_retailers  # Total: 17 agents (if 15 retailers)
         self.n_skus = self.config['environment']['n_skus']
         
         # Agent IDs
@@ -181,7 +181,7 @@ class MultiDCInventoryEnv:
         
         # Reset state for all agents
         for agent_id in range(self.n_agents):
-            self.inventory[agent_id] = np.full(self.n_skus, 20.0, dtype=np.float32)
+            self.inventory[agent_id] = np.full(self.n_skus, 100.0, dtype=np.float32)
             self.backlog[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
             self.pipeline[agent_id] = []
         
@@ -272,7 +272,7 @@ class MultiDCInventoryEnv:
             for i in range(self.n_agents):
                 rewards[i] -= self.termination_penalty
 
-        done = time_limit_reached or constraint_violated
+        done = time_limit_reached
         dones = {i: done for i in range(self.n_agents)}
         
         infos = {i: {} for i in range(self.n_agents)}
@@ -287,10 +287,10 @@ class MultiDCInventoryEnv:
             
             if agent_id in self.dc_ids:
                 # DC: max 70 per SKU
-                clipped[agent_id] = np.clip(action, 0, 70)
+                clipped[agent_id] = np.clip(action, 0, 90)
             else:
-                # Retailer: max 30 per order
-                clipped[agent_id] = np.clip(action, 0, 30)
+                # Retailer: max 60 per order
+                clipped[agent_id] = np.clip(action, 0, 60)
         
         return clipped
     
@@ -490,7 +490,7 @@ class MultiDCInventoryEnv:
         ], dtype=np.float32)
         
         
-        retailer_multipliers = [1.0, 1.0, 1.0]  
+        retailer_multipliers = [1.0] * self.n_retailers
         demand = base_demand * retailer_multipliers[retailer_idx]
         
         return demand

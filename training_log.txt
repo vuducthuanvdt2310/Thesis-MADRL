@@ -1,0 +1,67 @@
+Models will be saved locally: D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results
+
+======================================================================
+Multi-DC 2-Echelon Inventory Training
+======================================================================
+Environment: MultiDC
+Scenario: inventory_2echelon
+Algorithm: happo
+Agents: 17 (2 DCs + 15 Retailers)
+Parallel envs: 1
+Episode length: 365
+Total steps: 400
+======================================================================
+Using CPU for training...
+
+======================================================================
+Training starts for seed: 0
+======================================================================
+
+Results will be saved to: D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\full_training\run_seed_1
+Models will be saved to: D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\full_training\run_seed_1\models
+
+Creating training environments...
+[MultiDCEnv] Loaded demand data: 365 days
+[MultiDCEnv] Initialized: 2 DCs, 15 Retailers, 3 SKUs
+[MultiDCEnv] Loaded demand data: 365 days
+[MultiDCEnv] Initialized: 2 DCs, 15 Retailers, 3 SKUs
+Environments created: 1 parallel envs
+Agents per env: 17
+Observation spaces: DCs=27D, Retailers=36D
+Action spaces: DCs=3D continuous, Retailers=6D continuous
+
+Starting training...
+
+share_observation_space:  [Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32), Box(-inf, inf, (594,), float32)]
+observation_space:  [Box(0.0, 1.0, (27,), float32), Box(0.0, 1.0, (27,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32), Box(0.0, 1.0, (36,), float32)]
+action_space:  [Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32), Box(0.0, 50.0, (6,), float32)]
+[DEBUG] self.model_dir = None
+Traceback (most recent call last):
+  File "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\train_multi_dc.py", line 266, in <module>
+    reward, bw = runner.run()
+                 ^^^^^^^^^^^^
+  File "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\runners\separated\runner.py", line 62, in run
+    re, bw_res = self.eval()
+                 ^^^^^^^^^^^
+  File "C:\Users\DELL\AppData\Local\Programs\Python\Python312\Lib\site-packages\torch\utils\_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\runners\separated\runner.py", line 413, in eval
+    eval_obs, eval_rewards, eval_dones, eval_infos = self.eval_envs.step(eval_actions_env)
+                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\envs\env_wrappers.py", line 438, in step
+    obs_dict, rew_dict, done_dict, info_dict = env.step(action_dict)
+                                               ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\envs\multi_dc_env.py", line 253, in step
+    observations = self._get_observations()
+                   ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\envs\multi_dc_env.py", line 584, in _get_observations
+    observations[retailer_id] = self._get_retailer_observation(retailer_id)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\envs\multi_dc_env.py", line 691, in _get_retailer_observation
+    pipeline_dc0_0_1 = sum(o['qty'] for o in self.pipeline[retailer_id]
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\envs\multi_dc_env.py", line 691, in <genexpr>
+    pipeline_dc0_0_1 = sum(o['qty'] for o in self.pipeline[retailer_id]
+
+KeyboardInterrupt

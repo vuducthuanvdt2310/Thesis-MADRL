@@ -2,6 +2,7 @@
 
 environment:
   n_skus: 3  # Number of products
+  n_retailers: 15 # Number of retailers
   max_days: 365  # Episode length
   
   lead_time:
@@ -25,11 +26,23 @@ constraints:
     - [5.0, 5.0, 5.0]  # Retailer_0
     - [5.0, 5.0, 5.0]  # Retailer_1
     - [5.0, 5.0, 5.0]  # Retailer_2
+    - [5.0, 5.0, 5.0]  # Retailer_3
+    - [5.0, 5.0, 5.0]  # Retailer_4
+    - [5.0, 5.0, 5.0]  # Retailer_5
+    - [5.0, 5.0, 5.0]  # Retailer_6
+    - [5.0, 5.0, 5.0]  # Retailer_7
+    - [5.0, 5.0, 5.0]  # Retailer_8
+    - [5.0, 5.0, 5.0]  # Retailer_9
+    - [5.0, 5.0, 5.0]  # Retailer_10
+    - [5.0, 5.0, 5.0]  # Retailer_11
+    - [5.0, 5.0, 5.0]  # Retailer_12
+    - [5.0, 5.0, 5.0]  # Retailer_13
+    - [5.0, 5.0, 5.0]  # Retailer_14
 
 # Reward parameters
 rewards:
-  survival_reward: 5.0  # Bonus for each step not terminated
-  termination_penalty: 80.0  # Penalty for violation termination
+  survival_reward: 10.0  # Bonus for each step not terminated
+  termination_penalty: 50.0  # Penalty for violation termination
 
 # Cost parameters (Unit: 10,000 VND - e.g., 7.5 = 75,000 VND)
 costs:
@@ -49,33 +62,105 @@ costs:
   # Retailer Costs (3 Retailers × 3 SKUs)
   # BALANCED to match DC cost magnitude - prevent reward explosion
   holding_cost_retailer:
-    - [0.06, 0.05, 0.09]  # Retailer_0: 600, 500, 900 VND/day (reduced ~40%)
-    - [0.055, 0.045, 0.075]  # Retailer_1  
+    - [0.06, 0.05, 0.09]  # Retailer_0
+    - [0.055, 0.045, 0.075]  # Retailer_1
     - [0.065, 0.055, 0.095]  # Retailer_2
+    - [0.06, 0.05, 0.09]  # Retailer_3
+    - [0.055, 0.045, 0.075]  # Retailer_4
+    - [0.065, 0.055, 0.095]  # Retailer_5
+    - [0.06, 0.05, 0.09]  # Retailer_6
+    - [0.055, 0.045, 0.075]  # Retailer_7
+    - [0.065, 0.055, 0.095]  # Retailer_8
+    - [0.06, 0.05, 0.09]  # Retailer_9
+    - [0.055, 0.045, 0.075]  # Retailer_10
+    - [0.065, 0.055, 0.095]  # Retailer_11
+    - [0.06, 0.05, 0.09]  # Retailer_12
+    - [0.055, 0.045, 0.075]  # Retailer_13
+    - [0.065, 0.055, 0.095]  # Retailer_14
   
   backlog_cost_retailer:
-    - [0.6, 0.5, 0.7]  # Retailer_0: 6k, 5k, 7k VND/day - SIGNIFICANTLY REDUCED to match DC levels
+    - [0.6, 0.5, 0.7]  # Retailer_0
     - [0.55, 0.45, 0.65]  # Retailer_1
     - [0.65, 0.55, 0.75]  # Retailer_2
+    - [0.6, 0.5, 0.7]  # Retailer_3
+    - [0.55, 0.45, 0.65]  # Retailer_4
+    - [0.65, 0.55, 0.75]  # Retailer_5
+    - [0.6, 0.5, 0.7]  # Retailer_6
+    - [0.55, 0.45, 0.65]  # Retailer_7
+    - [0.65, 0.55, 0.75]  # Retailer_8
+    - [0.6, 0.5, 0.7]  # Retailer_9
+    - [0.55, 0.45, 0.65]  # Retailer_10
+    - [0.65, 0.55, 0.75]  # Retailer_11
+    - [0.6, 0.5, 0.7]  # Retailer_12
+    - [0.55, 0.45, 0.65]  # Retailer_13
+    - [0.65, 0.55, 0.75]  # Retailer_14
   
   fixed_order_cost_retailer:
-    - [2.5, 2.5, 2.5]  # Retailer_0: 25k VND - reduced to balance ordering costs
+    - [2.5, 2.5, 2.5]  # Retailer_0
     - [2.5, 2.5, 2.5]  # Retailer_1
     - [2.5, 2.5, 2.5]  # Retailer_2
+    - [2.5, 2.5, 2.5]  # Retailer_3
+    - [2.5, 2.5, 2.5]  # Retailer_4
+    - [2.5, 2.5, 2.5]  # Retailer_5
+    - [2.5, 2.5, 2.5]  # Retailer_6
+    - [2.5, 2.5, 2.5]  # Retailer_7
+    - [2.5, 2.5, 2.5]  # Retailer_8
+    - [2.5, 2.5, 2.5]  # Retailer_9
+    - [2.5, 2.5, 2.5]  # Retailer_10
+    - [2.5, 2.5, 2.5]  # Retailer_11
+    - [2.5, 2.5, 2.5]  # Retailer_12
+    - [2.5, 2.5, 2.5]  # Retailer_13
+    - [2.5, 2.5, 2.5]  # Retailer_14
   
   # Variable costs for ordering from DCs (per unit transportation/handling)
   # Shape: (n_retailers, n_dcs, n_skus)
   # REDUCED to balance with DC market prices - prevent high ordering costs
   variable_cost_retailer:
     # Retailer_0
-    - [ [0.5, 0.4, 0.7],  # Costs from DC_0: 5k, 4k, 7k VND/unit (reduced ~40%)
-        [0.6, 0.5, 0.8] ] # Costs from DC_1 (slightly higher due to distance)
+    - [ [0.5, 0.4, 0.7],
+        [0.6, 0.5, 0.8] ]
     # Retailer_1
-    - [ [0.6, 0.5, 0.8],  # Costs from DC_0
-        [0.5, 0.4, 0.7] ] # Costs from DC_1 (cheaper - closer location)
+    - [ [0.6, 0.5, 0.8],
+        [0.5, 0.4, 0.7] ]
     # Retailer_2
-    - [ [0.5, 0.4, 0.7],  # Costs from DC_0
-        [0.6, 0.5, 0.8] ] # Costs from DC_1
+    - [ [0.5, 0.4, 0.7],
+        [0.6, 0.5, 0.8] ]
+    # Retailer_3
+    - [ [0.5, 0.4, 0.7],
+        [0.6, 0.5, 0.8] ]
+    # Retailer_4
+    - [ [0.6, 0.5, 0.8],
+        [0.5, 0.4, 0.7] ]
+    # Retailer_5
+    - [ [0.5, 0.4, 0.7],
+        [0.6, 0.5, 0.8] ]
+    # Retailer_6
+    - [ [0.5, 0.4, 0.7],
+        [0.6, 0.5, 0.8] ]
+    # Retailer_7
+    - [ [0.6, 0.5, 0.8],
+        [0.5, 0.4, 0.7] ]
+    # Retailer_8
+    - [ [0.5, 0.4, 0.7],
+        [0.6, 0.5, 0.8] ]
+    # Retailer_9
+    - [ [0.5, 0.4, 0.7],
+        [0.6, 0.5, 0.8] ]
+    # Retailer_10
+    - [ [0.6, 0.5, 0.8],
+        [0.5, 0.4, 0.7] ]
+    # Retailer_11
+    - [ [0.5, 0.4, 0.7],
+        [0.6, 0.5, 0.8] ]
+    # Retailer_12
+    - [ [0.5, 0.4, 0.7],
+        [0.6, 0.5, 0.8] ]
+    # Retailer_13
+    - [ [0.6, 0.5, 0.8],
+        [0.5, 0.4, 0.7] ]
+    # Retailer_14
+    - [ [0.5, 0.4, 0.7],
+        [0.6, 0.5, 0.8] ]
 
 # Market Pricing (for DC orders from supplier)
 pricing:
