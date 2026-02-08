@@ -1,0 +1,114 @@
+# HAPPO Hyperparameter Optimization Walkthrough
+
+This guide explains how to use the [optimize_hyperparameters.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/optimize_hyperparameters.py) script to tune your HAPPO model for the Multi-DC Inventory problem.
+
+## 1. Prerequisites
+Ensure you have the required packages installed:
+```bash
+pip install optuna plotly kaleido numpy torch gymnasium
+```
+(I have already installed these for you).
+
+## 2. Running the Script
+Run the script directly from the terminal:
+```bash
+python range_hyperparameters.py
+```
+*Note: The script is named [optimize_hyperparameters.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/optimize_hyperparameters.py) in your workspace.*
+
+## 3. Script Structure
+
+### Mock Environment ([MockInventoryEnv](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/optimize_hyperparameters.py#16-60))
+- Mimics the `MultiDCInventoryEnv` (2 DCs + 15 Retailers).
+- Returns random observations and rewards for testing purposes.
+- **Action:** Replace this class with your actual [make_train_env](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/train_multi_dc.py#62-65) function from [train_multi_dc.py](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/train_multi_dc.py).
+
+### Mock Agent ([MockHAPPOAgent](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/optimize_hyperparameters.py#61-94))
+- A simplified Actor-Critic agent.
+- Accepts hyperparameters: `lr`, `clip_range`, `entropy_coef`, `gae_lambda`, `batch_size`.
+- **Action:** Replace this with your actual [HAPPO](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/optimize_hyperparameters.py#61-94) agent initialization.
+
+### Optimization Loop ([objective](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/optimize_hyperparameters.py#99-200) function)
+- Uses **Optuna** to sample hyperparameters.
+- Runs a training loop for 100 episodes (configurable).
+- Reports intermediate rewards to Optuna for **Pruning**.
+- If a trial is unpromising, it is pruned early to save time.
+
+## 4. Integration with Real Code
+To use this with your actual environment:
+1.  Import your environment: `from envs.env_wrappers import SubprocVecEnvMultiDC`
+2.  Import your runner/agent: `from runners.separated.runner import CRunner`
+3.  Modify [objective(trial)](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/optimize_hyperparameters.py#99-200):
+    ```python
+    def objective(trial):
+        # ... hyperparams ...
+        
+        # Initialize YOUR environment
+        env = SubprocVecEnvMultiDC(all_args)
+        
+        # Initialize YOUR runner with hyperparams
+        config = { ... } # Update config with sampled params
+        runner = CRunner(config)
+        
+        # Run training and report intermediate results
+        # You might need to modify CRunner to accept a 'trial' object 
+        # and call trial.report(reward, step) inside the training loop.
+    ```
+
+## 5. Interpreting Results
+
+### Console Output
+At the end of the script, you will see a summary like this:
+```
+Optimization Results
+==================================================
+Study statistics: 
+  Number of finished trials: 20
+  Number of pruned trials: 7
+  Number of complete trials: 13
+
+Best Trial:
+  Value (Reward): -76274.52    <-- This is your Max Reward (Min Cost)
+  Params: 
+    learning_rate: 0.00047...  <-- Best LR found
+    clip_range: 0.118...       <-- Best Clip Range found
+    entropy_coef: 0.010...     <-- Best Entropy Coef
+    gae_lambda: 0.965...       <-- Best GAE Lambda
+    batch_size: 32             <-- Best Batch Size
+```
+**Selection Strategy:**
+1.  Look at the **Best Trial** section.
+2.  Copy these values into your [configs/multi_dc_config.yaml](file:///d:/thuan/thesis/Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management/configs/multi_dc_config.yaml) or pass them as arguments to your training script.
+
+### Visualizations
+Open the generated HTML files in your browser:
+1.  **`optuna_optimization_history.html`**:
+    *   **X-axis:** Number of trials (iterations).
+    *   **Y-axis:** Reward value.
+    *   **Blue dots:** Completed trials.
+    *   **Red dots:** Pruned (failed/poor) trials.
+    *   **What to look for:** A trend going UP (or towards 0 if rewards are negative).
+
+2.  **`optuna_param_importance.html`**:
+    *   Shows a bar chart of which hyperparameters affected the result the most.
+    *   **Example:** If `learning_rate` is 0.8 (80%), it means changing LR has the biggest impact on your training. Focus on tuning that!
+
+## 6. How It Works (The Math)
+
+### The Optimization: TPE (Tree-structured Parzen Estimator)
+This method is smarter than random guessing. It models two probability distributions for each hyperparameter:
+1.  **$l(x)$**: The probability distribution of parameters that led to **Good** results (e.g., top 10% of trials).
+2.  **$g(x)$**: The probability distribution of parameters that led to **Bad** results (the rest).
+
+**The Goal:** Maximize the ratio $l(x) / g(x)$.
+*   It picks parameters that are *very likely* to be in the "Good" group and *very unlikely* to be in the "Bad" group.
+*   **Analogy:** Imagine separating past experiments into a "Success" pile and a "Failure" pile. TPE builds a histogram for the "Success" pile and picks new values where that histogram is highest.
+
+### Hyperparameter Importance (fANOVA)
+To figure out which parameter matters most, Optuna uses a method called **fANOVA (Functional Analysis of Variance)** or a Random Forest approach.
+1.  It builds a predictive model (like a Random Forest) that predicts the Reward based on the Hyperparameters.
+2.  It then analyzes this model to see how much the Reward changes when you change *only* one parameter.
+3.  **High Importance:** Changing this parameter causes a *huge* swing in the reward.
+4.  **Low Importance:** Changing this parameter barely affects the reward.
+
+

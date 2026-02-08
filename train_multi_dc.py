@@ -311,7 +311,7 @@ if __name__ == "__main__":
             # Format: results/experiment_name/run_seed_X
             
             # Output zip filename
-            zip_filename = f"{all_args.experiment_name}_seed_{seed}_results"
+            zip_filename = f"{all_args.experiment_name}"
             
             # For Kaggle, it is best to save the zip in the working directory (./)
             # or strictly in /kaggle/working if we want to be safe, but usually ./ works.
