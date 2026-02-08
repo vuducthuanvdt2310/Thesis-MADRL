@@ -111,7 +111,7 @@ if __name__ == "__main__":
         scenario_name="inventory_2echelon",
         num_agents=17,        # 2 DCs + 15 Retailers
         episode_length=365,  # Days per episode
-        num_env_steps=365000, # Total training steps
+        num_env_steps=36500000, # Total training steps
         n_rollout_threads=10, # Parallel environments
         n_training_threads=1, # Training threads
         algorithm_name="happo",

@@ -194,11 +194,11 @@ class CRunner(Runner):
                         # Multi-DC: demand is dict-based, skip detailed demand logging
                         print(f" --- Step {total_num_steps} Log ---")
 
-                        print(f"  DC Inventory (2): {inv[:2]}")
-                        print(f"  Retailer Inventory ({len(inv)-2}): {inv[2:]}")
-                        print(f"  DC Orders (2): {act[:2]}")
-                        print(f"  Retailer Orders ({len(act)-2}): {act[2:]}")
-                        print(f" ---------------------------")
+                        # print(f"  DC Inventory (2): {inv[:2]}")
+                        # print(f"  Retailer Inventory ({len(inv)-2}): {inv[2:]}")
+                        # print(f"  DC Orders (2): {act[:2]}")
+                        # print(f"  Retailer Orders ({len(act)-2}): {act[2:]}")
+                        # print(f" ---------------------------")
                     else:
                         # net_2x3: demand is array-based
                         print("Reward for thread " + str(t+1) + ": " + str(rew) + " " + str(round(np.mean(rew),2))+"  Inventory: " + str(inv)+"  Order: " + str(act) + " Demand: " + str(np.mean(threads_demand[t], 0)))
