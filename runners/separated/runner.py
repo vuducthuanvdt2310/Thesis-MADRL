@@ -64,17 +64,7 @@ class CRunner(Runner):
                 print("Eval average reward: ", re, " Eval ordering fluctuation measurement (downstream to upstream): ", bw_res)
                 
                 # --- SIMPLE CSV LOGGING ---
-                # This creates a data file that is easy to plot
-                csv_path = os.path.join(str(self.run_dir), "progress.csv")
-                
-                # Create header if file doesn't exist (e.g. first run)
-                if not os.path.exists(csv_path):
-                    with open(csv_path, "w") as f:
-                        f.write("episode,steps,reward\n")
-                
-                # Append current result
-                with open(csv_path, "a") as f:
-                    f.write(f"{episode},{total_num_steps},{re}\n")
+                # (Disabled here, moved to training loop for more frequent logging - every 100 steps)
                 # -------------------------
 
                 if(re > best_reward and episode > 0):
@@ -144,6 +134,27 @@ class CRunner(Runner):
             # This provides finer-grained TensorBoard charts
             if total_num_steps % 100 == 0:
                 self.log_train(train_infos, total_num_steps)
+
+                # --- SIMPLE CSV LOGGING (Every 100 steps) ---
+                csv_path = os.path.join(str(self.run_dir), "progress.csv")
+                
+                # Create header if file doesn't exist
+                if not os.path.exists(csv_path):
+                    with open(csv_path, "w") as f:
+                        f.write("episode,steps,reward\n")
+
+                # Calculate average training reward
+                train_total_reward = 0
+                for agent_id in range(self.num_agents):
+                    train_total_reward += np.mean(self.buffer[agent_id].rewards)
+                
+                # Append current result (using training reward)
+                with open(csv_path, "a") as f:
+                    try:
+                        f.write(f"{episode},{total_num_steps},{train_total_reward}\n")
+                    except Exception as e:
+                        print(f"Error writing to CSV: {e}")
+                # -------------------------
 
             # Console log information (keep episode-based for readability)
             if episode % self.log_interval == 0:

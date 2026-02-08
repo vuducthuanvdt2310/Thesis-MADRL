@@ -11,6 +11,7 @@ import os
 import socket
 import numpy as np
 from pathlib import Path
+import shutil
 import torch
 from config import get_config
 from envs.env_wrappers import SubprocVecEnvMultiDC, DummyVecEnvMultiDC
@@ -261,27 +262,74 @@ if __name__ == "__main__":
         }
 
         # Run training
-        print("Starting training...\n")
-        runner = Runner(config)
-        reward, bw = runner.run()
+        # Run training
+        try:
+            print("Starting training...\n")
+            runner = Runner(config)
+            reward, bw = runner.run()
 
-        # Save final results
-        with open(seed_res_record_file, 'a+') as f:
-            f.write(str(seed) + ' ' + str(reward) + ' ')
-            for fluc in bw:
-                f.write(str(fluc) + ' ')
-            f.write('\n')
+            # Save final results
+            with open(seed_res_record_file, 'a+') as f:
+                f.write(str(seed) + ' ' + str(reward) + ' ')
+                for fluc in bw:
+                    f.write(str(fluc) + ' ')
+                f.write('\n')
 
-        print(f"\n{'='*70}")
-        print(f"Training completed for seed {seed}")
-        print(f"Final reward: {reward}")
-        print(f"{'='*70}\n")
-
-        # Close environments
-        envs.close()
-        if all_args.use_eval and eval_envs is not envs:
-            eval_envs.close()
+            print(f"\n{'='*70}")
+            print(f"Training completed for seed {seed}")
+            print(f"Final reward: {reward}")
+            print(f"{'='*70}\n")
+            
+        except KeyboardInterrupt:
+            print(f"\n{'='*70}")
+            print(f"Training interrupted manually (KeyboardInterrupt)")
+            print(f"Saving current artifacts before exit...")
+            print(f"{'='*70}\n")
+            
+        except Exception as e:
+            print(f"\n{'='*70}")
+            print(f"Training failed with error: {e}")
+            import traceback
+            traceback.print_exc()
+            print(f"{'='*70}\n")
+            
+        finally:
+            # Close environments
+            envs.close()
+            if all_args.use_eval and eval_envs is not envs:
+                eval_envs.close()
     
+        # ================================================================
+        # ZIP ARTIFACTS FOR KAGGLE / EASY DOWNLOAD
+        # ================================================================
+        print("\n" + "="*70)
+        print("Zipping Training Artifacts...")
+        print("="*70)
+        
+        try:
+            # We want to zip the specific run directory: run_dir
+            # Format: results/experiment_name/run_seed_X
+            
+            # Output zip filename
+            zip_filename = f"{all_args.experiment_name}_seed_{seed}_results"
+            
+            # For Kaggle, it is best to save the zip in the working directory (./)
+            # or strictly in /kaggle/working if we want to be safe, but usually ./ works.
+            output_path = os.path.join(os.getcwd(), zip_filename)
+            
+            # Create zip archive
+            # root_dir is the directory we want to compress
+            shutil.make_archive(output_path, 'zip', run_dir)
+            
+            print(f"✓ Zip archive created successfully!")
+            print(f"  Location: {output_path}.zip")
+            print(f"  Content:  {run_dir}")
+            print("="*70)
+            
+        except Exception as e:
+            print(f"✗ Failed to create zip archive: {e}")
+            print("="*70)
+
     print("\n" + "="*70)
     print("All training runs completed!")
     print("="*70)
