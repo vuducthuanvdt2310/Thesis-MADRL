@@ -175,6 +175,39 @@ class Runner(object):
                 if self.trainer[agent_id].policy.critic_optimizer is not None:
                     torch.save(self.trainer[agent_id].policy.critic_optimizer.state_dict(), os.path.join(self.save_dir, f"critic_optimizer_agent{agent_id}{reward_suffix}.pt"))
 
+        # Automatic Cleanup: Delete older models with lower rewards to save space
+        if reward is not None:
+            import glob
+            try:
+                # Define patterns to check for each agent
+                patterns = ["actor_agent", "critic_agent", "actor_optimizer_agent", "critic_optimizer_agent", "model_agent"]
+                
+                for agent_id in range(self.num_agents):
+                    for patterned_prefix in patterns:
+                        # Construct search pattern: e.g., actor_agent0_reward_*.pt
+                        search_pattern = os.path.join(self.save_dir, f"{patterned_prefix}{agent_id}_reward_*.pt")
+                        files = glob.glob(search_pattern)
+                        
+                        for file_path in files:
+                            try:
+                                # Extract reward from filename
+                                # Filename format: prefix..._reward_{value}.pt
+                                filename = os.path.basename(file_path)
+                                # Extract value between '_reward_' and '.pt'
+                                reward_str = filename.split('_reward_')[1].replace('.pt', '')
+                                file_reward = float(reward_str)
+                                
+                                # If the file's reward is worse (lower) than the current one we just saved, delete it
+                                # Note: We compare with <, so the file we JUST SAVED (with == reward) is kept.
+                                if file_reward < reward:
+                                    print(f"  Cleanup: Removing suboptimal model {filename} ({file_reward:.2f} < {reward:.2f})")
+                                    os.remove(file_path)
+                            except (IndexError, ValueError):
+                                # Skip files that don't parse correctly
+                                continue
+            except Exception as e:
+                print(f"Warning: Model cleanup failed with error: {e}")
+
     def restore(self):
         """Load saved models, handling both exact filenames and reward-suffixed filenames."""
         import glob
