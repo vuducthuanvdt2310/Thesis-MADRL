@@ -28,6 +28,12 @@ class CRunner(Runner):
         record = 0
         start_episode = 0
 
+        # Initialize CSV logging
+        csv_path = os.path.join(str(self.run_dir), "progress.csv")
+        if not os.path.exists(csv_path):
+            with open(csv_path, "w") as f:
+                f.write("episode,steps,reward\n")
+
         # Load training state if available and model_dir is set
         print(f"[DEBUG] self.model_dir = {self.model_dir}")
         
@@ -55,6 +61,7 @@ class CRunner(Runner):
                 print(f"[WARNING] No training_state.pt found. Starting with best_reward = -inf")
 
         for episode in range(start_episode, episodes):
+            episode_rewards = []
             # Calculate total steps for logging (used in eval and training logs)
             total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads
 
@@ -109,6 +116,25 @@ class CRunner(Runner):
                 
                 available_actions = np.array([[None for agent_id in range(self.num_agents)] for info in infos])
 
+                # --- NEW LOGGING LOGIC ---
+                # Calculate system reward for this step: sum of all agents, averaged over threads
+                step_reward = np.sum(np.mean(rewards, axis=0))
+                episode_rewards.append(step_reward)
+
+                # Calculate global total steps
+                current_total_steps = (episode * self.episode_length * self.n_rollout_threads) + \
+                                      ((step + 1) * self.n_rollout_threads)
+
+                if current_total_steps % 100 == 0:
+                    # Calculate average reward over the episode so far
+                    avg_reward_so_far = np.mean(episode_rewards)
+                    try:
+                        with open(csv_path, "a") as f:
+                            f.write(f"{episode},{current_total_steps},{avg_reward_so_far}\n")
+                    except Exception as e:
+                        print(f"Error writing to CSV: {e}")
+                # -------------------------
+
                 rewards_log.append(rewards)
 
                 inv, demand, orders = self.envs.get_property()
@@ -134,27 +160,6 @@ class CRunner(Runner):
             # This provides finer-grained TensorBoard charts
             if total_num_steps % 100 == 0:
                 self.log_train(train_infos, total_num_steps)
-
-                # --- SIMPLE CSV LOGGING (Every 100 steps) ---
-                csv_path = os.path.join(str(self.run_dir), "progress.csv")
-                
-                # Create header if file doesn't exist
-                if not os.path.exists(csv_path):
-                    with open(csv_path, "w") as f:
-                        f.write("episode,steps,reward\n")
-
-                # Calculate average training reward
-                train_total_reward = 0
-                for agent_id in range(self.num_agents):
-                    train_total_reward += np.mean(self.buffer[agent_id].rewards)
-                
-                # Append current result (using training reward)
-                with open(csv_path, "a") as f:
-                    try:
-                        f.write(f"{episode},{total_num_steps},{train_total_reward}\n")
-                    except Exception as e:
-                        print(f"Error writing to CSV: {e}")
-                # -------------------------
 
             # Console log information (keep episode-based for readability)
             if episode % self.log_interval == 0:
