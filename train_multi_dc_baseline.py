@@ -313,13 +313,13 @@ if __name__ == "__main__":
             # Output zip filename
             zip_filename = f"{all_args.experiment_name}"
             
-            # # For Kaggle, it is best to save the zip in the working directory (./)
-            # # or strictly in /kaggle/working if we want to be safe, but usually ./ works.
-            # output_path = os.path.join(os.getcwd(), zip_filename)
+            # For Kaggle, it is best to save the zip in the working directory (./)
+            # or strictly in /kaggle/working if we want to be safe, but usually ./ works.
+            output_path = os.path.join(os.getcwd(), zip_filename)
             
-            # # Create zip archive
-            # # root_dir is the directory we want to compress
-            # shutil.make_archive(output_path, 'zip', run_dir)
+            # Create zip archive
+            # root_dir is the directory we want to compress
+            shutil.make_archive(output_path, 'zip', run_dir)
             
             print(f"✓ Zip archive created successfully!")
             print(f"  Location: {output_path}.zip")

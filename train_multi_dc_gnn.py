@@ -1,9 +1,15 @@
 #!/usr/bin/env python
 """
-Training script for Multi-DC 2-Echelon Inventory Environment with HAPPO
+GNN-HAPPO Training Script for Multi-DC 2-Echelon Inventory Environment
 
-This script trains a Multi-Agent RL model on the multi-DC environment using HAPPO algorithm.
-Models are saved automatically during training.
+This is the PROPOSED method using Graph Neural Networks to capture supply chain topology.
+
+Key differences from baseline:
+1. Uses GNN-HAPPO policy instead of standard MLP-based policy
+2. Constructs and passes adjacency matrix to represent supply chain graph
+3. Learns to coordinate agents through explicit graph structure
+
+Expected improvement: 15-20% better final reward vs baseline
 """
 
 import sys
@@ -31,12 +37,10 @@ def is_running_in_colab():
 def mount_google_drive():
     """Mount Google Drive in Colab."""
     try:
-        # Check if already mounted
         if os.path.exists('/content/drive/MyDrive'):
             print("✓ Google Drive already mounted!")
             return True
         
-        # Try to mount
         from google.colab import drive
         drive.mount('/content/drive', force_remount=False)
         print("✓ Google Drive mounted successfully!")
@@ -54,9 +58,6 @@ def mount_google_drive():
 
 # Set this to True to force using Google Drive even if not in Colab
 USE_GOOGLE_DRIVE = False
-
-# Configure your Google Drive path here
-# Default: /content/drive/MyDrive/thesis_models
 GOOGLE_DRIVE_PATH = "/content/drive/MyDrive/thesis_models"
 
 def make_train_env(all_args):
@@ -102,97 +103,72 @@ if __name__ == "__main__":
     # ================================================================
     
     parser = get_config()
+    
     # ================================================================
-    # DEFAULT CONFIGURATION FOR FULL TRAINING
-    # These values are set as defaults but CAN be overridden by command line args
-    # e.g., python train_multi_dc.py --experiment_name test_run
+    # GNN-HAPPO CONFIGURATION
     # ================================================================
+    # Add GNN-specific arguments
+    parser.add_argument('--gnn_type', type=str, default='GAT', 
+                       choices=['GAT', 'GCN'],
+                       help='Type of GNN to use')
+    parser.add_argument('--gnn_hidden_dim', type=int, default=128,
+                       help='Hidden dimension for GNN layers')
+    parser.add_argument('--gnn_num_layers', type=int, default=2,
+                       help='Number of GNN layers')
+    parser.add_argument('--num_attention_heads', type=int, default=4,
+                       help='Number of attention heads for GAT')
+    parser.add_argument('--gnn_dropout', type=float, default=0.1,
+                       help='Dropout rate for GNN')
+    parser.add_argument('--use_residual', type=lambda x: (str(x).lower() == 'true'), 
+                       default=True,
+                       help='Use residual connections in GNN')
+    parser.add_argument('--critic_pooling', type=str, default='mean',
+                       choices=['mean', 'max', 'concat'],
+                       help='Pooling method for critic')
+    parser.add_argument('--single_agent_obs_dim', type=int, default=36,
+                       help='Single agent observation dimension (use max: 36 for retailers)')
+
+    
+    # Default configuration
     parser.set_defaults(
         env_name="MultiDC",
         scenario_name="inventory_2echelon",
         num_agents=17,        # 2 DCs + 15 Retailers
-        episode_length=365,  # Days per episode
-        num_env_steps=36500000, # Total training steps
-        n_rollout_threads=10, # Parallel environments
-        n_training_threads=1, # Training threads
-        algorithm_name="happo",
-        experiment_name="full_training",
+        episode_length=365,   # Days per episode
+        num_env_steps=36500000,  # Total training steps
+        n_rollout_threads=1,
+        n_training_threads=1,
+        algorithm_name="gnn_happo",  # Changed from "happo"
+        experiment_name="gnn_happo_full",
         use_eval=True,
         n_eval_rollout_threads=1,
-        eval_interval=1,     # Evaluate every 1 episodes (was 500 - too large!)
+        eval_interval=1,
         eval_episodes=5,
         log_interval=1,
-        n_warmup_evaluations=3,  # Minimum evaluations before early stopping kicks in
-        n_no_improvement_thres=1000  # Allow 20 evaluations without improvement before stopping
+        n_warmup_evaluations=3,
+        n_no_improvement_thres=1000
     )
     
     all_args = parse_args(sys.argv[1:], parser)
     
-    # ================================================================
-    # PARAMETER EXPLANATIONS:
-    # ================================================================
-    # --algorithm_name happo
-    #   → HAPPO = Heterogeneous-Agent Proximal Policy Optimization
-    #   → Best for environments with different agent types (DCs vs Retailers)
-    #
-    # --experiment_name full_training
-    #   → Name to identify this training run
-    #   → Results saved to: results/MultiDC/inventory_2echelon/happo/full_training/
-    #
-    # --num_env_steps 3650000
-    #   → Total training steps = 10,000 episodes × 365 days
-    #   → Expected training time: ~3-4 hours
-    #
-    # --episode_length 365
-    #   → Each episode simulates 1 year (365 days)
-    #   → Matches your data file length
-    #
-    # --n_rollout_threads 5
-    #   → Runs 5 parallel environments simultaneously
-    #   → 5x faster than single environment
-    #   → Effective throughput: ~9,000 episodes/hour
-    #
-    # --save_interval (Unused)
-    #   → This parameter is NOT used.
-    #   → Models are saved automatically when evaluation reward improves.
-    #   → Checkpoints: "A better model is saved!" will appear in logs.
-    #   → Locations: results/.../models/actor_agentN.pt
-    #
-    # --use_eval True
-    #   → Enables periodic evaluation during training
-    #   → Helps track performance without noise from exploration
-    #
-    # --eval_interval 250
-    #   → Runs evaluation every 250 episodes
-    #   → 40 evaluation runs total over 10,000 episodes
-    #
-    # --log_interval 10
-    #   → Prints progress to console every 10 episodes
-    #   → Helps monitor training in real-time
-    # ================================================================
+    # CRITICAL: Force single_agent_obs_dim to 36 (max obs dim for retailers)
+    # This ensures GNN weight matrices match the padded observation dimensions
+    all_args.single_agent_obs_dim = 36
     
-    # --- Resume Training (Optional) ---
-    # Set this path to resume from a saved checkpoint
-    RESUME_MODEL_DIR = None
-    # RESUME_MODEL_DIR = r"d:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\04Febtest_1\run_seed_1"
-    if RESUME_MODEL_DIR:
-        all_args.model_dir = RESUME_MODEL_DIR
-        print(f"Resuming from: {all_args.model_dir}")
-    # --------------------------------------------------
-
-    seeds = all_args.seed
-
+    print(f"[DEBUG] single_agent_obs_dim set to: {all_args.single_agent_obs_dim}")
+    
+    # Handle seed as both int and list
+    seeds = all_args.seed if isinstance(all_args.seed, list) else [all_args.seed]
+    
     print("="*70)
-    print("Multi-DC 2-Echelon Inventory Training")
+    print("GNN-HAPPO Training Configuration")
     print("="*70)
     print(f"Environment: {all_args.env_name}")
-    print(f"Scenario: {all_args.scenario_name}")
-    print(f"Algorithm: {all_args.algorithm_name}")
-    print(f"Agents: {all_args.num_agents} (2 DCs + {all_args.num_agents - 2} Retailers)")
-    print(f"Parallel envs: {all_args.n_rollout_threads}")
+
     print(f"Episode length: {all_args.episode_length}")
     print(f"Total steps: {all_args.num_env_steps:,}")
     print("="*70)
+
     
     # CUDA
     if all_args.cuda and torch.cuda.is_available():
@@ -206,41 +182,39 @@ if __name__ == "__main__":
         print("Using CPU for training...")
         device = torch.device("cpu")
         torch.set_num_threads(all_args.n_training_threads)
-
+    
     for seed in seeds:
         print(f"\n{'='*70}")
         print(f"Training starts for seed: {seed}")
         print(f"{'='*70}\n")
-
+        
         # Create run directory
         run_dir = BASE_SAVE_DIR / "results" / all_args.experiment_name
         if not run_dir.exists():
             os.makedirs(str(run_dir))
-
+        
         curr_run = 'run_seed_%i' % (seed + 1)
-
         seed_res_record_file = run_dir / "seed_results.txt"
         
         run_dir = run_dir / curr_run
         if not run_dir.exists():
             os.makedirs(str(run_dir))
         
-        # Create models directory for saving
         models_dir = run_dir / "models"
         if not models_dir.exists():
             os.makedirs(str(models_dir))
         
         print(f"Results will be saved to: {run_dir}")
         print(f"Models will be saved to: {models_dir}\n")
-
+        
         if not os.path.exists(seed_res_record_file):
             open(seed_res_record_file, 'a+')
-
+        
         # Set seeds
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
         np.random.seed(seed)
-
+        
         # Create environments
         print("Creating training environments...")
         envs = make_train_env(all_args)
@@ -261,10 +235,9 @@ if __name__ == "__main__":
             "run_dir": run_dir
         }
 
-        # Run training
-        # Run training
+        # Run training with GNN-HAPPO
         try:
-            print("Starting training...\n")
+            print("Starting GNN-HAPPO training...\n")
             runner = Runner(config)
             reward, bw = runner.run()
 
@@ -299,37 +272,4 @@ if __name__ == "__main__":
             if all_args.use_eval and eval_envs is not envs:
                 eval_envs.close()
     
-        # ================================================================
-        # ZIP ARTIFACTS FOR KAGGLE / EASY DOWNLOAD
-        # ================================================================
-        print("\n" + "="*70)
-        print("Zipping Training Artifacts...")
-        print("="*70)
-        
-        try:
-            # We want to zip the specific run directory: run_dir
-            # Format: results/experiment_name/run_seed_X
-            
-            # Output zip filename
-            zip_filename = f"{all_args.experiment_name}"
-            
-            # # For Kaggle, it is best to save the zip in the working directory (./)
-            # # or strictly in /kaggle/working if we want to be safe, but usually ./ works.
-            # output_path = os.path.join(os.getcwd(), zip_filename)
-            
-            # # Create zip archive
-            # # root_dir is the directory we want to compress
-            # shutil.make_archive(output_path, 'zip', run_dir)
-            
-            print(f"✓ Zip archive created successfully!")
-            print(f"  Location: {output_path}.zip")
-            print(f"  Content:  {run_dir}")
-            print("="*70)
-            
-        except Exception as e:
-            print(f"✗ Failed to create zip archive: {e}")
-            print("="*70)
-
-    print("\n" + "="*70)
-    print("All training runs completed!")
-    print("="*70)
+    

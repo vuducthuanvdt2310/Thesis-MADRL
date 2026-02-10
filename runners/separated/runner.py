@@ -232,6 +232,7 @@ class CRunner(Runner):
         print(f"{'='*70}\n")
         return best_reward, best_bw
 
+
     def warmup(self):
         # reset env
         obs, available_actions = self.envs.reset()
@@ -267,13 +268,39 @@ class CRunner(Runner):
             # For continuous actions, available_actions is None
             avail_actions = self.buffer[agent_id].available_actions[step] if self.buffer[agent_id].available_actions is not None else None
             
-            value, action, action_log_prob, rnn_state, rnn_state_critic \
-                = self.trainer[agent_id].policy.get_actions(self.buffer[agent_id].share_obs[step],
-                                                self.buffer[agent_id].obs[step],
-                                                self.buffer[agent_id].rnn_states[step],
-                                                self.buffer[agent_id].rnn_states_critic[step],
-                                                self.buffer[agent_id].masks[step],
-                                                avail_actions)
+            if self.algorithm_name == "gnn_happo":
+                # GNN-HAPPO requires adjacency matrix and structured observations [batch, n_agents, obs_dim]
+                # Reconstruct structured observations from individual agent buffers
+                batch_size = self.buffer[agent_id].obs[step].shape[0]
+                max_obs_dim = 36  # Max dimension (retailers have 36D, DCs have 27D)
+                obs_structured = np.zeros((batch_size, self.num_agents, max_obs_dim), dtype=np.float32)
+                
+                # Fill in observations for all agents
+                for aid in range(self.num_agents):
+                    agent_obs_data = self.buffer[aid].obs[step]
+                    obs_dim = agent_obs_data.shape[-1]
+                    obs_structured[:, aid, :obs_dim] = agent_obs_data
+                
+                value, action, action_log_prob, rnn_state, rnn_state_critic \
+                    = self.trainer[agent_id].policy.get_actions(
+                        obs_structured,                          # CRITICAL: GNN critic needs structured obs [batch, n_agents, obs_dim]
+                        obs_structured,                          # structured obs for GNN actor [batch, n_agents, obs_dim]
+                        self.adj_tensor,                         # adjacency matrix
+                        agent_id,                                # which agent
+                        self.buffer[agent_id].rnn_states[step],
+                        self.buffer[agent_id].rnn_states_critic[step],
+                        self.buffer[agent_id].masks[step],
+                        avail_actions)
+            else:
+                # Standard HAPPO
+                value, action, action_log_prob, rnn_state, rnn_state_critic \
+                    = self.trainer[agent_id].policy.get_actions(
+                        self.buffer[agent_id].share_obs[step],
+                        self.buffer[agent_id].obs[step],
+                        self.buffer[agent_id].rnn_states[step],
+                        self.buffer[agent_id].rnn_states_critic[step],
+                        self.buffer[agent_id].masks[step],
+                        avail_actions)
 
             value_collector.append(_t2n(value))
             action_numpy = _t2n(action)
@@ -339,6 +366,7 @@ class CRunner(Runner):
 
         bad_masks = np.array([[[1.0] for agent_id in range(self.num_agents)] for info in infos])
         
+        
         for agent_id in range(self.num_agents):
             if not self.use_centralized_V:
                 share_obs = np.array(list(obs[:, agent_id]))
@@ -374,6 +402,24 @@ class CRunner(Runner):
             for o in eval_obs:
                 eval_share_obs.append(list(chain(*o)))
             eval_share_obs = np.array(eval_share_obs)
+            
+            # For GNN-HAPPO: Reshape observations to [batch, n_agents, obs_dim]
+            if self.algorithm_name == "gnn_happo":
+                # eval_obs is a list/array of per-environment observations
+                # Each env has observations for all agents
+                # We need to convert to [batch, n_agents, obs_dim] where obs_dim may vary per agent
+                
+                # Get max obs dim for padding (retailers have 36D, DCs have 27D)
+                max_obs_dim = max([self.envs.observation_space[i].shape[0] for i in range(self.num_agents)])
+                
+                # Create structured observations [batch, n_agents, max_obs_dim]
+                eval_obs_structured = np.zeros((self.n_eval_rollout_threads, self.num_agents, max_obs_dim), dtype=np.float32)
+                
+                for env_idx in range(self.n_eval_rollout_threads):
+                    for agent_id in range(self.num_agents):
+                        obs = eval_obs[env_idx][agent_id]
+                        obs_dim = len(obs)
+                        eval_obs_structured[env_idx, agent_id, :obs_dim] = obs
 
             eval_rnn_states = np.zeros((self.n_eval_rollout_threads, self.num_agents, self.recurrent_N, self.hidden_size), dtype=np.float32)
             eval_masks = np.ones((self.n_eval_rollout_threads, self.num_agents, 1), dtype=np.float32)
@@ -388,12 +434,28 @@ class CRunner(Runner):
                     # eval_obs has dtype=object, so we need to extract properly
                     agent_obs = np.array([eval_obs[env_idx][agent_id] for env_idx in range(self.n_eval_rollout_threads)])
                     
-                    eval_actions, temp_rnn_state = \
-                        self.trainer[agent_id].policy.act(agent_obs,
-                                                eval_rnn_states[:,agent_id],
-                                                eval_masks[:,agent_id],
-                                                None,
-                                                deterministic=True)
+                    if self.algorithm_name == "gnn_happo":
+                        # GNN-HAPPO requires adjacency matrix and all agent observations
+                        # Use structured observations [batch, n_agents, obs_dim]
+                        eval_actions, temp_rnn_state = \
+                            self.trainer[agent_id].policy.act(
+                                eval_obs_structured,  # Structured: [batch, n_agents, obs_dim]
+                                self.adj_tensor,  # Adjacency matrix
+                                agent_id,  # Which agent
+                                eval_rnn_states[:,agent_id],
+                                eval_masks[:,agent_id],
+                                None,
+                                deterministic=True)
+                    else:
+                        # Standard HAPPO
+                        eval_actions, temp_rnn_state = \
+                            self.trainer[agent_id].policy.act(
+                                agent_obs,
+                                eval_rnn_states[:,agent_id],
+                                eval_masks[:,agent_id],
+                                None,
+                                deterministic=True)
+                    
                     eval_rnn_states[:,agent_id]=_t2n(temp_rnn_state)
                     action = eval_actions.detach().cpu().numpy()
 
@@ -432,6 +494,14 @@ class CRunner(Runner):
                 for o in eval_obs:
                     eval_share_obs.append(list(chain(*o)))
                 eval_share_obs = np.array(eval_share_obs)
+                
+                # Update structured observations for GNN-HAPPO
+                if self.algorithm_name == "gnn_happo":
+                    for env_idx in range(self.n_eval_rollout_threads):
+                        for agent_id in range(self.num_agents):
+                            obs = eval_obs[env_idx][agent_id]
+                            obs_dim = len(obs)
+                            eval_obs_structured[env_idx, agent_id, :obs_dim] = obs
 
                 eval_available_actions = None
 

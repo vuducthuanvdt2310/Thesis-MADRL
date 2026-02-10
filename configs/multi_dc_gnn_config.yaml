@@ -1,0 +1,98 @@
+# GNN-HAPPO Configuration for Multi-DC Inventory Environment
+# This extends the baseline config with GNN-specific parameters
+
+# Import base environment config
+include: multi_dc_config.yaml
+
+# GNN Architecture Parameters
+gnn:
+  # GNN type: "GAT" (Graph Attention Network) or "GCN" (Graph Convolutional Network)
+  # GAT is recommended for thesis as it provides interpretable attention weights
+  type: "GAT"
+  
+  # Number of GNN layers to stack
+  # More layers = larger receptive field (can see further in graph)
+  # For supply chain: 2 layers is usually sufficient (DC → Retailer is only 1 hop)
+  num_layers: 2
+  
+  # Hidden dimension for GNN embeddings
+  # Higher = more expressive but slower
+  hidden_dim: 128
+  
+  # Multi-head attention (GAT only)
+  # Multiple heads learn different aspects of relationships
+  num_attention_heads: 4
+  
+  # Dropout rate for regularization
+  dropout: 0.1
+  
+  # Use residual connections (helps with training stability)
+  use_residual: true
+
+# Critic Configuration
+critic:
+  # Pooling method for global state aggregation
+  # Options: "mean" (average all node embeddings), 
+  #          "max" (take max across nodes),
+  #          "concat" (concatenate all embeddings - more parameters)
+  pooling: "mean"
+
+# Training Hyperparameters
+# (You may want to tune these differently for GNN vs baseline)
+training:
+  # Learning rates (may need adjustment for GNN)
+  lr: 0.0003  # Actor learning rate
+  critic_lr: 0.0003  # Critic learning rate
+  
+  # PPO clipping parameter
+  clip_param: 0.2
+  
+  # Number of PPO epochs per update
+  ppo_epoch: 5
+  
+  # Minibatch size for updates
+  num_mini_batch: 1
+  
+  # Value function loss coefficient
+  value_loss_coef: 1.0
+  
+  # Entropy bonus coefficient (encourage exploration)
+  entropy_coef: 0.01
+  
+  # Maximum gradient norm (for clipping)
+  max_grad_norm: 10.0
+
+# Graph Structure
+# (Automatically constructed based on environment topology)
+graph:
+  # Number of distribution centers
+  n_dcs: 2
+  
+  # Number of retailers
+  n_retailers: 15
+  
+  # Whether to add self-loops (recommended for GNN)
+  self_loops: true
+  
+  # Adjacency normalization method
+  # "symmetric": D^{-1/2} A D^{-1/2} (recommended for undirected/symmetric graphs)
+  # "row": D^{-1} A (sum of each row = 1)
+  normalization: "symmetric"
+  
+# Experiment Settings
+experiment:
+  # Baseline vs GNN experiment naming
+  baseline_experiment_name: "baseline_happo"
+  gnn_experiment_name: "gnn_happo"
+  
+  # Number of training steps
+  num_env_steps: 36500000  # 100,000 episodes
+  
+  # Evaluation frequency
+  eval_interval: 1  # Evaluate every episode
+  
+  # Number of parallel environments
+  n_rollout_threads: 10
+  
+  # Random seeds for reproducibility
+  seeds: [0, 1, 2, 3, 4]  # Run 5 seeds for statistical significance
