@@ -3,4 +3,7 @@ SC_reinforcement_learning - backorder_2612real/
 
 # Exclude training results (models, logs, checkpoints)
 results/
+
+# Exclude zip files
 *.zip
+09Feb_test1.zip
