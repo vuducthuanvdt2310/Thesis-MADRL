@@ -316,10 +316,18 @@ class GNNRunner(object):
 
     def log_train(self, train_infos, total_num_steps): 
         """Log training metrics to TensorBoard."""
+        total_agent_reward = 0
         for agent_id in range(self.num_agents):
+            agent_rew = np.mean(self.buffer[agent_id].rewards)
+            train_infos[agent_id]["average_step_rewards"] = agent_rew
+            total_agent_reward += agent_rew
+            
             for k, v in train_infos[agent_id].items():
                 agent_k = "agent%i/" % agent_id + k
                 self.writter.add_scalars(agent_k, {agent_k: v}, total_num_steps)
+        
+        # Log total system reward (sum of all agents)
+        self.writter.add_scalar("system/total_average_step_reward", total_agent_reward, total_num_steps)
 
     def log_env(self, env_infos, total_num_steps):
         """Log environment metrics to TensorBoard."""

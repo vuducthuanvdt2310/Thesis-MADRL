@@ -319,7 +319,7 @@ class BaseRunner(object):
                 # Try exact filename first
                 exact_path = os.path.join(load_dir, f'model_agent{agent_id}.pt')
                 if os.path.exists(exact_path):
-                    policy_model_state_dict = torch.load(exact_path)
+                    policy_model_state_dict = torch.load(exact_path, map_location=self.device)
                     self.policy[agent_id].model.load_state_dict(policy_model_state_dict)
                 else:
                     # Find best model with reward suffix
@@ -329,7 +329,7 @@ class BaseRunner(object):
                         # Sort by reward (extract from filename)
                         best_model = max(model_files, key=lambda x: float(x.split('_reward_')[1].replace('.pt', '')))
                         print(f"  Agent {agent_id}: Loading {os.path.basename(best_model)}")
-                        policy_model_state_dict = torch.load(best_model)
+                        policy_model_state_dict = torch.load(best_model, map_location=self.device)
                         self.policy[agent_id].model.load_state_dict(policy_model_state_dict)
                     else:
                         raise FileNotFoundError(f"No model file found for agent {agent_id} in {load_dir}")
@@ -347,7 +347,7 @@ class BaseRunner(object):
                     else:
                         raise FileNotFoundError(f"No actor file found for agent {agent_id} in {load_dir}")
                 
-                policy_actor_state_dict = torch.load(actor_path)
+                policy_actor_state_dict = torch.load(actor_path, map_location=self.device)
                 self.policy[agent_id].actor.load_state_dict(policy_actor_state_dict)
                 
                 # Load critic
@@ -362,7 +362,7 @@ class BaseRunner(object):
                     else:
                         raise FileNotFoundError(f"No critic file found for agent {agent_id} in {load_dir}")
                 
-                policy_critic_state_dict = torch.load(critic_path)
+                policy_critic_state_dict = torch.load(critic_path, map_location=self.device)
                 self.policy[agent_id].critic.load_state_dict(policy_critic_state_dict)
                 
                 # Load optimizer states (try both with and without reward suffix)
@@ -377,16 +377,16 @@ class BaseRunner(object):
                 critic_opt_files = glob.glob(critic_opt_pattern)
                 
                 if os.path.exists(actor_opt_exact):
-                    self.policy[agent_id].actor_optimizer.load_state_dict(torch.load(actor_opt_exact))
+                    self.policy[agent_id].actor_optimizer.load_state_dict(torch.load(actor_opt_exact, map_location=self.device))
                 elif actor_opt_files:
                     actor_opt_path = max(actor_opt_files, key=lambda x: float(x.split('_reward_')[1].replace('.pt', '')))
-                    self.policy[agent_id].actor_optimizer.load_state_dict(torch.load(actor_opt_path))
+                    self.policy[agent_id].actor_optimizer.load_state_dict(torch.load(actor_opt_path, map_location=self.device))
                 
                 if os.path.exists(critic_opt_exact):
-                    self.policy[agent_id].critic_optimizer.load_state_dict(torch.load(critic_opt_exact))
+                    self.policy[agent_id].critic_optimizer.load_state_dict(torch.load(critic_opt_exact, map_location=self.device))
                 elif critic_opt_files:
                     critic_opt_path = max(critic_opt_files, key=lambda x: float(x.split('_reward_')[1].replace('.pt', '')))
-                    self.policy[agent_id].critic_optimizer.load_state_dict(torch.load(critic_opt_path))
+                    self.policy[agent_id].critic_optimizer.load_state_dict(torch.load(critic_opt_path, map_location=self.device))
         
         print("✓ All models loaded successfully!")
 

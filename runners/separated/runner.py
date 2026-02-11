@@ -50,7 +50,8 @@ class CRunner(BaseRunner):
                 print(f"[DEBUG] Path 2 exists: {os.path.exists(state_path)}")
             
             if os.path.exists(state_path):
-                state = torch.load(state_path, weights_only=False)
+                # Load to CPU to avoid issues if saved on GPU
+                state = torch.load(state_path, map_location='cpu', weights_only=False)
                 start_episode = state.get('episode', 0)
                 best_reward = state.get('best_reward', float('-inf'))
                 best_bw = state.get('best_bw', [])
@@ -68,7 +69,7 @@ class CRunner(BaseRunner):
             if episode % self.eval_interval == 0 and self.use_eval:
                 re, bw_res = self.eval()
                 print()
-                print("Eval average reward: ", re, " Eval ordering fluctuation measurement (downstream to upstream): ", bw_res)
+                print("Eval total episode reward: ", re, " Eval ordering fluctuation measurement (downstream to upstream): ", bw_res)
                 
                 # --- SIMPLE CSV LOGGING ---
                 # (Disabled here, moved to training loop for more frequent logging - every 100 steps)
@@ -78,7 +79,7 @@ class CRunner(BaseRunner):
                     self.save(reward=re)
                 
                 # Log evaluation reward to TensorBoard
-                self.writter.add_scalar("eval/average_reward", re, total_num_steps)
+                self.writter.add_scalar("eval/total_episode_reward", re, total_num_steps)
                 self.writter.add_scalar("eval/bullwhip_effect", np.mean(bw_res) if len(bw_res) > 0 else 0, total_num_steps)
 
                 if(re > best_reward and episode > 0):
@@ -126,11 +127,10 @@ class CRunner(BaseRunner):
                                       ((step + 1) * self.n_rollout_threads)
 
                 if current_total_steps % 1000 == 0:
-                    # Calculate average reward over the episode so far
-                    avg_reward_so_far = np.mean(episode_rewards)
+                    # Log total system reward for this step (sum of all agents)
                     try:
                         with open(csv_path, "a") as f:
-                            f.write(f"{episode},{current_total_steps},{avg_reward_so_far}\n")
+                            f.write(f"{episode},{current_total_steps},{step_reward}\n")
                     except Exception as e:
                         print(f"Error writing to CSV: {e}")
                 # -------------------------
@@ -505,7 +505,10 @@ class CRunner(BaseRunner):
 
                 eval_available_actions = None
 
-                overall_reward.append(np.mean(eval_rewards))
+                # Calculate system reward for this step (sum of all agents)
+                # eval_rewards shape: [n_threads, n_agents, 1]
+                step_reward = np.sum(np.mean(eval_rewards, axis=0))
+                overall_reward.append(step_reward)
 
                 eval_dones_env = np.all(eval_dones, axis=1)
 
@@ -515,4 +518,5 @@ class CRunner(BaseRunner):
                 eval_masks[eval_dones_env == True] = np.zeros(((eval_dones_env == True).sum(), self.num_agents, 1), dtype=np.float32)
         
         bw_res = self.eval_envs.get_eval_bw_res()
-        return np.mean(overall_reward), bw_res
+        # Return total accumulated reward over the episode (SUM of step rewards)
+        return np.sum(overall_reward), bw_res

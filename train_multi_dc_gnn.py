@@ -151,6 +151,15 @@ if __name__ == "__main__":
     
     all_args = parse_args(sys.argv[1:], parser)
     
+    # --- Resume Training (Optional) ---
+    # Set this path to resume from a saved checkpoint
+    RESUME_MODEL_DIR = None
+    # RESUME_MODEL_DIR = r"d:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\gnn_happo_full\run_seed_1"
+    if RESUME_MODEL_DIR:
+        all_args.model_dir = RESUME_MODEL_DIR
+        print(f"Resuming from: {all_args.model_dir}")
+    # --------------------------------------------------
+
     # CRITICAL: Force single_agent_obs_dim to 36 (max obs dim for retailers)
     # This ensures GNN weight matrices match the padded observation dimensions
     all_args.single_agent_obs_dim = 36
