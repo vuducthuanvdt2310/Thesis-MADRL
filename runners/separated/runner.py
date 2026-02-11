@@ -4,12 +4,12 @@ import numpy as np
 from functools import reduce
 import torch
 from itertools import chain
-from runners.separated.base_runner import Runner
+from runners.separated.base_runner import BaseRunner
 
 def _t2n(x):
     return x.detach().cpu().numpy()
 
-class CRunner(Runner):
+class CRunner(BaseRunner):
     """Runner class to perform training, evaluation. See parent class for details."""
     def __init__(self, config):
         super(CRunner, self).__init__(config)
@@ -125,7 +125,7 @@ class CRunner(Runner):
                 current_total_steps = (episode * self.episode_length * self.n_rollout_threads) + \
                                       ((step + 1) * self.n_rollout_threads)
 
-                if current_total_steps % 100 == 0:
+                if current_total_steps % 1000 == 0:
                     # Calculate average reward over the episode so far
                     avg_reward_so_far = np.mean(episode_rewards)
                     try:

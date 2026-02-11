@@ -223,7 +223,12 @@ class GNNRunner(object):
                                 filename = os.path.basename(file_path)
                                 reward_str = filename.split('_reward_')[1].replace('.pt', '')
                                 file_reward = float(reward_str)
-                                
+                                # Avoid deleting the model we JUST saved due to floating point precision
+                                current_reward_str = f"{reward:.2f}"
+                                if reward_str == current_reward_str:
+                                    continue
+
+                                # If the file's reward is worse (lower) than the current one we just saved, delete it
                                 if file_reward < reward:
                                     print(f"  Cleanup: Removing suboptimal model {filename} ({file_reward:.2f} < {reward:.2f})")
                                     os.remove(file_path)

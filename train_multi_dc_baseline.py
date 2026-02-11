@@ -285,6 +285,8 @@ if __name__ == "__main__":
             print(f"Training interrupted manually (KeyboardInterrupt)")
             print(f"Saving current artifacts before exit...")
             print(f"{'='*70}\n")
+            # Break the loop to stop training for other seeds too
+            break
             
         except Exception as e:
             print(f"\n{'='*70}")
