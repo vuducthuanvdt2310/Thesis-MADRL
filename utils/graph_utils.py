@@ -36,6 +36,8 @@ def build_supply_chain_adjacency(n_dcs=2, n_retailers=15, self_loops=True):
     for dc_id in range(n_dcs):
         for retailer_id in range(n_dcs, n_agents):
             adj_matrix[dc_id, retailer_id] = 1.0
+            # Add reverse edge: Retailer connects to DC (so Retailer sees DC)
+            adj_matrix[retailer_id, dc_id] = 1.0
     
     # Add self-loops (important for GNN: allows node to keep its own features)
     if self_loops:
