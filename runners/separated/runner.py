@@ -388,6 +388,8 @@ class CRunner(BaseRunner):
         
         # Log total system reward (sum of all agents)
         self.writter.add_scalar("system/total_average_step_reward", total_agent_reward, total_num_steps)
+        # Also log the estimated total episode reward (step_reward * episode_length) for easier comparison with eval
+        self.writter.add_scalar("system/total_episode_reward_estimated", total_agent_reward * self.episode_length, total_num_steps)
     
     @torch.no_grad()
     def eval(self):
