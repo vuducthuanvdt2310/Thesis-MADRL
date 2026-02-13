@@ -127,8 +127,12 @@ class ModelEvaluator:
         all_args = parser.parse_known_args([])[0]
         env = DummyVecEnvMultiDC(all_args)
         
+        # Sync num_agents with environment (config might override args)
+        if hasattr(env, 'num_agent'):
+            self.args.num_agents = env.num_agent
+        
         print(f"✓ Environment created: {env.num_envs} environment(s)")
-        print(f"  - Agents: {self.args.num_agents} (2 DCs + 3 Retailers)")
+        print(f"  - Agents: {self.args.num_agents} (2 DCs + {self.args.num_agents - 2} Retailers)")
         print(f"  - Observation spaces: DCs=27D, Retailers=42D")
         print(f"  - Action spaces: All agents=6D continuous\n")
         
@@ -169,14 +173,6 @@ class ModelEvaluator:
             act_space = self.env.action_space[agent_id]
             
             # Create policy
-            policy = HAPPO_Policy(
-                all_args,
-                obs_space,
-                share_obs_space,
-                act_space,
-                device=self.device
-            )
-            
             # Find the best model for this agent
             # Pattern: actor_agent{id}_reward_{reward}.pt or actor_agent{id}.pt
             agent_files = list(model_dir.glob(f"actor_agent{agent_id}*.pt"))
@@ -221,8 +217,40 @@ class ModelEvaluator:
 
             print(f"  Loading: {best_file.name}")
             
+            # Load state dict first to check dimensions
+            state_dict = torch.load(str(best_file), map_location=self.device)
+            
+            # Check input dimension from the first layer weights
+            # Typical path: base.mlp.fc1.0.weight -> shape [hidden, input_dim]
+            saved_input_dim = None
+            if 'base.mlp.fc1.0.weight' in state_dict:
+                saved_input_dim = state_dict['base.mlp.fc1.0.weight'].shape[1]
+            elif 'base.cnn.cnn.0.weight' in state_dict:
+                saved_input_dim = state_dict['base.cnn.cnn.0.weight'].shape[1]
+                
+            # Adjust observation space if mismatch detected
+            # This handles cases where training used padding (e.g. GNN trained with max dim)
+            current_obs_dim = obs_space.shape[0]
+            if saved_input_dim is not None and saved_input_dim != current_obs_dim:
+                print(f"  DIMENSION MISMATCH: Model expects {saved_input_dim}, Env provides {current_obs_dim}")
+                print(f"  -> Adjusting policy input dimension to {saved_input_dim} (Likely due to padding in training)")
+                
+                from gymnasium import spaces
+                # Create a dummy space with the correct dimension
+                # Using lower bound -inf to avoid issues, as we only care about shape here
+                obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(saved_input_dim,), dtype=np.float32)
+            
+            # Create policy with potentially adjusted obs_space
+            policy = HAPPO_Policy(
+                all_args,
+                obs_space,
+                share_obs_space,
+                act_space,
+                device=self.device
+            )
+            
             # Load weights
-            policy.actor.load_state_dict(torch.load(str(best_file), map_location=self.device))
+            policy.actor.load_state_dict(state_dict)
             policy.actor.eval()
             
             policies.append(policy)
@@ -294,7 +322,20 @@ class ModelEvaluator:
                 self.policies[agent_id].actor.eval()
                 
                 # Convert observation to float array (handle object array from env)
+                # Convert observation to float array (handle object array from env)
                 obs_agent = np.stack(obs[:, agent_id])
+                
+                # Check for observation padding requirements
+                # The policy might have been initialized with a larger dimension (e.g. 36) than the env provides (e.g. 27)
+                policy_input_dim = self.policies[agent_id].obs_space.shape[0]
+                current_obs_dim = obs_agent.shape[1]
+                
+                if current_obs_dim < policy_input_dim:
+                    # Pad with zeros
+                    diff = policy_input_dim - current_obs_dim
+                    # Create zeros of shape (batch_size, diff)
+                    padding = np.zeros((obs_agent.shape[0], diff), dtype=np.float32)
+                    obs_agent = np.concatenate([obs_agent, padding], axis=1)
                 
                 with torch.no_grad():
                     action, rnn_state = self.policies[agent_id].act(

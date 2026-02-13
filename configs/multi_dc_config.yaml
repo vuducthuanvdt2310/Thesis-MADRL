@@ -42,7 +42,7 @@ constraints:
 # Reward parameters
 rewards:
   survival_reward: 10.0  # Bonus for each step not terminated
-  termination_penalty: 50.0  # Penalty for violation termination
+  termination_penalty: 5000.0  # Penalty for violation termination
 
 # Cost parameters (Unit: 10,000 VND - e.g., 7.5 = 75,000 VND)
 costs:
@@ -56,44 +56,44 @@ costs:
     - [1.0, 0.8, 1.5]  # DC_1
   
   fixed_order_cost_dc:
-    - [5.0, 5.0, 5.0]  # DC_0: 50k VND - reasonable for supplier orders (admin + processing)
-    - [5.0, 5.0, 5.0]  # DC_1
+    - [100.0, 100.0, 100.0]  # DC_0: 1M VND - High fixed cost to force bulk ordering (Cycle Stock)
+    - [100.0, 100.0, 100.0]  # DC_1
   
   # Retailer Costs (3 Retailers × 3 SKUs)
   # BALANCED to match DC cost magnitude - prevent reward explosion
   holding_cost_retailer:
-    - [0.06, 0.05, 0.09]  # Retailer_0
-    - [0.055, 0.045, 0.075]  # Retailer_1
-    - [0.065, 0.055, 0.095]  # Retailer_2
-    - [0.06, 0.05, 0.09]  # Retailer_3
-    - [0.055, 0.045, 0.075]  # Retailer_4
-    - [0.065, 0.055, 0.095]  # Retailer_5
-    - [0.06, 0.05, 0.09]  # Retailer_6
-    - [0.055, 0.045, 0.075]  # Retailer_7
-    - [0.065, 0.055, 0.095]  # Retailer_8
-    - [0.06, 0.05, 0.09]  # Retailer_9
-    - [0.055, 0.045, 0.075]  # Retailer_10
-    - [0.065, 0.055, 0.095]  # Retailer_11
-    - [0.06, 0.05, 0.09]  # Retailer_12
-    - [0.055, 0.045, 0.075]  # Retailer_13
-    - [0.065, 0.055, 0.095]  # Retailer_14
+    - [0.12, 0.10, 0.15]  # Retailer_0: HIGHER than DC to penalize overstocking at retail
+    - [0.12, 0.10, 0.15]  # Retailer_1
+    - [0.12, 0.10, 0.15]  # Retailer_2
+    - [0.12, 0.10, 0.15]  # Retailer_3
+    - [0.12, 0.10, 0.15]  # Retailer_4
+    - [0.12, 0.10, 0.15]  # Retailer_5
+    - [0.12, 0.10, 0.15]  # Retailer_6
+    - [0.12, 0.10, 0.15]  # Retailer_7
+    - [0.12, 0.10, 0.15]  # Retailer_8
+    - [0.12, 0.10, 0.15]  # Retailer_9
+    - [0.12, 0.10, 0.15]  # Retailer_10
+    - [0.12, 0.10, 0.15]  # Retailer_11
+    - [0.12, 0.10, 0.15]  # Retailer_12
+    - [0.12, 0.10, 0.15]  # Retailer_13
+    - [0.12, 0.10, 0.15]  # Retailer_14
   
   backlog_cost_retailer:
-    - [0.6, 0.5, 0.7]  # Retailer_0
-    - [0.55, 0.45, 0.65]  # Retailer_1
-    - [0.65, 0.55, 0.75]  # Retailer_2
-    - [0.6, 0.5, 0.7]  # Retailer_3
-    - [0.55, 0.45, 0.65]  # Retailer_4
-    - [0.65, 0.55, 0.75]  # Retailer_5
-    - [0.6, 0.5, 0.7]  # Retailer_6
-    - [0.55, 0.45, 0.65]  # Retailer_7
-    - [0.65, 0.55, 0.75]  # Retailer_8
-    - [0.6, 0.5, 0.7]  # Retailer_9
-    - [0.55, 0.45, 0.65]  # Retailer_10
-    - [0.65, 0.55, 0.75]  # Retailer_11
-    - [0.6, 0.5, 0.7]  # Retailer_12
-    - [0.55, 0.45, 0.65]  # Retailer_13
-    - [0.65, 0.55, 0.75]  # Retailer_14
+    - [2.0, 1.8, 2.5]  # Retailer_0: HIGHEST penalty (Lost Sales)
+    - [2.0, 1.8, 2.5]  # Retailer_1
+    - [2.0, 1.8, 2.5]  # Retailer_2
+    - [2.0, 1.8, 2.5]  # Retailer_3
+    - [2.0, 1.8, 2.5]  # Retailer_4
+    - [2.0, 1.8, 2.5]  # Retailer_5
+    - [2.0, 1.8, 2.5]  # Retailer_6
+    - [2.0, 1.8, 2.5]  # Retailer_7
+    - [2.0, 1.8, 2.5]  # Retailer_8
+    - [2.0, 1.8, 2.5]  # Retailer_9
+    - [2.0, 1.8, 2.5]  # Retailer_10
+    - [2.0, 1.8, 2.5]  # Retailer_11
+    - [2.0, 1.8, 2.5]  # Retailer_12
+    - [2.0, 1.8, 2.5]  # Retailer_13
+    - [2.0, 1.8, 2.5]  # Retailer_14
   
   fixed_order_cost_retailer:
     - [2.5, 2.5, 2.5]  # Retailer_0
