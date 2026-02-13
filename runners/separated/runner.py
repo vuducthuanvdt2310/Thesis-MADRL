@@ -60,6 +60,11 @@ class CRunner(BaseRunner):
                 print(f"✓ Resuming training from episode {start_episode} with best reward {best_reward:.2f}")
             else:
                 print(f"[WARNING] No training_state.pt found. Starting with best_reward = -inf")
+        
+        from collections import deque
+        # --- SLIDING WINDOW FOR SMOOTH LOGGING ---
+        # Keeps last 100 steps of rewards to prevent "dips" at episode boundaries
+        reward_window = deque(maxlen=100)
 
         for episode in range(start_episode, episodes):
             episode_rewards = []
@@ -126,11 +131,16 @@ class CRunner(BaseRunner):
                 current_total_steps = (episode * self.episode_length * self.n_rollout_threads) + \
                                       ((step + 1) * self.n_rollout_threads)
 
-                if current_total_steps % 1000 == 0:
-                    # Log total system reward for this step (sum of all agents)
+                # --- SMOOTH ROLLING WINDOW LOGGING ---
+                # Add to sliding window
+                reward_window.append(step_reward)
+
+                # Log every 10 steps to keep file size manageable while maintaining smoothness
+                if current_total_steps % 10 == 0:
+                    running_avg_reward = np.mean(reward_window)
                     try:
                         with open(csv_path, "a") as f:
-                            f.write(f"{episode},{current_total_steps},{step_reward}\n")
+                            f.write(f"{episode},{current_total_steps},{running_avg_reward}\n")
                     except Exception as e:
                         print(f"Error writing to CSV: {e}")
                 # -------------------------
@@ -149,6 +159,8 @@ class CRunner(BaseRunner):
                 # insert data into buffer
                 self.insert(data)
 
+            # -----------------------------------------------
+
             # compute return and update network
             self.compute()
             train_infos = self.train()
@@ -156,9 +168,9 @@ class CRunner(BaseRunner):
             # post process
             # total_num_steps is now calculated at start of loop
 
-            # Log training metrics every 100 steps (instead of every episode)
-            # This provides finer-grained TensorBoard charts
-            if total_num_steps % 100 == 0:
+            # Log training metrics to TensorBoard
+            # Ensure logging happens based on log_interval to capture gradual improvement consistently
+            if episode % self.log_interval == 0:
                 self.log_train(train_infos, total_num_steps)
 
             # Console log information (keep episode-based for readability)
