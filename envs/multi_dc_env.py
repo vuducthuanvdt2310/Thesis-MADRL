@@ -181,7 +181,7 @@ class MultiDCInventoryEnv:
         
         # Reset state for all agents
         for agent_id in range(self.n_agents):
-            self.inventory[agent_id] = np.full(self.n_skus, 100.0, dtype=np.float32)
+            self.inventory[agent_id] = np.full(self.n_skus, 30.0, dtype=np.float32)
             self.backlog[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
             self.pipeline[agent_id] = []
         
