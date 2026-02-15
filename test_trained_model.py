@@ -374,6 +374,50 @@ class ModelEvaluator:
                     episode_data['total_reward'] += reward
                     episode_data['total_cost'] += cost
                     
+                    # === COST BREAKDOWN CALCULATION ===
+                    # Calculate individual cost components for detailed analysis
+                    holding_cost_step = 0
+                    backlog_cost_step = 0
+                    ordering_cost_step = 0
+                    
+                    # Get agent type (DC or Retailer)
+                    is_dc = agent_id < 2  # First 2 agents are DCs
+                    
+                    if is_dc:
+                        # DC costs
+                        dc_idx = agent_id
+                        for sku in range(3):  # n_skus = 3
+                            # Holding cost = inventory * holding_cost_param
+                            holding_cost_step += env_state.inventory[agent_id][sku] * env_state.H_dc[dc_idx][sku]
+                            # Backlog cost = backlog * backlog_cost_param
+                            backlog_cost_step += env_state.backlog[agent_id][sku] * env_state.B_dc[dc_idx][sku]
+                            # Ordering cost = fixed_cost + (market_price * quantity)
+                            order_qty = actions_env[0][agent_id][sku]
+                            if order_qty > 0:
+                                ordering_cost_step += env_state.C_fixed_dc[dc_idx][sku] + (env_state.market_prices[sku] * order_qty)
+                    else:
+                        # Retailer costs
+                        retailer_idx = agent_id - 2  # Offset by number of DCs
+                        for sku in range(3):
+                            # Holding cost
+                            holding_cost_step += env_state.inventory[agent_id][sku] * env_state.H_retailer[retailer_idx][sku]
+                            # Backlog cost
+                            backlog_cost_step += env_state.backlog[agent_id][sku] * env_state.B_retailer[retailer_idx][sku]
+                            # Ordering cost (from both DCs)
+                            order_dc0 = actions_env[0][agent_id][sku]  # Order to DC_0
+                            order_dc1 = actions_env[0][agent_id][3 + sku]  # Order to DC_1
+                            if order_dc0 > 0:
+                                var_cost = env_state.C_var_retailer[retailer_idx][0][sku]
+                                ordering_cost_step += env_state.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_dc0)
+                            if order_dc1 > 0:
+                                var_cost = env_state.C_var_retailer[retailer_idx][1][sku]
+                                ordering_cost_step += env_state.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_dc1)
+                    
+                    # Accumulate cost components
+                    episode_data['holding_costs'][agent_id] += holding_cost_step
+                    episode_data['backlog_costs'][agent_id] += backlog_cost_step
+                    episode_data['ordering_costs'][agent_id] += ordering_cost_step
+                    
                     # Track inventory and backlog
                     inv = env_state.inventory[agent_id].sum()
                     bl = env_state.backlog[agent_id].sum()
@@ -462,6 +506,9 @@ class ModelEvaluator:
             stats['per_agent'][agent_name] = {
                 'avg_reward': np.mean([m['agent_rewards'][agent_id] for m in self.episode_metrics]),
                 'avg_cost': np.mean([m['agent_costs'][agent_id] for m in self.episode_metrics]),
+                'avg_holding_cost': np.mean([m['holding_costs'][agent_id] for m in self.episode_metrics]),
+                'avg_backlog_cost': np.mean([m['backlog_costs'][agent_id] for m in self.episode_metrics]),
+                'avg_ordering_cost': np.mean([m['ordering_costs'][agent_id] for m in self.episode_metrics]),
                 'avg_inventory': np.mean([m['avg_inventory'][agent_id] for m in self.episode_metrics]),
                 'avg_backlog': np.mean([m['avg_backlog'][agent_id] for m in self.episode_metrics]),
                 'service_level': np.mean([m['service_level'][agent_id] for m in self.episode_metrics]),
@@ -575,33 +622,39 @@ class ModelEvaluator:
         plt.close()
     
     def _plot_cost_breakdown(self, stats):
-        """Plot cost breakdown by agent."""
-        fig, ax = plt.subplots(figsize=(10, 6))
+        """Plot cost breakdown by agent with stacked bars showing cost components."""
+        fig, ax = plt.subplots(figsize=(14, 7))
         
         agents = list(stats['per_agent'].keys())
-        costs = [stats['per_agent'][a]['avg_cost'] for a in agents]
+        holding_costs = [stats['per_agent'][a]['avg_holding_cost'] for a in agents]
+        backlog_costs = [stats['per_agent'][a]['avg_backlog_cost'] for a in agents]
+        ordering_costs = [stats['per_agent'][a]['avg_ordering_cost'] for a in agents]
         
-        colors = ['#2E86AB', '#2E86AB', '#A23B72', '#A23B72', '#A23B72']
-        bars = ax.bar(agents, costs, color=colors, alpha=0.8, edgecolor='black')
+        x = np.arange(len(agents))
+        width = 0.6
         
-        # Add value labels on bars
-        for bar in bars:
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height,
-                   f'{height:.1f}',
+        # Create stacked bars
+        bars1 = ax.bar(x, holding_costs, width, label='Holding Cost', color='#4ECDC4', edgecolor='black')
+        bars2 = ax.bar(x, backlog_costs, width, bottom=holding_costs, 
+                       label='Backlog Cost', color='#FF6B6B', edgecolor='black')
+        bars3 = ax.bar(x, ordering_costs, width, 
+                       bottom=np.array(holding_costs) + np.array(backlog_costs),
+                       label='Ordering Cost', color='#95E1D3', edgecolor='black')
+        
+        # Add total cost labels on top of each bar
+        for i, agent in enumerate(agents):
+            total = holding_costs[i] + backlog_costs[i] + ordering_costs[i]
+            ax.text(i, total, f'{total:.0f}',
                    ha='center', va='bottom', fontsize=10, fontweight='bold')
         
-        ax.set_ylabel('Average Total Cost per Episode', fontsize=12)
-        ax.set_title('Cost Distribution Across Agents', fontsize=14, fontweight='bold')
+        ax.set_ylabel('Average Cost per Episode', fontsize=12)
+        ax.set_xlabel('Agent', fontsize=12)
+        ax.set_title('Cost Breakdown by Agent Type (Holding + Backlog + Ordering)', 
+                    fontsize=14, fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(agents, rotation=45, ha='right')
+        ax.legend(loc='upper left', fontsize=11)
         ax.grid(True, axis='y', alpha=0.3)
-        
-        # Add legend
-        from matplotlib.patches import Patch
-        legend_elements = [
-            Patch(facecolor='#2E86AB', label='Distribution Centers'),
-            Patch(facecolor='#A23B72', label='Retailers')
-        ]
-        ax.legend(handles=legend_elements, loc='upper right')
         
         plt.tight_layout()
         plt.savefig(self.save_dir / 'cost_breakdown.png', dpi=300)
