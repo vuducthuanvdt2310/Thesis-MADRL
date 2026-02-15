@@ -232,7 +232,7 @@ if __name__ == "__main__":
         
         print(f"Environments created: {envs.num_envs} parallel envs")
         print(f"Agents per env: {num_agents}")
-        print(f"Observation spaces: DCs=27D, Retailers=36D")
+        print(f"Observation spaces: DCs=30D, Retailers=36D")
         print(f"Action spaces: DCs=3D continuous, Retailers=6D continuous\n")
 
         config = {

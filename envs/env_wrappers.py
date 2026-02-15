@@ -266,7 +266,7 @@ class SubprocVecEnvMultiDC(object):
         for agent_id in range(self.num_agent):
             # Observations remain heterogeneous
             if agent_id < self.n_dcs:
-                obs_dim = 27  # DC observation
+                obs_dim = 30  # DC observation (increased from 27)
             else:
                 obs_dim = 36  # Retailer observation (reduced from 42)
             
@@ -279,7 +279,7 @@ class SubprocVecEnvMultiDC(object):
                 spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
             )
         # Shared observation space (concatenate all observations)
-        total_obs_dim = 27 * self.n_dcs + 36 * self.n_retailers  # 162 (27*2 + 36*3)
+        total_obs_dim = 30 * self.n_dcs + 36 * self.n_retailers  # 168 (30*2 + 36*3)
         self.share_observation_space = [
             spaces.Box(low=-np.inf, high=+np.inf, shape=(total_obs_dim,), dtype=np.float32)
             for _ in range(self.num_agent)
@@ -409,7 +409,7 @@ class DummyVecEnvMultiDC(object):
         for agent_id in range(self.num_agent):
             # Heterogeneous observations
             if agent_id < self.n_dcs:
-                obs_dim = 27
+                obs_dim = 30
             else:
                 obs_dim = 36  # Reduced from 42
             
@@ -421,7 +421,7 @@ class DummyVecEnvMultiDC(object):
                 spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
             )
         
-        total_obs_dim = 27 * self.n_dcs + 36 * self.n_retailers  # 162
+        total_obs_dim = 30 * self.n_dcs + 36 * self.n_retailers  # 168
         self.share_observation_space = [
             spaces.Box(low=-np.inf, high=+np.inf, shape=(total_obs_dim,), dtype=np.float32)
             for _ in range(self.num_agent)

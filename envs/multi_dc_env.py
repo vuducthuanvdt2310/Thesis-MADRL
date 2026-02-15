@@ -141,8 +141,9 @@ class MultiDCInventoryEnv:
     def _define_spaces(self):
         """Define observation and action spaces for each agent type."""
         
-        # DC Observation: 27D (9 features × 3 SKUs)
-        self.obs_dim_dc = self.n_skus * 9
+        # DC Observation: 30D (10 features × 3 SKUs)
+        # Added: Average Retailer Inventory (visibility of downstream stock)
+        self.obs_dim_dc = self.n_skus * 10
         self.obs_space_dc = spaces.Box(0, 1, (self.obs_dim_dc,), dtype=np.float32)
         
         # Retailer Observation: 36D (12 features × 3 SKUs)
@@ -598,7 +599,8 @@ class MultiDCInventoryEnv:
         6. Total pipeline
         7. Current market price
         8. Market price 5-day MA
-        9. Aggregate retailer demand signal
+        9. Aggregate retailer demand signal (Backlog)
+        10. Aggregate retailer inventory (Stock Level)
         """
         obs = []
         
@@ -636,6 +638,11 @@ class MultiDCInventoryEnv:
             # Simplified: use average recent retailer backlog as proxy
             avg_retailer_backlog = np.mean([self.backlog[r][sku] for r in self.retailer_ids])
             obs.append(avg_retailer_backlog / 50.0)
+            
+            # 10. Aggregate retailer inventory (Proactive signal)
+            # Allows DC to see if retailers are running low before backlog hits
+            avg_retailer_inventory = np.mean([self.inventory[r][sku] for r in self.retailer_ids])
+            obs.append(avg_retailer_inventory / 100.0)  # Normalize by retailer capacity (approx 100)
         
         return np.array(obs, dtype=np.float32)
     
