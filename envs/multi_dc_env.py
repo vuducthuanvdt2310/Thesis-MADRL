@@ -181,7 +181,7 @@ class MultiDCInventoryEnv:
         
         # Reset state for all agents
         for agent_id in range(self.n_agents):
-            self.inventory[agent_id] = np.full(self.n_skus, 30.0, dtype=np.float32)
+            self.inventory[agent_id] = np.full(self.n_skus, 50.0, dtype=np.float32)
             self.backlog[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
             self.pipeline[agent_id] = []
         
@@ -287,7 +287,7 @@ class MultiDCInventoryEnv:
             
             if agent_id in self.dc_ids:
                 # DC: max 70 per SKU
-                clipped[agent_id] = np.clip(action, 0, 90)
+                clipped[agent_id] = np.clip(action, 0, 1000)
             else:
                 # Retailer: max 60 per order
                 clipped[agent_id] = np.clip(action, 0, 60)
@@ -604,7 +604,7 @@ class MultiDCInventoryEnv:
         
         for sku in range(self.n_skus):
             # 1. Inventory (normalized)
-            obs.append(self.inventory[dc_id][sku] / 100.0)
+            obs.append(self.inventory[dc_id][sku] / 1000.0)
             
             # 2. Backlog (normalized)
             obs.append(self.backlog[dc_id][sku] / 50.0)
@@ -623,7 +623,7 @@ class MultiDCInventoryEnv:
             
             # 6. Total pipeline
             total_pipeline = sum(o['qty'] for o in self.pipeline[dc_id] if o['sku'] == sku)
-            obs.append(total_pipeline / 300.0)
+            obs.append(total_pipeline / 1000.0)
             
             # 7. Current market price (normalized)
             obs.append(self.market_prices[sku] / self.price_bounds['max'][sku])
