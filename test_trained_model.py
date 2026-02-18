@@ -70,7 +70,10 @@ def parse_test_args():
                        help='Number of agents (2 DCs + 3 Retailers)')
     parser.add_argument('--cuda', action='store_true', default=True,
                        help='Use CUDA if available')
-    
+    parser.add_argument('--algorithm_name', type=str, default='happo',
+                       choices=['happo', 'gnn_happo'],
+                       help='Algorithm used during training (happo=baseline, gnn_happo=proposed)')
+
     args = parser.parse_args()
     return args
 
@@ -100,10 +103,20 @@ class ModelEvaluator:
         
         # Create environment
         self.env = self._create_env()
-        
+
+        # Build adjacency matrix for GNN (if needed)
+        self.adj_tensor = None
+        if getattr(args, 'algorithm_name', 'happo') == 'gnn_happo':
+            from utils.graph_utils import build_supply_chain_adjacency, normalize_adjacency
+            print("Building supply chain graph for GNN evaluation...")
+            adj = build_supply_chain_adjacency(n_dcs=2, n_retailers=15, self_loops=True)
+            adj = normalize_adjacency(adj, method='symmetric')
+            self.adj_tensor = torch.FloatTensor(adj).to(self.device)
+            print(f"✓ Graph created: {adj.shape[0]} nodes, {np.sum(adj > 0)} edges\n")
+
         # Load trained models
         self.policies = self._load_models()
-        
+
         # Metrics storage
         self.episode_metrics = []
         self.detailed_trajectory = None
@@ -141,21 +154,24 @@ class ModelEvaluator:
     def _load_models(self):
         """Load trained model weights for all agents."""
         print("Loading trained models...")
-        
+
+        algorithm_name = getattr(self.args, 'algorithm_name', 'happo')
+        is_gnn = (algorithm_name == 'gnn_happo')
+
         model_dir = Path(self.args.model_dir)
         if not model_dir.exists():
             raise FileNotFoundError(f"Model directory not found: {model_dir}")
-        
+
         policies = []
-        
+
         # Get environment config
         parser = get_config()
-        parser.set_defaults(
+        defaults = dict(
             env_name="MultiDC",
             scenario_name="inventory_2echelon",
             num_agents=self.args.num_agents,
             use_centralized_V=True,
-            algorithm_name="happo",
+            algorithm_name=algorithm_name,
             hidden_size=128,
             layer_N=2,
             use_ReLU=True,
@@ -164,98 +180,117 @@ class ModelEvaluator:
             recurrent_N=2,
             use_naive_recurrent_policy=True
         )
+        if is_gnn:
+            # Add GNN-specific args so parser doesn't fail
+            parser.add_argument('--gnn_type', type=str, default='GAT')
+            parser.add_argument('--gnn_hidden_dim', type=int, default=128)
+            parser.add_argument('--gnn_num_layers', type=int, default=2)
+            parser.add_argument('--num_attention_heads', type=int, default=4)
+            parser.add_argument('--gnn_dropout', type=float, default=0.1)
+            parser.add_argument('--use_residual', type=lambda x: (str(x).lower() == 'true'), default=True)
+            parser.add_argument('--critic_pooling', type=str, default='mean')
+            parser.add_argument('--single_agent_obs_dim', type=int, default=36)
+            defaults['single_agent_obs_dim'] = 36
+        parser.set_defaults(**defaults)
         all_args = parser.parse_known_args([])[0]
-        
+
+        # Max obs dim for GNN padding
+        max_obs_dim = max([self.env.observation_space[i].shape[0] for i in range(self.args.num_agents)])
+
         for agent_id in range(self.args.num_agents):
             # Get observation and action spaces
             obs_space = self.env.observation_space[agent_id]
             share_obs_space = self.env.share_observation_space[agent_id]
             act_space = self.env.action_space[agent_id]
-            
-            # Create policy
-            # Find the best model for this agent
-            # Pattern: actor_agent{id}_reward_{reward}.pt or actor_agent{id}.pt
+
+            # Find the best model file for this agent
             agent_files = list(model_dir.glob(f"actor_agent{agent_id}*.pt"))
-            
+
             if not agent_files:
-                 raise FileNotFoundError(f"No model found for agent {agent_id} in {model_dir}")
-            
+                raise FileNotFoundError(f"No model found for agent {agent_id} in {model_dir}")
+
             best_file = None
-            best_reward = -float('inf')
-            
-            # First try to find files with reward suffix
+            best_reward_val = -float('inf')
+
             suffixed_files = []
             for f in agent_files:
-                 if f.name == f"actor_agent{agent_id}.pt":
-                     continue
-                 try:
-                     # Parse reward from filename: actor_agent0_reward_-123.45.pt
-                     parts = f.name.split('_reward_')
-                     if len(parts) == 2:
-                         reward_str = parts[1].replace('.pt', '')
-                         reward = float(reward_str)
-                         suffixed_files.append((reward, f))
-                 except ValueError:
-                     continue
-            
+                if f.name == f"actor_agent{agent_id}.pt":
+                    continue
+                try:
+                    parts = f.name.split('_reward_')
+                    if len(parts) == 2:
+                        reward_str = parts[1].replace('.pt', '')
+                        reward_val = float(reward_str)
+                        suffixed_files.append((reward_val, f))
+                except ValueError:
+                    continue
+
             if suffixed_files:
-                # Sort by reward (descending) and pick the best
                 suffixed_files.sort(key=lambda x: x[0], reverse=True)
-                best_reward, best_file = suffixed_files[0]
-                print(f"  Agent {agent_id}: Found best model with reward {best_reward:.2f}")
+                best_reward_val, best_file = suffixed_files[0]
+                print(f"  Agent {agent_id}: Found best model with reward {best_reward_val:.2f}")
             else:
-                # Fallback to standard name
                 simple_path = model_dir / f"actor_agent{agent_id}.pt"
                 if simple_path.exists():
                     best_file = simple_path
                     print(f"  Agent {agent_id}: Using standard model file")
                 else:
-                     # If we have files but none matched expected patterns, just take first one
-                     # This is a fallback ensuring we try something
-                     best_file = agent_files[0]
-                     print(f"  Agent {agent_id}: Using first available file (unknown naming pattern)")
+                    best_file = agent_files[0]
+                    print(f"  Agent {agent_id}: Using first available file (unknown naming pattern)")
 
             print(f"  Loading: {best_file.name}")
-            
-            # Load state dict first to check dimensions
+
+            # Load state dict
             state_dict = torch.load(str(best_file), map_location=self.device)
-            
-            # Check input dimension from the first layer weights
-            # Typical path: base.mlp.fc1.0.weight -> shape [hidden, input_dim]
-            saved_input_dim = None
-            if 'base.mlp.fc1.0.weight' in state_dict:
-                saved_input_dim = state_dict['base.mlp.fc1.0.weight'].shape[1]
-            elif 'base.cnn.cnn.0.weight' in state_dict:
-                saved_input_dim = state_dict['base.cnn.cnn.0.weight'].shape[1]
-                
-            # Adjust observation space if mismatch detected
-            # This handles cases where training used padding (e.g. GNN trained with max dim)
-            current_obs_dim = obs_space.shape[0]
-            if saved_input_dim is not None and saved_input_dim != current_obs_dim:
-                print(f"  DIMENSION MISMATCH: Model expects {saved_input_dim}, Env provides {current_obs_dim}")
-                print(f"  -> Adjusting policy input dimension to {saved_input_dim} (Likely due to padding in training)")
-                
-                from gymnasium import spaces
-                # Create a dummy space with the correct dimension
-                # Using lower bound -inf to avoid issues, as we only care about shape here
-                obs_space = spaces.Box(low=-np.inf, high=np.inf, shape=(saved_input_dim,), dtype=np.float32)
-            
-            # Create policy with potentially adjusted obs_space
-            policy = HAPPO_Policy(
-                all_args,
-                obs_space,
-                share_obs_space,
-                act_space,
-                device=self.device
-            )
-            
+
+            if is_gnn:
+                # GNN policy: obs_space is the padded max_obs_dim
+                from gymnasium import spaces as gym_spaces
+                padded_obs_space = gym_spaces.Box(
+                    low=-np.inf, high=np.inf,
+                    shape=(max_obs_dim,), dtype=np.float32
+                )
+                from algorithms.gnn_happo_policy import GNN_HAPPO_Policy
+                policy = GNN_HAPPO_Policy(
+                    all_args,
+                    padded_obs_space,
+                    share_obs_space,
+                    act_space,
+                    n_agents=self.args.num_agents,
+                    agent_id=agent_id,
+                    device=self.device
+                )
+            else:
+                # Baseline HAPPO policy
+                # Check input dimension from first layer weights
+                saved_input_dim = None
+                if 'base.mlp.fc1.0.weight' in state_dict:
+                    saved_input_dim = state_dict['base.mlp.fc1.0.weight'].shape[1]
+                elif 'base.cnn.cnn.0.weight' in state_dict:
+                    saved_input_dim = state_dict['base.cnn.cnn.0.weight'].shape[1]
+
+                current_obs_dim = obs_space.shape[0]
+                if saved_input_dim is not None and saved_input_dim != current_obs_dim:
+                    print(f"  DIMENSION MISMATCH: Model expects {saved_input_dim}, Env provides {current_obs_dim}")
+                    print(f"  -> Adjusting policy input dimension to {saved_input_dim}")
+                    from gymnasium import spaces as gym_spaces
+                    obs_space = gym_spaces.Box(low=-np.inf, high=np.inf, shape=(saved_input_dim,), dtype=np.float32)
+
+                policy = HAPPO_Policy(
+                    all_args,
+                    obs_space,
+                    share_obs_space,
+                    act_space,
+                    device=self.device
+                )
+
             # Load weights
             policy.actor.load_state_dict(state_dict)
             policy.actor.eval()
-            
+
             policies.append(policy)
             print(f"✓ Loaded agent {agent_id} successfully")
-        
+
         print(f"\n✓ All {self.args.num_agents} agent models loaded successfully!\n")
         return policies
     
@@ -283,11 +318,26 @@ class ModelEvaluator:
     def _run_episode(self, episode_num, save_trajectory=False):
         """Run a single evaluation episode."""
         obs, _ = self.env.reset()
-        
+
+        is_gnn = (getattr(self.args, 'algorithm_name', 'happo') == 'gnn_happo')
+
         # Initialize RNN states
         rnn_states = np.zeros((1, self.args.num_agents, 2, 128), dtype=np.float32)
         masks = np.ones((1, self.args.num_agents, 1), dtype=np.float32)
-        
+
+        # For GNN: build structured obs [1, n_agents, max_obs_dim]
+        if is_gnn:
+            max_obs_dim = max([self.env.observation_space[i].shape[0] for i in range(self.args.num_agents)])
+
+        def _build_gnn_obs(obs_array):
+            """Build structured obs [1, n_agents, max_obs_dim] from env obs."""
+            structured = np.zeros((1, self.args.num_agents, max_obs_dim), dtype=np.float32)
+            for aid in range(self.args.num_agents):
+                agent_obs = np.stack(obs_array[:, aid])  # [1, obs_dim]
+                obs_dim = agent_obs.shape[1]
+                structured[0, aid, :obs_dim] = agent_obs[0]
+            return structured
+
         # Metrics for this episode
         episode_data = {
             'total_reward': 0,
@@ -303,7 +353,7 @@ class ModelEvaluator:
             'avg_backlog': [0] * self.args.num_agents,
             'service_level': [0] * self.args.num_agents,  # % of time with inventory > 0
         }
-        
+
         # Trajectory data (only for first episode)
         if save_trajectory:
             trajectory = {
@@ -312,44 +362,55 @@ class ModelEvaluator:
                 'actions': [[] for _ in range(self.args.num_agents)],
                 'rewards': [[] for _ in range(self.args.num_agents)],
             }
-        
+
         # Run episode
         for step in range(self.args.episode_length):
             # Get actions from all agents
             actions_env = []
-            
+
+            if is_gnn:
+                # Build structured observations once per step for all agents
+                obs_structured = _build_gnn_obs(obs)
+
             for agent_id in range(self.args.num_agents):
                 self.policies[agent_id].actor.eval()
-                
-                # Convert observation to float array (handle object array from env)
-                # Convert observation to float array (handle object array from env)
-                obs_agent = np.stack(obs[:, agent_id])
-                
-                # Check for observation padding requirements
-                # The policy might have been initialized with a larger dimension (e.g. 36) than the env provides (e.g. 27)
-                policy_input_dim = self.policies[agent_id].obs_space.shape[0]
-                current_obs_dim = obs_agent.shape[1]
-                
-                if current_obs_dim < policy_input_dim:
-                    # Pad with zeros
-                    diff = policy_input_dim - current_obs_dim
-                    # Create zeros of shape (batch_size, diff)
-                    padding = np.zeros((obs_agent.shape[0], diff), dtype=np.float32)
-                    obs_agent = np.concatenate([obs_agent, padding], axis=1)
-                
+
                 with torch.no_grad():
-                    action, rnn_state = self.policies[agent_id].act(
-                        obs_agent,
-                        rnn_states[:, agent_id],
-                        masks[:, agent_id],
-                        deterministic=True
-                    )
-                
-                # Update RNN states using the returned rnn_state, NOT action
+                    if is_gnn:
+                        # GNN policy: pass structured obs + adjacency matrix + agent_id
+                        action, rnn_state = self.policies[agent_id].act(
+                            obs_structured,           # [1, n_agents, max_obs_dim]
+                            self.adj_tensor,          # adjacency matrix
+                            agent_id,                 # which agent
+                            rnn_states[:, agent_id],
+                            masks[:, agent_id],
+                            None,
+                            deterministic=True
+                        )
+                    else:
+                        # Baseline HAPPO: pass individual agent obs
+                        obs_agent = np.stack(obs[:, agent_id])
+
+                        # Pad if needed (e.g. model trained with larger obs dim)
+                        policy_input_dim = self.policies[agent_id].obs_space.shape[0]
+                        current_obs_dim = obs_agent.shape[1]
+                        if current_obs_dim < policy_input_dim:
+                            diff = policy_input_dim - current_obs_dim
+                            padding = np.zeros((obs_agent.shape[0], diff), dtype=np.float32)
+                            obs_agent = np.concatenate([obs_agent, padding], axis=1)
+
+                        action, rnn_state = self.policies[agent_id].act(
+                            obs_agent,
+                            rnn_states[:, agent_id],
+                            masks[:, agent_id],
+                            deterministic=True
+                        )
+
+                # Update RNN states
                 rnn_states[:, agent_id] = rnn_state.cpu().numpy() if isinstance(rnn_state, torch.Tensor) else rnn_state
                 action_np = action.cpu().numpy() if isinstance(action, torch.Tensor) else action
                 actions_env.append(action_np[0])
-                
+
                 if save_trajectory:
                     trajectory['actions'][agent_id].append(action_np[0].copy())
             
