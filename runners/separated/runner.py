@@ -32,7 +32,7 @@ class CRunner(BaseRunner):
         csv_path = os.path.join(str(self.run_dir), "progress.csv")
         if not os.path.exists(csv_path):
             with open(csv_path, "w") as f:
-                f.write("episode,steps,reward\n")
+                f.write("episode,steps,total_episode_reward\n")
 
         # Load training state if available and model_dir is set
         print(f"[DEBUG] self.model_dir = {self.model_dir}")
@@ -61,10 +61,6 @@ class CRunner(BaseRunner):
             else:
                 print(f"[WARNING] No training_state.pt found. Starting with best_reward = -inf")
         
-        from collections import deque
-        # --- SLIDING WINDOW FOR SMOOTH LOGGING ---
-        # Keeps last 100 steps of rewards to prevent "dips" at episode boundaries
-        reward_window = deque(maxlen=100)
 
         for episode in range(start_episode, episodes):
             episode_rewards = []
@@ -122,28 +118,9 @@ class CRunner(BaseRunner):
                 
                 available_actions = np.array([[None for agent_id in range(self.num_agents)] for info in infos])
 
-                # --- NEW LOGGING LOGIC ---
-                # Calculate system reward for this step: sum of all agents, averaged over threads
+                # Accumulate system reward for this step: sum of all agents, averaged over threads
                 step_reward = np.sum(np.mean(rewards, axis=0))
                 episode_rewards.append(step_reward)
-
-                # Calculate global total steps
-                current_total_steps = (episode * self.episode_length * self.n_rollout_threads) + \
-                                      ((step + 1) * self.n_rollout_threads)
-
-                # --- SMOOTH ROLLING WINDOW LOGGING ---
-                # Add to sliding window
-                reward_window.append(step_reward)
-
-                # Log every 10 steps to keep file size manageable while maintaining smoothness
-                if current_total_steps % 10 == 0:
-                    running_avg_reward = np.mean(reward_window)
-                    try:
-                        with open(csv_path, "a") as f:
-                            f.write(f"{episode},{current_total_steps},{running_avg_reward}\n")
-                    except Exception as e:
-                        print(f"Error writing to CSV: {e}")
-                # -------------------------
 
                 rewards_log.append(rewards)
 
@@ -160,6 +137,15 @@ class CRunner(BaseRunner):
                 self.insert(data)
 
             # -----------------------------------------------
+
+            # --- EPISODE-LEVEL CSV LOGGING (one row per episode) ---
+            episode_total_reward = sum(episode_rewards)
+            try:
+                with open(csv_path, "a") as f:
+                    f.write(f"{episode},{total_num_steps},{episode_total_reward:.4f}\n")
+            except Exception as e:
+                print(f"Error writing to CSV: {e}")
+            # -------------------------------------------------------
 
             # compute return and update network
             self.compute()
