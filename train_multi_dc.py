@@ -174,7 +174,7 @@ if __name__ == "__main__":
     # --- Resume Training (Optional) ---
     # Set this path to resume from a saved checkpoint
     RESUME_MODEL_DIR = None
-    # RESUME_MODEL_DIR = r"D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\09Feb_test1_kaggle\run_seed_1"
+    # RESUME_MODEL_DIR = r"d:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\04Febtest_1\run_seed_1"
     if RESUME_MODEL_DIR:
         all_args.model_dir = RESUME_MODEL_DIR
         print(f"Resuming from: {all_args.model_dir}")
@@ -249,7 +249,7 @@ if __name__ == "__main__":
         
         print(f"Environments created: {envs.num_envs} parallel envs")
         print(f"Agents per env: {num_agents}")
-        print(f"Observation spaces: DCs=30D, Retailers=36D")
+        print(f"Observation spaces: DCs=27D, Retailers=36D")
         print(f"Action spaces: DCs=3D continuous, Retailers=6D continuous\n")
 
         config = {
@@ -285,8 +285,6 @@ if __name__ == "__main__":
             print(f"Training interrupted manually (KeyboardInterrupt)")
             print(f"Saving current artifacts before exit...")
             print(f"{'='*70}\n")
-            # Break the loop to stop training for other seeds too
-            break
             
         except Exception as e:
             print(f"\n{'='*70}")
@@ -294,7 +292,6 @@ if __name__ == "__main__":
             import traceback
             traceback.print_exc()
             print(f"{'='*70}\n")
-            break  # Stop training – do not proceed to the next seed on error
             
         finally:
             # Close environments
@@ -324,13 +321,13 @@ if __name__ == "__main__":
             # root_dir is the directory we want to compress
             shutil.make_archive(output_path, 'zip', run_dir)
             
-            print("[OK] Zip archive created successfully!")
+            print(f"✓ Zip archive created successfully!")
             print(f"  Location: {output_path}.zip")
             print(f"  Content:  {run_dir}")
             print("="*70)
             
         except Exception as e:
-            print(f"[FAIL] Failed to create zip archive: {e}")
+            print(f"✗ Failed to create zip archive: {e}")
             print("="*70)
 
     print("\n" + "="*70)

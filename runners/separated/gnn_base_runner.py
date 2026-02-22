@@ -41,7 +41,7 @@ class GNNRunner(object):
         adj = build_supply_chain_adjacency(n_dcs=2, n_retailers=15, self_loops=True)
         adj = normalize_adjacency(adj, method='symmetric')
         self.adj_tensor = torch.FloatTensor(adj).to(self.device)
-        print(f"✓ Graph created: {adj.shape[0]} nodes, {np.sum(adj > 0)} edges\n")
+        print(f"[OK] Graph created: {adj.shape[0]} nodes, {np.sum(adj > 0)} edges\n")
 
         # parameters
         self.env_name = self.all_args.env_name
@@ -197,8 +197,8 @@ class GNNRunner(object):
                 best_reward = state.get('best_reward', float('-inf'))
                 best_bw = state.get('best_bw', [])
                 record = state.get('record', 0)
-                print(f"✓ Loaded training state from: {state_path}")
-                print(f"✓ Resuming training from episode {start_episode} with best reward {best_reward:.2f}")
+                print(f"[OK] Loaded training state from: {state_path}")
+                print(f"[OK] Resuming training from episode {start_episode} with best reward {best_reward:.2f}")
             else:
                 print(f"[WARNING] No training_state.pt found. Starting with best_reward = -inf")
 
@@ -226,7 +226,7 @@ class GNNRunner(object):
                         'record': record
                     }
                     torch.save(training_state, os.path.join(self.save_dir, "training_state.pt"))
-                    print(f"✓ Better model saved! Reward: {re:.2f} (previous best: {best_reward:.2f})")
+                    print(f"[OK] Better model saved! Reward: {re:.2f} (previous best: {best_reward:.2f})")
                     best_reward = re
                     best_bw = bw_res
                     record = 0
@@ -731,7 +731,7 @@ class GNNRunner(object):
                     critic_opt_path = max(critic_opt_files, key=lambda x: float(x.split('_reward_')[1].replace('.pt', '')))
                     self.policy[agent_id].critic_optimizer.load_state_dict(torch.load(critic_opt_path, map_location=self.device))
 
-        print("✓ All models loaded successfully!")
+        print("[OK] All models loaded successfully!")
 
     # =========================================================================
     # log_train() — same as CRunner.log_train()
