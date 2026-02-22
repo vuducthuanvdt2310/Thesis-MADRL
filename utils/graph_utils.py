@@ -11,38 +11,49 @@ import matplotlib.pyplot as plt
 import networkx as nx
 
 
-def build_supply_chain_adjacency(n_dcs=2, n_retailers=15, self_loops=True):
+def build_supply_chain_adjacency(n_dcs=2, n_retailers=15, self_loops=True,
+                                  dc_assignments=None):
     """
     Build adjacency matrix for supply chain graph.
-    
+
     Structure:
-    - DCs (nodes 0, 1) connect to ALL retailers (nodes 2-16)
-    - This creates a bipartite graph structure
-    - Edges are DIRECTED: DC → Retailer (representing supply flow)
-    
+    - If ``dc_assignments`` is given (dict mapping dc_id -> list of agent IDs),
+      each DC only connects to its **assigned** retailers, mirroring the
+      exclusive sourcing constraint in the environment.
+    - Otherwise every DC connects to every retailer (fully bipartite).
+    - Edges are bidirectional: DC ↔ Retailer (supply flow + demand signal).
+
     Args:
         n_dcs: Number of distribution centers (default: 2)
         n_retailers: Number of retailers (default: 15)
         self_loops: Whether to add self-loops (default: True)
-    
+        dc_assignments: Optional dict {dc_id (int): [retailer_agent_ids]}
+                        matching the env's ``self.dc_assignments``.
+
     Returns:
         adj_matrix: numpy array of shape [n_agents, n_agents]
                    adj_matrix[i, j] = 1 if there's an edge from i to j
     """
     n_agents = n_dcs + n_retailers
     adj_matrix = np.zeros((n_agents, n_agents), dtype=np.float32)
-    
-    # Add edges: Each DC connects to all retailers
-    for dc_id in range(n_dcs):
-        for retailer_id in range(n_dcs, n_agents):
-            adj_matrix[dc_id, retailer_id] = 1.0
-            # Add reverse edge: Retailer connects to DC (so Retailer sees DC)
-            adj_matrix[retailer_id, dc_id] = 1.0
-    
+
+    if dc_assignments is not None:
+        # Connect each DC only to its assigned retailers
+        for dc_id, retailer_agent_ids in dc_assignments.items():
+            for retailer_id in retailer_agent_ids:
+                adj_matrix[dc_id, retailer_id] = 1.0
+                adj_matrix[retailer_id, dc_id] = 1.0
+    else:
+        # Fallback: fully bipartite (every DC → every retailer)
+        for dc_id in range(n_dcs):
+            for retailer_id in range(n_dcs, n_agents):
+                adj_matrix[dc_id, retailer_id] = 1.0
+                adj_matrix[retailer_id, dc_id] = 1.0
+
     # Add self-loops (important for GNN: allows node to keep its own features)
     if self_loops:
         np.fill_diagonal(adj_matrix, 1.0)
-    
+
     return adj_matrix
 
 
@@ -197,25 +208,36 @@ def get_node_degrees(adj_matrix):
 if __name__ == "__main__":
     # Test the graph utilities
     print("Testing graph utilities...")
-    
-    # Build adjacency matrix
+
+    # --- Mode 1: fully bipartite (no assignments) ---
     adj = build_supply_chain_adjacency(n_dcs=2, n_retailers=15)
-    print(f"Adjacency matrix shape: {adj.shape}")
-    print(f"Number of edges: {np.sum(adj > 0)}")
-    
-    # Check degrees
+    print(f"[Bipartite] Adjacency matrix shape: {adj.shape}")
+    print(f"[Bipartite] Number of edges: {int(np.sum(adj > 0))}")
     in_deg, out_deg = get_node_degrees(adj)
-    print(f"\nDC out-degrees: {out_deg[:2]}")  # Should be 16 each (15 retailers + self-loop)
-    print(f"Retailer in-degrees: {in_deg[2:5]}")  # Should be 3 each (2 DCs + self-loop)
-    
+    print(f"[Bipartite] DC out-degrees:      {out_deg[:2]}")   # 16 each
+    print(f"[Bipartite] Retailer in-degrees: {in_deg[2:5]}")  # 3 each
+
+    # --- Mode 2: assignment-aware (matching multi_dc_config.yaml defaults) ---
+    dc_assignments = {
+        0: [2, 3, 4, 5, 6, 7, 8],        # DC0 → agent IDs 2-8  (retailers 0-6)
+        1: [9, 10, 11, 12, 13, 14, 15, 16],  # DC1 → agent IDs 9-16 (retailers 7-14)
+    }
+    adj_a = build_supply_chain_adjacency(n_dcs=2, n_retailers=15,
+                                         dc_assignments=dc_assignments)
+    print(f"\n[Assigned]  Adjacency matrix shape: {adj_a.shape}")
+    print(f"[Assigned]  Number of edges: {int(np.sum(adj_a > 0))}")
+    # DC0 should have edges to 7 retailers only; DC1 to 8 retailers only
+    in_deg_a, out_deg_a = get_node_degrees(adj_a)
+    print(f"[Assigned]  DC0 out-degree: {out_deg_a[0]}  (expected 8: 7 retailers + self)")
+    print(f"[Assigned]  DC1 out-degree: {out_deg_a[1]}  (expected 9: 8 retailers + self)")
+
     # Normalize
-    adj_norm = normalize_adjacency(adj, method='symmetric')
+    adj_norm = normalize_adjacency(adj_a, method='symmetric')
     print(f"\nNormalized adjacency range: [{adj_norm.min():.3f}, {adj_norm.max():.3f}]")
-    
+
     # Convert to edge_index format
-    edge_index = adjacency_to_edge_index(adj)
+    edge_index = adjacency_to_edge_index(adj_a)
     print(f"Edge index shape: {edge_index.shape}")
-    
-    # Visualize
-    visualize_supply_chain_graph(adj, n_dcs=2, save_path="supply_chain_graph.png")
+
     print("\n✓ All tests passed!")
+
