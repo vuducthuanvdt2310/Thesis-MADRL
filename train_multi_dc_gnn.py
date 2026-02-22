@@ -38,7 +38,7 @@ def mount_google_drive():
     """Mount Google Drive in Colab."""
     try:
         if os.path.exists('/content/drive/MyDrive'):
-            print("✓ Google Drive already mounted!")
+            print("[OK] Google Drive already mounted!")
             return True
 
         from google.colab import drive
@@ -126,8 +126,8 @@ if __name__ == "__main__":
     parser.add_argument('--critic_pooling', type=str, default='mean',
                        choices=['mean', 'max', 'concat'],
                        help='Pooling method for critic')
-    parser.add_argument('--single_agent_obs_dim', type=int, default=36,
-                       help='Single agent observation dimension (use max: 36 for retailers)')
+    parser.add_argument('--single_agent_obs_dim', type=int, default=30,
+                       help='Single agent observation dimension (both DCs and Retailers: 30D)')
 
     # ================================================================
     # DEFAULT CONFIGURATION — IDENTICAL to baseline for fair comparison
@@ -155,7 +155,7 @@ if __name__ == "__main__":
     all_args = parse_args(sys.argv[1:], parser)
 
     # CRITICAL: Force single_agent_obs_dim to 36 (max obs dim for retailers)
-    all_args.single_agent_obs_dim = 36
+    all_args.single_agent_obs_dim = 30
 
     # --- Resume Training (Optional) ---
     RESUME_MODEL_DIR = None
@@ -237,8 +237,8 @@ if __name__ == "__main__":
 
         print(f"Environments created: {envs.num_envs} parallel envs")
         print(f"Agents per env: {num_agents}")
-        print(f"Observation spaces: DCs=27D, Retailers=36D (padded to 36D for GNN)")
-        print(f"Action spaces: DCs=3D continuous, Retailers=6D continuous\n")
+        print(f"Observation spaces: DCs=30D, Retailers=30D (uniform for GNN)")
+        print(f"Action spaces: DCs=3D active (6D buffer), Retailers=3D active (6D buffer)\n")
 
         config = {
             "all_args": all_args,
@@ -305,7 +305,7 @@ if __name__ == "__main__":
             print("="*70)
 
         except Exception as e:
-            print(f"✗ Failed to create zip archive: {e}")
+            print(f"[FAIL] Failed to create zip archive: {e}")
             print("="*70)
 
     print("\n" + "="*70)

@@ -270,7 +270,7 @@ class CRunner(BaseRunner):
                 # GNN-HAPPO requires adjacency matrix and structured observations [batch, n_agents, obs_dim]
                 # Reconstruct structured observations from individual agent buffers
                 batch_size = self.buffer[agent_id].obs[step].shape[0]
-                max_obs_dim = 36  # Max dimension (retailers have 36D, DCs have 27D)
+                max_obs_dim = 30  # Both DCs and Retailers now have 30D observations
                 obs_structured = np.zeros((batch_size, self.num_agents, max_obs_dim), dtype=np.float32)
                 
                 # Fill in observations for all agents
@@ -409,8 +409,8 @@ class CRunner(BaseRunner):
                 # Each env has observations for all agents
                 # We need to convert to [batch, n_agents, obs_dim] where obs_dim may vary per agent
                 
-                # Get max obs dim for padding (retailers have 36D, DCs have 27D)
-                max_obs_dim = max([self.envs.observation_space[i].shape[0] for i in range(self.num_agents)])
+                # Get max obs dim for padding (both DCs and Retailers now have 30D)
+                max_obs_dim = 30
                 
                 # Create structured observations [batch, n_agents, max_obs_dim]
                 eval_obs_structured = np.zeros((self.n_eval_rollout_threads, self.num_agents, max_obs_dim), dtype=np.float32)

@@ -10,6 +10,7 @@ Key Features:
 - Retailer multi-source ordering: Choose which DC to order from
 - Proportional rationing when DCs have insufficient stock
 - Dynamic market pricing for DC orders
+- Bulk-order discount for DC→Supplier orders: higher quantities earn a tiered price discount
 - Heterogeneous agents (DCs vs Retailers have different obs/action spaces)
 """
 
@@ -48,7 +49,33 @@ class MultiDCInventoryEnv:
         
         # Agent IDs
         self.dc_ids = list(range(self.n_dcs))  # [0, 1]
-        self.retailer_ids = list(range(self.n_dcs, self.n_agents))  # [2, 3, 4]
+        self.retailer_ids = list(range(self.n_dcs, self.n_agents))  # [2..16]
+        
+        # DC-to-Retailer exclusive assignment
+        # Loaded from config; maps dc_id -> [retailer agent_ids]
+        raw_assignments = self.config.get('dc_assignments', None)
+        if raw_assignments:
+            self.dc_assignments = {
+                0: [self.n_dcs + idx for idx in raw_assignments['dc_0']],
+                1: [self.n_dcs + idx for idx in raw_assignments['dc_1']],
+            }
+        else:
+            # Default: split retailers evenly between the two DCs
+            half = self.n_retailers // 2
+            self.dc_assignments = {
+                0: list(range(self.n_dcs, self.n_dcs + half)),
+                1: list(range(self.n_dcs + half, self.n_agents)),
+            }
+        # Reverse map: retailer_id -> assigned dc_id
+        self.retailer_to_dc: Dict[int, int] = {}
+        for dc_id, r_list in self.dc_assignments.items():
+            for r_id in r_list:
+                self.retailer_to_dc[r_id] = dc_id
+        # print(f"[MultiDCEnv] DC assignments: DC0 -> {self.dc_assignments[0]}, DC1 -> {self.dc_assignments[1]}")
+        
+        # Pre-compute per-retailer demand stats (mean, std per SKU) from history CSV.
+        # Done after n_retailers and n_skus are set.
+        self._compute_retailer_demand_stats()
         
         # Lead time parameters
         # Supplier → DC lead times
@@ -130,6 +157,22 @@ class MultiDCInventoryEnv:
         else:
             self.termination_penalty = 0.0
 
+        # --- Bulk discount tiers for DC→Supplier orders ---
+        # Each tier: {threshold: min total order qty (summed over all SKUs),
+        #             discount_rate: fraction of market-price cost returned as reward bonus}
+        # Defaults mirror realistic supplier volume-discount schedules.
+        discount_cfg = self.config.get('rewards', {}).get('bulk_discount', {})
+        self.bulk_discount_tiers = discount_cfg.get('tiers', [
+            {'threshold': 30,  'discount_rate': 0.05},   # ≥30 units → 5 % discount
+            {'threshold': 60,  'discount_rate': 0.10},   # ≥60 units → 10 % discount
+            {'threshold': 100, 'discount_rate': 0.15},   # ≥100 units → 15 % discount
+            {'threshold': 150, 'discount_rate': 0.20},   # ≥150 units → 20 % discount
+        ])
+        # Sort descending by threshold so we pick the highest applicable tier first
+        self.bulk_discount_tiers = sorted(
+            self.bulk_discount_tiers, key=lambda t: t['threshold'], reverse=True
+        )
+
     def _load_constraints(self):
         """Load constraints from config."""
         if 'constraints' in self.config:
@@ -141,26 +184,26 @@ class MultiDCInventoryEnv:
     def _define_spaces(self):
         """Define observation and action spaces for each agent type."""
         
-        # DC Observation: 30D (10 features × 3 SKUs)
-        # Added: Average Retailer Inventory (visibility of downstream stock)
+        # DC Observation: 30D (10 features x 3 SKUs)
         self.obs_dim_dc = self.n_skus * 10
         self.obs_space_dc = spaces.Box(0, 1, (self.obs_dim_dc,), dtype=np.float32)
         
-        # Retailer Observation: 36D (12 features × 3 SKUs)
-        # Reduced from 14 to 12 by removing "2+ days" pipeline features (DC→Retailer is 1 day fixed)
-        self.obs_dim_retailer = self.n_skus * 12
+        # Retailer Observation: 30D (10 features x 3 SKUs)
+        # Each retailer sees only its assigned DC (not both),
+        # and uses pipeline bins aligned to the 7-14 day DC->Retailer lead time.
+        self.obs_dim_retailer = self.n_skus * 10
         self.obs_space_retailer = spaces.Box(0, 1, (self.obs_dim_retailer,), dtype=np.float32)
         
-        
         # === UNIFORM ACTION SPACES FOR HAPPO COMPATIBILITY ===
-        # All agents have 6D continuous actions for uniformity
-        # DC agents: only use first 3 dimensions (order qty per SKU from supplier)
-        #            last 3 dimensions are ignored/masked
-        # Retailer agents: use all 6 dimensions (DC0_SKU0-2, DC1_SKU0-2)
+        # All agents have 6D continuous actions for uniformity.
+        # DC agents:       use action[0:3] (order qty per SKU from supplier)
+        #                  action[3:6] ignored
+        # Retailer agents: use action[0:3] (order qty per SKU from their ASSIGNED DC)
+        #                  action[3:6] ignored
         
-        self.action_dim = 6  # Uniform for all agents
-        self.action_dim_dc_used = 3  # DCs only use first 3
-        self.action_dim_retailer = 6  # Retailers use all 6
+        self.action_dim = 6            # Uniform for all agents
+        self.action_dim_dc_used = 3    # DCs only use first 3
+        self.action_dim_retailer = 3   # Retailers only use first 3 (assigned DC)
         
         # Uniform action space for all agents
         self.action_space = spaces.Box(0, 70, (self.action_dim,), dtype=np.float32)
@@ -195,10 +238,7 @@ class MultiDCInventoryEnv:
         # Initialize demand history (for retailers)
         self.demand_history = [[] for _ in range(self.n_skus)]
         
-        # Reload demand data (in case changed)
-        import pandas as pd
-        demand_path = 'data/demand_history.csv'
-        self.demand_df = pd.read_csv(demand_path)
+        # demand stats are pre-computed at __init__; no need to reload CSV every episode
         
         # Get initial observations
         observations = self._get_observations()
@@ -297,7 +337,11 @@ class MultiDCInventoryEnv:
     
     def _process_retailer_orders(self, actions: Dict[int, np.ndarray]) -> Dict:
         """
-        Parse retailer actions and register orders with DCs.
+        Parse retailer actions and register orders with their ASSIGNED DC only.
+        
+        Each retailer exclusively serves one DC (see self.retailer_to_dc).
+        action[0:3] = order quantities per SKU for the assigned DC.
+        action[3:6] = unused (kept for uniform 6D action space).
         
         Returns:
             retailer_orders: {dc_id: {retailer_id: {sku: qty}}}
@@ -305,24 +349,17 @@ class MultiDCInventoryEnv:
         retailer_orders = {dc_id: {} for dc_id in self.dc_ids}
         
         for retailer_id in self.retailer_ids:
-            action = actions[retailer_id]  # Shape: (6,)
+            action = actions[retailer_id]  # Shape: (6,) but only [0:3] used
+            assigned_dc = self.retailer_to_dc[retailer_id]
             
-            # Parse: [DC0_SKU0, DC0_SKU1, DC0_SKU2, DC1_SKU0, DC1_SKU1, DC1_SKU2]
-            dc0_orders = action[0:3]  # Orders to DC_0
-            dc1_orders = action[3:6]  # Orders to DC_1
-            
-            # Register with DC_0
-            retailer_orders[0][retailer_id] = {
-                sku: float(dc0_orders[sku]) for sku in range(self.n_skus)
+            # action[0:3] → order from assigned DC per SKU
+            retailer_orders[assigned_dc][retailer_id] = {
+                sku: float(action[sku]) for sku in range(self.n_skus)
             }
-            
-            # Register with DC_1
-            retailer_orders[1][retailer_id] = {
-                sku: float(dc1_orders[sku]) for sku in range(self.n_skus)
-            }
+            # action[3:6] is deliberately unused (maintained for HAPPO buffer uniformity)
             
             # Track total order for logging
-            self.last_actions[retailer_id] = np.sum(dc0_orders) + np.sum(dc1_orders)
+            self.last_actions[retailer_id] = float(np.sum(action[:self.n_skus]))
         
         return retailer_orders
         
@@ -467,33 +504,36 @@ class MultiDCInventoryEnv:
                     self.inventory[retailer_id][sku] = 0
                     self.backlog[retailer_id][sku] += shortage
     
+    def _compute_retailer_demand_stats(self):
+        """
+        Compute a single shared demand distribution (mean, std per SKU)
+        from the demand history CSV. All retailers sample from this same
+        Normal distribution, so demand is stochastic but identically
+        distributed across retailers.
+        """
+        sku_cols = ['sku_0_demand', 'sku_1_demand', 'sku_2_demand']
+        self.demand_mean = np.array([self.demand_df[c].mean() for c in sku_cols], dtype=np.float32)
+        self.demand_std  = np.maximum(
+            np.array([self.demand_df[c].std() for c in sku_cols], dtype=np.float32),
+            0.1  # ensure std > 0
+        )
+        print(f"[MultiDCEnv] Demand distribution (shared across all retailers):")
+        print(f"  mean={np.round(self.demand_mean, 2)}  std={np.round(self.demand_std, 2)}")
+
     def _get_demand(self, retailer_idx: int, day: int) -> np.ndarray:
         """
-        Get customer demand for a specific retailer on a specific day.
-        
+        Sample customer demand from Normal(mean, std) fitted to the CSV history.
+        All retailers share the same distribution; demand is clipped to >= 0.
+
         Args:
-            retailer_idx: Index among retailers (0, 1, 2)
-            day: Current simulation day
-        
+            retailer_idx: Index among retailers (unused — same distribution for all)
+            day: Current simulation day (unused — i.i.d. sampling)
+
         Returns:
-            demand: np.array of shape (n_skus,)
+            demand: np.array of shape (n_skus,), non-negative
         """
-        # Load demand from CSV file
-        # Use modulo to wrap around if episode goes beyond available data
-        day_idx = day % len(self.demand_df)
-        
-        # Get base demand from CSV
-        row = self.demand_df.iloc[day_idx]
-        base_demand = np.array([
-            row['sku_0_demand'],
-            row['sku_1_demand'],
-            row['sku_2_demand']
-        ], dtype=np.float32)
-        
-        
-        retailer_multipliers = [1.0] * self.n_retailers
-        demand = base_demand * retailer_multipliers[retailer_idx]
-        
+        demand = np.random.normal(self.demand_mean, self.demand_std).astype(np.float32)
+        demand = np.maximum(demand, 0.0)
         return demand
     
     def _update_market_prices(self):
@@ -513,14 +553,45 @@ class MultiDCInventoryEnv:
             self.market_prices[sku] = new_price
             self.price_history[sku].append(new_price)
     
+    def _get_bulk_discount_rate(self, total_order_qty: float) -> float:
+        """
+        Return the applicable bulk-discount rate for a DC order to the supplier.
+
+        The discount is tiered: the highest threshold that the total order quantity
+        (summed across all SKUs) exceeds determines the discount rate.
+
+        Args:
+            total_order_qty: Sum of order quantities across all SKUs.
+
+        Returns:
+            discount_rate: A value in [0, 1] representing the fraction of the
+                           variable (market-price) ordering cost that is returned
+                           as a reward bonus.
+        """
+        for tier in self.bulk_discount_tiers:  # already sorted descending by threshold
+            if total_order_qty >= tier['threshold']:
+                return float(tier['discount_rate'])
+        return 0.0  # no discount for small orders
+
     def _calculate_rewards(self, actions: Dict[int, np.ndarray]) -> Dict[int, float]:
-        """Calculate rewards (negative costs) for all agents."""
+        """Calculate rewards (negative costs) for all agents.
+
+        DC rewards include a bulk-order discount bonus: when a DC orders a large
+        total quantity from the supplier in a single step, a tiered discount is
+        applied to the variable (market-price) portion of the ordering cost,
+        reflecting the real-world practice of supplier volume discounts.
+        """
         rewards = {}
         
         # DC rewards
         for dc_id in self.dc_ids:
             total_cost = 0.0
-            
+            variable_order_cost = 0.0  # tracks market-price portion for discount calc
+
+            # Total order placed this step (sum across all SKUs) — used for tier lookup
+            total_order_qty = float(np.sum(actions[dc_id][:self.n_skus]))
+            discount_rate = self._get_bulk_discount_rate(total_order_qty)
+
             for sku in range(self.n_skus):
                 # Holding cost
                 holding = self.H_dc[dc_id][sku] * self.inventory[dc_id][sku]
@@ -533,17 +604,23 @@ class MultiDCInventoryEnv:
                 if order_qty > 0:
                     # Use price from when order was placed (current market price)
                     market_price = self.market_prices[sku]
-                    ordering = self.C_fixed_dc[dc_id][sku] + (market_price * order_qty)
+                    var_cost = market_price * order_qty
+                    ordering = self.C_fixed_dc[dc_id][sku] + var_cost
+                    variable_order_cost += var_cost
                 else:
                     ordering = 0
                 
                 total_cost += holding + backlog + ordering
+
+            # Bulk discount bonus: return a fraction of the variable ordering cost
+            bulk_discount_bonus = discount_rate * variable_order_cost
             
-            rewards[dc_id] = -total_cost + self.survival_reward
+            rewards[dc_id] = -total_cost + bulk_discount_bonus 
         
         # Retailer rewards
         for retailer_idx, retailer_id in enumerate(self.retailer_ids):
             total_cost = 0.0
+            assigned_dc = self.retailer_to_dc[retailer_id]
             
             for sku in range(self.n_skus):
                 # Holding cost
@@ -552,19 +629,14 @@ class MultiDCInventoryEnv:
                 # Backlog cost
                 backlog = self.B_retailer[retailer_idx][sku] * self.backlog[retailer_id][sku]
                 
-                # Ordering costs from both DCs
+                # Ordering cost from assigned DC only (action[0:3])
                 action = actions[retailer_id]
-                order_dc0 = action[sku]  # Order to DC_0 for this SKU
-                order_dc1 = action[3 + sku]  # Order to DC_1 for this SKU
+                order_qty = float(action[sku])  # Only the first 3 dims are used
                 
                 ordering = 0
-                if order_dc0 > 0:
-                    var_cost = self.C_var_retailer[retailer_idx][0][sku]
-                    ordering += self.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_dc0)
-                
-                if order_dc1 > 0:
-                    var_cost = self.C_var_retailer[retailer_idx][1][sku]
-                    ordering += self.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_dc1)
+                if order_qty > 0:
+                    var_cost = self.C_var_retailer[retailer_idx][assigned_dc][sku]
+                    ordering = self.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_qty)
                 
                 total_cost += holding + backlog + ordering
             
@@ -593,9 +665,9 @@ class MultiDCInventoryEnv:
         Features per SKU (9 total):
         1. Inventory
         2. Backlog
-        3. Pipeline 7-8 days
-        4. Pipeline 9-10 days
-        5. Pipeline 11-14 days
+        3. Pipeline 15-18 days  (early arrivals within lead-time window)
+        4. Pipeline 19-22 days  (mid-range arrivals)
+        5. Pipeline 23-25 days  (late arrivals, max lead-time window)
         6. Total pipeline
         7. Current market price
         8. Market price 5-day MA
@@ -605,116 +677,119 @@ class MultiDCInventoryEnv:
         obs = []
         
         for sku in range(self.n_skus):
-            # 1. Inventory (normalized)
+            # 1. DC Inventory
+            # DCs accumulate stock across many lead-time cycles (max L/T=25 days, max order=70).
+            # Realistic ceiling: ~1000 units (25 days x 70 / ~2 cycle overlap).
             obs.append(self.inventory[dc_id][sku] / 1000.0)
             
-            # 2. Backlog (normalized)
-            obs.append(self.backlog[dc_id][sku] / 50.0)
+            # 2. DC Backlog (failure-state signal; chronic large backlog = bad policy)
+            obs.append(self.backlog[dc_id][sku] / 100.0)
             
-            # 3-5. Pipeline bins
-            pipeline_7_8 = sum(o['qty'] for o in self.pipeline[dc_id]
-                              if o['sku'] == sku and self.current_day + 7 <= o['arrival_day'] <= self.current_day + 8)
-            pipeline_9_10 = sum(o['qty'] for o in self.pipeline[dc_id]
-                               if o['sku'] == sku and self.current_day + 9 <= o['arrival_day'] <= self.current_day + 10)
-            pipeline_11_14 = sum(o['qty'] for o in self.pipeline[dc_id]
-                                if o['sku'] == sku and self.current_day + 11 <= o['arrival_day'] <= self.current_day + 14)
+            # 3-5. Pipeline bins aligned with Uniform[15, 25] lead time.
+            # Minimum arrival is day+15; days 1-14 will always be empty.
+            pipeline_15_18 = sum(o['qty'] for o in self.pipeline[dc_id]
+                               if o['sku'] == sku and self.current_day + 15 <= o['arrival_day'] <= self.current_day + 18)
+            pipeline_19_22 = sum(o['qty'] for o in self.pipeline[dc_id]
+                               if o['sku'] == sku and self.current_day + 19 <= o['arrival_day'] <= self.current_day + 22)
+            pipeline_23_25 = sum(o['qty'] for o in self.pipeline[dc_id]
+                               if o['sku'] == sku and self.current_day + 23 <= o['arrival_day'] <= self.current_day + 25)
             
-            obs.append(pipeline_7_8 / 50.0)
-            obs.append(pipeline_9_10 / 50.0)
-            obs.append(pipeline_11_14 / 50.0)
+            obs.append(pipeline_15_18 / 70.0)  # 4-day window, max ~1 order = 70 units
+            obs.append(pipeline_19_22 / 70.0)  # 4-day window, max ~1 order = 70 units
+            obs.append(pipeline_23_25 / 70.0)  # 3-day window, max ~1 order = 70 units
             
-            # 6. Total pipeline
+            # 6. Total DC pipeline
+            # All in-flight orders: up to 25 days x 70 units/day -> ceiling ~1750; use 2000 for margin.
             total_pipeline = sum(o['qty'] for o in self.pipeline[dc_id] if o['sku'] == sku)
-            obs.append(total_pipeline / 1000.0)
+            obs.append(total_pipeline / 2000.0)
             
-            # 7. Current market price (normalized)
+            # 7. Current market price (normalized by its own price ceiling)
             obs.append(self.market_prices[sku] / self.price_bounds['max'][sku])
             
-            # 8. Price MA (5-day)
+            # 8. Price MA (5-day, normalized by its own price ceiling)
             price_ma = np.mean(self.price_history[sku][-5:]) if len(self.price_history[sku]) >= 5 else self.market_prices[sku]
             obs.append(price_ma / self.price_bounds['max'][sku])
             
-            # 9. Aggregate retailer demand (signal of downstream needs)
-            # Simplified: use average recent retailer backlog as proxy
+            # 9. Aggregate retailer backlog (downstream demand pressure on DC)
+            # Same failure-state scale as DC backlog.
             avg_retailer_backlog = np.mean([self.backlog[r][sku] for r in self.retailer_ids])
-            obs.append(avg_retailer_backlog / 50.0)
+            obs.append(avg_retailer_backlog / 100.0)
             
-            # 10. Aggregate retailer inventory (Proactive signal)
-            # Allows DC to see if retailers are running low before backlog hits
+            # 10. Aggregate retailer inventory (proactive restock signal)
+            # Retailers hold much less than DCs; realistic ceiling ~150.
             avg_retailer_inventory = np.mean([self.inventory[r][sku] for r in self.retailer_ids])
-            obs.append(avg_retailer_inventory / 100.0)  # Normalize by retailer capacity (approx 100)
+            obs.append(avg_retailer_inventory / 150.0)
         
         return np.array(obs, dtype=np.float32)
     
     def _get_retailer_observation(self, retailer_id: int) -> np.ndarray:
         """
-        Build observation for a retailer agent (36 dimensions).
+        Build observation for a retailer agent (30 dimensions = 10 features x 3 SKUs).
         
-        Features per SKU (12 total):
-        1. Own inventory
-        2. Own backlog
-        3. DC_0 inventory (visibility)
-        4. DC_1 inventory (visibility)
-        5. DC_0 backlog (reliability signal)
-        6. DC_1 backlog (reliability signal)
-        7-8. DC variable cost indicators
-        9. Pipeline from DC_0 (arriving in 0-1 days)
-        10. Pipeline from DC_1 (arriving in 0-1 days)
-        11. Total own pipeline
-        12. Recent demand (3-day average)
+        Each retailer exclusively orders from its ASSIGNED DC (see self.retailer_to_dc).
         
-        Note: Removed "2+ days" pipeline features since DC→Retailer lead time is fixed at 1 day
+        Features per SKU (10 total):
+        1.  Own inventory
+        2.  Own backlog
+        3.  Assigned DC inventory
+        4.  Assigned DC backlog
+        5.  Variable cost from assigned DC
+        6.  Pipeline 7-8 days  (early arrivals; aligned with Uniform[7,14] L/T)
+        7.  Pipeline 9-10 days (mid arrivals)
+        8.  Pipeline 11-14 days (late arrivals)
+        9.  Total own pipeline
+        10. Recent demand (3-day average)
         """
         obs = []
         retailer_idx = self.retailer_ids.index(retailer_id)
+        assigned_dc   = self.retailer_to_dc[retailer_id]
         
         for sku in range(self.n_skus):
             # 1. Own inventory
-            obs.append(self.inventory[retailer_id][sku] / 100.0)
+            # Retailers hold less than DCs; start=50, max order=60 -> ceiling ~150.
+            obs.append(self.inventory[retailer_id][sku] / 150.0)
             
-            # 2. Own backlog
-            obs.append(self.backlog[retailer_id][sku] / 50.0)
+            # 2. Own backlog (failure-state cap)
+            obs.append(self.backlog[retailer_id][sku] / 100.0)
             
-            # 3. DC_0 inventory (DC visibility for routing decision)
-            obs.append(self.inventory[0][sku] / 100.0)
+            # 3. Assigned DC inventory (ceiling matches DC's own observation scale ~1000)
+            obs.append(self.inventory[assigned_dc][sku] / 1000.0)
             
-            # 4. DC_1 inventory
-            obs.append(self.inventory[1][sku] / 100.0)
+            # 4. Assigned DC backlog (reliability signal)
+            obs.append(self.backlog[assigned_dc][sku] / 100.0)
             
-            # 5. DC_0 backlog (reliability signal)
-            obs.append(self.backlog[0][sku] / 50.0)
+            # 5. Variable cost from assigned DC (config max = 0.8; already in [0, 1])
+            cost = self.C_var_retailer[retailer_idx][assigned_dc][sku]
+            obs.append(cost / 1.0)
             
-            # 6. DC_1 backlog
-            obs.append(self.backlog[1][sku] / 50.0)
+            # 6-8. Pipeline bins aligned with Uniform[7, 14] DC->Retailer lead time.
+            # Minimum arrival = day+7; days 1-6 will always be empty.
+            pipeline_7_8 = sum(o['qty'] for o in self.pipeline[retailer_id]
+                               if o['sku'] == sku and
+                               self.current_day + 7 <= o['arrival_day'] <= self.current_day + 8)
+            pipeline_9_10 = sum(o['qty'] for o in self.pipeline[retailer_id]
+                                if o['sku'] == sku and
+                                self.current_day + 9 <= o['arrival_day'] <= self.current_day + 10)
+            pipeline_11_14 = sum(o['qty'] for o in self.pipeline[retailer_id]
+                                 if o['sku'] == sku and
+                                 self.current_day + 11 <= o['arrival_day'] <= self.current_day + 14)
             
-            # 7-8. Variable cost from each DC (normalized)
-            cost_dc0 = self.C_var_retailer[retailer_idx][0][sku]
-            cost_dc1 = self.C_var_retailer[retailer_idx][1][sku]
-            obs.append(cost_dc0 / 20.0)
-            obs.append(cost_dc1 / 20.0)
+            obs.append(pipeline_7_8 / 70.0)    # 2-day window, max ~1 order = 70 units
+            obs.append(pipeline_9_10 / 70.0)   # 2-day window
+            obs.append(pipeline_11_14 / 70.0)  # 4-day window
             
-            # 9-10. Pipeline from each DC (arriving in 0-1 days)
-            # With 1-day fixed lead time, this captures all relevant incoming shipments
-            pipeline_dc0_0_1 = sum(o['qty'] for o in self.pipeline[retailer_id]
-                                  if o['sku'] == sku and o['source'] == 'DC_0' and
-                                  self.current_day <= o['arrival_day'] <= self.current_day + 1)
-            pipeline_dc1_0_1 = sum(o['qty'] for o in self.pipeline[retailer_id]
-                                  if o['sku'] == sku and o['source'] == 'DC_1' and
-                                  self.current_day <= o['arrival_day'] <= self.current_day + 1)
-            
-            obs.append(pipeline_dc0_0_1 / 30.0)
-            obs.append(pipeline_dc1_0_1 / 30.0)
-            
-            # 11. Total own pipeline
+            # 9. Total own pipeline (14 days x 70 units/day -> ceiling ~1000)
             total_pipeline = sum(o['qty'] for o in self.pipeline[retailer_id] if o['sku'] == sku)
-            obs.append(total_pipeline / 100.0)
+            obs.append(total_pipeline / 1000.0)
             
-            # 12. Recent demand (3-day average)
+            # 10. Recent demand (3-day average)
+            # Normalize by mean + 3*std so >99.7% of demand values fall within [0, 1].
+            demand_cap = float(self.demand_mean[sku] + 3.0 * self.demand_std[sku])
             if retailer_idx < len(self.demand_history[sku]) and len(self.demand_history[sku][retailer_idx]) > 0:
                 recent_demand = np.mean(self.demand_history[sku][retailer_idx][-3:])
             else:
                 recent_demand = 0
-            obs.append(recent_demand / 50.0)
+            obs.append(recent_demand / demand_cap)
         
         return np.array(obs, dtype=np.float32)
 

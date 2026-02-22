@@ -9,14 +9,21 @@ environment:
     # Supplier → DC (long-distance, variable)
     supplier_to_dc:
       distribution: "uniform"
-      min: 7
-      max: 14
+      min: 15
+      max: 25
     
-    # DC → Retailer (regional, fast)
+    # DC → Retailer (regional, variable)
     dc_to_retailer:
       distribution: "uniform"
-      min: 1
-      max: 1  # Fixed 1-day delivery for easier training
+      min: 7
+      max: 14
+
+# DC-to-Retailer exclusive assignment
+# Each retailer can only order from its assigned DC.
+# Values are 0-indexed retailer indices (not agent IDs).
+dc_assignments:
+  dc_0: [0, 1, 2, 3, 4, 5, 6]          # Retailers 0-6  (agent IDs 2-8)
+  dc_1: [7, 8, 9, 10, 11, 12, 13, 14]  # Retailers 7-14 (agent IDs 9-16)
 
 # Constraints (Termination conditions)
 constraints:

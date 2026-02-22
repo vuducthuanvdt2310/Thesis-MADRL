@@ -323,13 +323,13 @@ if __name__ == "__main__":
             # root_dir is the directory we want to compress
             shutil.make_archive(output_path, 'zip', run_dir)
             
-            print(f"✓ Zip archive created successfully!")
+            print("[OK] Zip archive created successfully!")
             print(f"  Location: {output_path}.zip")
             print(f"  Content:  {run_dir}")
             print("="*70)
             
         except Exception as e:
-            print(f"✗ Failed to create zip archive: {e}")
+            print(f"[FAIL] Failed to create zip archive: {e}")
             print("="*70)
 
     print("\n" + "="*70)

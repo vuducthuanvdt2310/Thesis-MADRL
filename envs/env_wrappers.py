@@ -264,11 +264,8 @@ class SubprocVecEnvMultiDC(object):
         self.share_observation_space = []
         
         for agent_id in range(self.num_agent):
-            # Observations remain heterogeneous
-            if agent_id < self.n_dcs:
-                obs_dim = 30  # DC observation (increased from 27)
-            else:
-                obs_dim = 36  # Retailer observation (reduced from 42)
+            # All agents now have uniform 30D observations (DCs and Retailers)
+            obs_dim = 30
             
             self.observation_space.append(
                 spaces.Box(low=0, high=1, shape=(obs_dim,), dtype=np.float32)
@@ -279,7 +276,7 @@ class SubprocVecEnvMultiDC(object):
                 spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
             )
         # Shared observation space (concatenate all observations)
-        total_obs_dim = 30 * self.n_dcs + 36 * self.n_retailers  # 168 (30*2 + 36*3)
+        total_obs_dim = 30 * self.num_agent  # All agents 30D
         self.share_observation_space = [
             spaces.Box(low=-np.inf, high=+np.inf, shape=(total_obs_dim,), dtype=np.float32)
             for _ in range(self.num_agent)
@@ -326,10 +323,12 @@ class SubprocVecEnvMultiDC(object):
             rew_arrays.append(env_rews)
             done_arrays.append(env_dones)
         
-        # Use dtype=object for heterogeneous agent observations
-        # Rewards need shape (n_envs, n_agents, 1) for buffer
-        rewards_reshaped = np.expand_dims(np.array(rew_arrays), axis=-1)
-        return np.array(obs_arrays, dtype=object), rewards_reshaped, np.array(done_arrays), infos
+        # Stack into float32 array — all agents uniformly 30D, so dtype=float32 is safe
+        obs_np = np.array([[obs[env_idx][agent_id]
+                             for agent_id in range(self.num_agent)]
+                            for env_idx in range(self.num_envs)], dtype=np.float32)
+        rewards_reshaped = np.expand_dims(np.array(rew_arrays, dtype=np.float32), axis=-1)
+        return obs_np, rewards_reshaped, np.array(done_arrays), infos
     
     def reset(self):
         """Reset all parallel environments."""
@@ -341,8 +340,10 @@ class SubprocVecEnvMultiDC(object):
             env_obs = [env_obs_dict[agent_id] for agent_id in range(self.num_agent)]
             obs_arrays.append(env_obs)
         
-        # Use dtype=object for heterogeneous agent observations
-        return np.array(obs_arrays, dtype=object), None
+        # Stack into float32 array — all agents uniformly 30D
+        obs_np = np.array([[obs_dict[agent_id] for agent_id in range(self.num_agent)]
+                            for obs_dict in obs_list], dtype=np.float32)
+        return obs_np, None
     
     def close(self):
         """Close all environments."""
@@ -407,11 +408,8 @@ class DummyVecEnvMultiDC(object):
         self.action_dim = 6  # Uniform for all agents
         
         for agent_id in range(self.num_agent):
-            # Heterogeneous observations
-            if agent_id < self.n_dcs:
-                obs_dim = 30
-            else:
-                obs_dim = 36  # Reduced from 42
+            # All agents now have uniform 30D observations
+            obs_dim = 30
             
             self.observation_space.append(
                 spaces.Box(low=0, high=1, shape=(obs_dim,), dtype=np.float32)
@@ -421,7 +419,7 @@ class DummyVecEnvMultiDC(object):
                 spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
             )
         
-        total_obs_dim = 30 * self.n_dcs + 36 * self.n_retailers  # 168
+        total_obs_dim = 30 * self.num_agent  # All agents 30D
         self.share_observation_space = [
             spaces.Box(low=-np.inf, high=+np.inf, shape=(total_obs_dim,), dtype=np.float32)
             for _ in range(self.num_agent)
@@ -442,19 +440,18 @@ class DummyVecEnvMultiDC(object):
         rews = [[rew_dict[i] for i in range(self.num_agent)]]
         dones = [[done_dict[i] for i in range(self.num_agent)]]
         
-        # Use dtype=object for heterogeneous observations
-        # Rewards need shape (n_envs, n_agents, 1) for buffer
-        rewards_reshaped = np.expand_dims(np.array(rews), axis=-1)
-        return np.array(obs, dtype=object), rewards_reshaped, np.array(dones), [info_dict]
+        # Stack into float32 array — all agents uniformly 30D
+        obs_np = np.array([[obs_dict[i] for i in range(self.num_agent)]], dtype=np.float32)
+        rewards_reshaped = np.expand_dims(np.array(rews, dtype=np.float32), axis=-1)
+        return obs_np, rewards_reshaped, np.array(dones), [info_dict]
     
     def reset(self):
         """Reset the single environment."""
         env = self.env_list[0]
         obs_dict = env.reset()
         
-        obs = [[obs_dict[i] for i in range(self.num_agent)]]
-        # Use dtype=object for heterogeneous observations
-        return np.array(obs, dtype=object), None
+        obs_np = np.array([[obs_dict[i] for i in range(self.num_agent)]], dtype=np.float32)
+        return obs_np, None
     
     def close(self):
         """Close environment."""
