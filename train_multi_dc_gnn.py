@@ -109,9 +109,10 @@ if __name__ == "__main__":
     # ================================================================
     # GNN-HAPPO SPECIFIC ARGUMENTS
     # ================================================================
-    parser.add_argument('--gnn_type', type=str, default='GAT',
+    parser.add_argument('--gnn_type', type=str, default='GCN',
                        choices=['GAT', 'GCN'],
-                       help='Type of GNN to use')
+                       help='Type of GNN to use. GCN is faster and more stable; '
+                            'use GAT for thesis experiments (--gnn_type GAT)')
     parser.add_argument('--gnn_hidden_dim', type=int, default=128,
                        help='Hidden dimension for GNN layers')
     parser.add_argument('--gnn_num_layers', type=int, default=2,
@@ -138,8 +139,14 @@ if __name__ == "__main__":
         scenario_name="inventory_2echelon",
         num_agents=17,        # 2 DCs + 15 Retailers
         episode_length=365,   # Days per episode
-        num_env_steps=36500000,  # Total training steps (same as baseline)
-        n_rollout_threads=10,    # Parallel environments (same as baseline)
+        # ----------------------------------------------------------------
+        # Scale: reduce for quick runs; increase for thesis experiments.
+        #   Fast test  : num_env_steps=7300,  n_rollout_threads=2
+        #   Normal run : num_env_steps=3650000, n_rollout_threads=4
+        #   Full thesis: num_env_steps=36500000, n_rollout_threads=10
+        # ----------------------------------------------------------------
+        num_env_steps=3650000,   # 10,000 episodes (good starting point)
+        n_rollout_threads=4,     # Parallel environments — 4 is safe on most machines
         n_training_threads=1,
         algorithm_name="gnn_happo",
         experiment_name="gnn_happo_full",
@@ -155,7 +162,7 @@ if __name__ == "__main__":
     all_args = parse_args(sys.argv[1:], parser)
 
     # CRITICAL: Force single_agent_obs_dim to 36 (max obs dim for retailers)
-    all_args.single_agent_obs_dim = 30
+    all_args.single_agent_obs_dim = 27  # DC obs=27D; retailer obs=21D padded to 27D
 
     # --- Resume Training (Optional) ---
     RESUME_MODEL_DIR = None
@@ -166,6 +173,8 @@ if __name__ == "__main__":
     # --------------------------------------------------
 
     seeds = all_args.seed
+    if isinstance(seeds, int):
+        seeds = [seeds]   # Normalize: --seed 0 gives int; default gives list
 
     print("="*70)
     print("GNN-HAPPO Training (Proposed Method)")
@@ -237,7 +246,7 @@ if __name__ == "__main__":
 
         print(f"Environments created: {envs.num_envs} parallel envs")
         print(f"Agents per env: {num_agents}")
-        print(f"Observation spaces: DCs=30D, Retailers=30D (uniform for GNN)")
+        print(f"Observation spaces: DC=27D, Retailer=21D (zero-padded to 27D for GNN)")
         print(f"Action spaces: DCs=3D active (6D buffer), Retailers=3D active (6D buffer)\n")
 
         config = {

@@ -78,13 +78,21 @@ class GNN_HAPPO():
         """
         batch_size = share_obs_batch.shape[0]
         n_agents = self.n_agents
-        obs_dim = 30   # uniform for all agents (DCs and Retailers)
+        obs_dim = 27   # max obs dim: DC=27D (retailer 21D zero-padded to 27D)
+        expected_total = n_agents * obs_dim
 
         # Convert to numpy for slicing
         if isinstance(share_obs_batch, torch.Tensor):
             share_obs_np = share_obs_batch.detach().cpu().numpy()
         else:
             share_obs_np = np.asarray(share_obs_batch, dtype=np.float32)
+
+        actual_total = share_obs_np.shape[-1]
+        assert actual_total == expected_total, (
+            f"[GNN Trainer] share_obs_batch last dim {actual_total} != "
+            f"n_agents*obs_dim ({n_agents}*{obs_dim}={expected_total}). "
+            f"Check that share_observation_space is built as {n_agents}x{obs_dim}D."
+        )
 
         obs_structured = np.zeros((batch_size, n_agents, obs_dim), dtype=np.float32)
 
@@ -197,6 +205,7 @@ class GNN_HAPPO():
             )
         else:
             actor_grad_norm = get_gard_norm(self.policy.actor.parameters())
+        actor_grad_norm = float(actor_grad_norm)
         
         self.policy.actor_optimizer.step()
         

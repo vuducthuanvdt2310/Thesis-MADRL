@@ -258,25 +258,25 @@ class SubprocVecEnvMultiDC(object):
         
         self.action_dim = 6  # Uniform for all agents
         
+        # Observation dims come from the env directly (DC=27D, Retailer=21D)
+        self.max_obs_dim = self.env_list[0].obs_dim_dc          # 27 — largest obs dim
+        self.retailer_obs_dim = self.env_list[0].obs_dim_retailer  # 21
+
         # Initialize empty lists
         self.action_space = []
         self.observation_space = []
         self.share_observation_space = []
-        
+
         for agent_id in range(self.num_agent):
-            # All agents now have uniform 30D observations (DCs and Retailers)
-            obs_dim = 30
-            
+            # All agents use max_obs_dim; retailer obs are zero-padded to match
             self.observation_space.append(
-                spaces.Box(low=0, high=1, shape=(obs_dim,), dtype=np.float32)
+                spaces.Box(low=0, high=1, shape=(self.max_obs_dim,), dtype=np.float32)
             )
-            
-            # All agents have same 6D action space
             self.action_space.append(
                 spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
             )
-        # Shared observation space (concatenate all observations)
-        total_obs_dim = 30 * self.num_agent  # All agents 30D
+        # Shared obs: concatenate all padded agent obs  27 * 17 = 459
+        total_obs_dim = self.max_obs_dim * self.num_agent
         self.share_observation_space = [
             spaces.Box(low=-np.inf, high=+np.inf, shape=(total_obs_dim,), dtype=np.float32)
             for _ in range(self.num_agent)
@@ -323,10 +323,12 @@ class SubprocVecEnvMultiDC(object):
             rew_arrays.append(env_rews)
             done_arrays.append(env_dones)
         
-        # Stack into float32 array — all agents uniformly 30D, so dtype=float32 is safe
-        obs_np = np.array([[obs[env_idx][agent_id]
-                             for agent_id in range(self.num_agent)]
-                            for env_idx in range(self.num_envs)], dtype=np.float32)
+        # Zero-pad shorter obs (retailers 21D) to max_obs_dim (27D)
+        obs_np = np.zeros((self.num_envs, self.num_agent, self.max_obs_dim), dtype=np.float32)
+        for env_idx in range(self.num_envs):
+            for agent_id in range(self.num_agent):
+                a_obs = obs[env_idx][agent_id]
+                obs_np[env_idx, agent_id, :len(a_obs)] = a_obs
         rewards_reshaped = np.expand_dims(np.array(rew_arrays, dtype=np.float32), axis=-1)
         return obs_np, rewards_reshaped, np.array(done_arrays), infos
     
@@ -340,9 +342,12 @@ class SubprocVecEnvMultiDC(object):
             env_obs = [env_obs_dict[agent_id] for agent_id in range(self.num_agent)]
             obs_arrays.append(env_obs)
         
-        # Stack into float32 array — all agents uniformly 30D
-        obs_np = np.array([[obs_dict[agent_id] for agent_id in range(self.num_agent)]
-                            for obs_dict in obs_list], dtype=np.float32)
+        # Zero-pad shorter obs (retailers 21D) to max_obs_dim (27D)
+        obs_np = np.zeros((self.num_envs, self.num_agent, self.max_obs_dim), dtype=np.float32)
+        for env_idx, obs_dict in enumerate(obs_list):
+            for agent_id in range(self.num_agent):
+                a_obs = obs_dict[agent_id]
+                obs_np[env_idx, agent_id, :len(a_obs)] = a_obs
         return obs_np, None
     
     def close(self):
@@ -400,26 +405,27 @@ class DummyVecEnvMultiDC(object):
         self.force_discrete_action = False
         
         
-        # Configure spaces (uniform 6D actions)
+        # Observation dims from env (DC=27D, Retailer=21D)
+        self.max_obs_dim = self.env_list[0].obs_dim_dc          # 27
+        self.retailer_obs_dim = self.env_list[0].obs_dim_retailer  # 21
+
+        # Configure spaces
         self.action_space = []
         self.observation_space = []
         self.share_observation_space = []
-        
+
         self.action_dim = 6  # Uniform for all agents
-        
+
         for agent_id in range(self.num_agent):
-            # All agents now have uniform 30D observations
-            obs_dim = 30
-            
+            # All agents use max_obs_dim; retailers are zero-padded
             self.observation_space.append(
-                spaces.Box(low=0, high=1, shape=(obs_dim,), dtype=np.float32)
+                spaces.Box(low=0, high=1, shape=(self.max_obs_dim,), dtype=np.float32)
             )
-            # Uniform 6D actions
             self.action_space.append(
                 spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
             )
-        
-        total_obs_dim = 30 * self.num_agent  # All agents 30D
+
+        total_obs_dim = self.max_obs_dim * self.num_agent  # 27 * 17 = 459
         self.share_observation_space = [
             spaces.Box(low=-np.inf, high=+np.inf, shape=(total_obs_dim,), dtype=np.float32)
             for _ in range(self.num_agent)
@@ -435,13 +441,14 @@ class DummyVecEnvMultiDC(object):
         
         obs_dict, rew_dict, done_dict, info_dict = env.step(action_dict)
         
-        # Convert to arrays
-        obs = [[obs_dict[i] for i in range(self.num_agent)]]
         rews = [[rew_dict[i] for i in range(self.num_agent)]]
         dones = [[done_dict[i] for i in range(self.num_agent)]]
-        
-        # Stack into float32 array — all agents uniformly 30D
-        obs_np = np.array([[obs_dict[i] for i in range(self.num_agent)]], dtype=np.float32)
+
+        # Zero-pad shorter obs (retailers 21D) to max_obs_dim (27D)
+        obs_np = np.zeros((1, self.num_agent, self.max_obs_dim), dtype=np.float32)
+        for agent_id in range(self.num_agent):
+            a_obs = obs_dict[agent_id]
+            obs_np[0, agent_id, :len(a_obs)] = a_obs
         rewards_reshaped = np.expand_dims(np.array(rews, dtype=np.float32), axis=-1)
         return obs_np, rewards_reshaped, np.array(dones), [info_dict]
     
@@ -450,7 +457,11 @@ class DummyVecEnvMultiDC(object):
         env = self.env_list[0]
         obs_dict = env.reset()
         
-        obs_np = np.array([[obs_dict[i] for i in range(self.num_agent)]], dtype=np.float32)
+        # Zero-pad shorter obs (retailers 21D) to max_obs_dim (27D)
+        obs_np = np.zeros((1, self.num_agent, self.max_obs_dim), dtype=np.float32)
+        for agent_id in range(self.num_agent):
+            a_obs = obs_dict[agent_id]
+            obs_np[0, agent_id, :len(a_obs)] = a_obs
         return obs_np, None
     
     def close(self):

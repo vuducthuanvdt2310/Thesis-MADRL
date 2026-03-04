@@ -12,11 +12,11 @@ environment:
       min: 15
       max: 25
     
-    # DC → Retailer (regional, variable)
+    # DC → Retailer (fixed at 1 day; variable lead time only for supplier→DC)
     dc_to_retailer:
-      distribution: "uniform"
-      min: 7
-      max: 14
+      distribution: "fixed"
+      min: 1
+      max: 1
 
 # DC-to-Retailer exclusive assignment
 # Each retailer can only order from its assigned DC.

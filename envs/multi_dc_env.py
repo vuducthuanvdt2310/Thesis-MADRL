@@ -5,7 +5,8 @@ Topology:
     Supplier (Unlimited) → 2 DCs (Agents 0,1) → 3 Retailers (Agents 2,3,4)
 
 Key Features:
-- Variable lead times: Uniform[7, 14] days for both supplier→DC and DC→retailer
+- Variable lead times: Uniform[15, 25] days for supplier→DC only
+- Fixed lead time: 1 day for DC→Retailer (deterministic, simplifies retailer training)
 - Continuous action spaces for realistic ordering
 - Retailer multi-source ordering: Choose which DC to order from
 - Proportional rationing when DCs have insufficient stock
@@ -82,9 +83,9 @@ class MultiDCInventoryEnv:
         self.lt_supplier_to_dc_min = self.config['environment']['lead_time']['supplier_to_dc']['min']
         self.lt_supplier_to_dc_max = self.config['environment']['lead_time']['supplier_to_dc']['max']
         
-        # DC → Retailer lead times
-        self.lt_dc_to_retailer_min = self.config['environment']['lead_time']['dc_to_retailer']['min']
-        self.lt_dc_to_retailer_max = self.config['environment']['lead_time']['dc_to_retailer']['max']
+        # DC → Retailer lead time: fixed at 1 day (deterministic)
+        # Variable lead time only applies to Supplier → DC
+        self.lt_dc_to_retailer = 1
         
         # Episode settings
         self.max_days = self.config['environment']['max_days']
@@ -184,14 +185,15 @@ class MultiDCInventoryEnv:
     def _define_spaces(self):
         """Define observation and action spaces for each agent type."""
         
-        # DC Observation: 30D (10 features x 3 SKUs)
-        self.obs_dim_dc = self.n_skus * 10
+        # DC Observation: 27D (9 features × 3 SKUs)
+        # Removed: Price 5-day MA (highly correlated with current price, no extra signal)
+        self.obs_dim_dc = self.n_skus * 9
         self.obs_space_dc = spaces.Box(0, 1, (self.obs_dim_dc,), dtype=np.float32)
-        
-        # Retailer Observation: 30D (10 features x 3 SKUs)
-        # Each retailer sees only its assigned DC (not both),
-        # and uses pipeline bins aligned to the 7-14 day DC->Retailer lead time.
-        self.obs_dim_retailer = self.n_skus * 10
+
+        # Retailer Observation: 21D (7 features × 3 SKUs)
+        # Removed: Variable ordering cost (static config, zero variance across time)
+        #          pipeline_day2 / pipeline_day3 (always 0 with fixed 1-day DC→Retailer L/T)
+        self.obs_dim_retailer = self.n_skus * 7
         self.obs_space_retailer = spaces.Box(0, 1, (self.obs_dim_retailer,), dtype=np.float32)
         
         # === UNIFORM ACTION SPACES FOR HAPPO COMPATIBILITY ===
@@ -421,16 +423,18 @@ class MultiDCInventoryEnv:
         """
         Ship from DC to retailer (goes into retailer's pipeline).
         
+        DC→Retailer lead time is fixed at 1 day (deterministic).
+        Variable lead time applies only to Supplier→DC.
+        
         Args:
             dc_id: Source DC
             retailer_id: Destination retailer
             sku: SKU index
             qty: Quantity to ship
-            lead_time_sample: If True, sample lead time from DC→Retailer distribution; else instant
+            lead_time_sample: If True, use fixed 1-day DC→Retailer lead time; else instant (0)
         """
         if lead_time_sample:
-            # Use DC→Retailer lead time (typically 1 day in current config)
-            lead_time = np.random.randint(self.lt_dc_to_retailer_min, self.lt_dc_to_retailer_max + 1)
+            lead_time = self.lt_dc_to_retailer  # Fixed: 1 day
         else:
             lead_time = 0  # Instant
         
@@ -660,19 +664,19 @@ class MultiDCInventoryEnv:
     
     def _get_dc_observation(self, dc_id: int) -> np.ndarray:
         """
-        Build observation for a DC agent (27 dimensions).
-        
-        Features per SKU (9 total):
+        Build observation for a DC agent (27D = 9 features × 3 SKUs).
+
+        Features per SKU:
         1. Inventory
         2. Backlog
-        3. Pipeline 15-18 days  (early arrivals within lead-time window)
-        4. Pipeline 19-22 days  (mid-range arrivals)
-        5. Pipeline 23-25 days  (late arrivals, max lead-time window)
+        3. Pipeline 15-18 days
+        4. Pipeline 19-22 days
+        5. Pipeline 23-25 days
         6. Total pipeline
         7. Current market price
-        8. Market price 5-day MA
-        9. Aggregate retailer demand signal (Backlog)
-        10. Aggregate retailer inventory (Stock Level)
+        8. Aggregate retailer backlog  (demand-pressure signal)
+        9. Aggregate retailer inventory
+        [Removed: Price 5-day MA — correlated with current price, no extra signal]
         """
         obs = []
         
@@ -706,17 +710,11 @@ class MultiDCInventoryEnv:
             # 7. Current market price (normalized by its own price ceiling)
             obs.append(self.market_prices[sku] / self.price_bounds['max'][sku])
             
-            # 8. Price MA (5-day, normalized by its own price ceiling)
-            price_ma = np.mean(self.price_history[sku][-5:]) if len(self.price_history[sku]) >= 5 else self.market_prices[sku]
-            obs.append(price_ma / self.price_bounds['max'][sku])
-            
-            # 9. Aggregate retailer backlog (downstream demand pressure on DC)
-            # Same failure-state scale as DC backlog.
+            # 8. Aggregate retailer backlog (downstream demand pressure on DC)
             avg_retailer_backlog = np.mean([self.backlog[r][sku] for r in self.retailer_ids])
             obs.append(avg_retailer_backlog / 100.0)
-            
-            # 10. Aggregate retailer inventory (proactive restock signal)
-            # Retailers hold much less than DCs; realistic ceiling ~150.
+
+            # 9. Aggregate retailer inventory (proactive restock signal)
             avg_retailer_inventory = np.mean([self.inventory[r][sku] for r in self.retailer_ids])
             obs.append(avg_retailer_inventory / 150.0)
         
@@ -724,21 +722,20 @@ class MultiDCInventoryEnv:
     
     def _get_retailer_observation(self, retailer_id: int) -> np.ndarray:
         """
-        Build observation for a retailer agent (30 dimensions = 10 features x 3 SKUs).
-        
-        Each retailer exclusively orders from its ASSIGNED DC (see self.retailer_to_dc).
-        
-        Features per SKU (10 total):
-        1.  Own inventory
-        2.  Own backlog
-        3.  Assigned DC inventory
-        4.  Assigned DC backlog
-        5.  Variable cost from assigned DC
-        6.  Pipeline 7-8 days  (early arrivals; aligned with Uniform[7,14] L/T)
-        7.  Pipeline 9-10 days (mid arrivals)
-        8.  Pipeline 11-14 days (late arrivals)
-        9.  Total own pipeline
-        10. Recent demand (3-day average)
+        Build observation for a retailer agent (21D = 7 features × 3 SKUs).
+
+        Each retailer exclusively orders from its ASSIGNED DC.
+        DC→Retailer lead time is fixed at 1 day.
+
+        Features per SKU:
+        1. Own inventory
+        2. Own backlog
+        3. Assigned DC inventory
+        4. Assigned DC backlog
+        5. Pipeline arriving tomorrow (day+1)
+        6. Total own pipeline
+        7. Recent demand (3-day average)
+        [Removed: Variable ordering cost (static), pipeline_day2/day3 (always 0)]
         """
         obs = []
         retailer_idx = self.retailer_ids.index(retailer_id)
@@ -758,27 +755,14 @@ class MultiDCInventoryEnv:
             # 4. Assigned DC backlog (reliability signal)
             obs.append(self.backlog[assigned_dc][sku] / 100.0)
             
-            # 5. Variable cost from assigned DC (config max = 0.8; already in [0, 1])
-            cost = self.C_var_retailer[retailer_idx][assigned_dc][sku]
-            obs.append(cost / 1.0)
-            
-            # 6-8. Pipeline bins aligned with Uniform[7, 14] DC->Retailer lead time.
-            # Minimum arrival = day+7; days 1-6 will always be empty.
-            pipeline_7_8 = sum(o['qty'] for o in self.pipeline[retailer_id]
-                               if o['sku'] == sku and
-                               self.current_day + 7 <= o['arrival_day'] <= self.current_day + 8)
-            pipeline_9_10 = sum(o['qty'] for o in self.pipeline[retailer_id]
+            # 5. Pipeline arriving tomorrow (DC→Retailer L/T = 1 day fixed)
+            pipeline_day1 = sum(o['qty'] for o in self.pipeline[retailer_id]
                                 if o['sku'] == sku and
-                                self.current_day + 9 <= o['arrival_day'] <= self.current_day + 10)
-            pipeline_11_14 = sum(o['qty'] for o in self.pipeline[retailer_id]
-                                 if o['sku'] == sku and
-                                 self.current_day + 11 <= o['arrival_day'] <= self.current_day + 14)
-            
-            obs.append(pipeline_7_8 / 70.0)    # 2-day window, max ~1 order = 70 units
-            obs.append(pipeline_9_10 / 70.0)   # 2-day window
-            obs.append(pipeline_11_14 / 70.0)  # 4-day window
-            
-            # 9. Total own pipeline (14 days x 70 units/day -> ceiling ~1000)
+                                o['arrival_day'] == self.current_day + 1)
+            obs.append(pipeline_day1 / 70.0)
+            # [Removed: variable cost (static config), pipeline_day2/day3 (always 0)]
+
+            # 6. Total own pipeline (with 1-day L/T, equals pipeline_day1)
             total_pipeline = sum(o['qty'] for o in self.pipeline[retailer_id] if o['sku'] == sku)
             obs.append(total_pipeline / 1000.0)
             
