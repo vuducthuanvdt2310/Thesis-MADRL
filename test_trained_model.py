@@ -56,7 +56,7 @@ def parse_test_args():
     # Testing parameters
     parser.add_argument('--num_episodes', type=int, default=50,
                        help='Number of evaluation episodes to run')
-    parser.add_argument('--episode_length', type=int, default=365,
+    parser.add_argument('--episode_length', type=int, default=90,
                        help='Length of each episode (days)')
     
     # Output settings
@@ -427,7 +427,7 @@ class ModelEvaluator:
                 # Calculate costs from rewards (rewards are negative costs)
                 for agent_id in range(self.args.num_agents):
                     # Extract scalar reward (handle (1,) shape from env wrapper)
-                    reward = float(rewards[0][agent_id])
+                    reward = float(np.array(rewards[0][agent_id]).item())
                     cost = -reward
                     
                     episode_data['agent_rewards'][agent_id] += reward
@@ -453,7 +453,7 @@ class ModelEvaluator:
                             # Backlog cost = backlog * backlog_cost_param
                             backlog_cost_step += env_state.backlog[agent_id][sku] * env_state.B_dc[dc_idx][sku]
                             # Ordering cost = fixed_cost + (market_price * quantity)
-                            order_qty = actions_env[0][agent_id][sku]
+                            order_qty = actions_env[agent_id][sku]
                             if order_qty > 0:
                                 ordering_cost_step += env_state.C_fixed_dc[dc_idx][sku] + (env_state.market_prices[sku] * order_qty)
                     else:
@@ -465,8 +465,8 @@ class ModelEvaluator:
                             # Backlog cost
                             backlog_cost_step += env_state.backlog[agent_id][sku] * env_state.B_retailer[retailer_idx][sku]
                             # Ordering cost (from both DCs)
-                            order_dc0 = actions_env[0][agent_id][sku]  # Order to DC_0
-                            order_dc1 = actions_env[0][agent_id][3 + sku]  # Order to DC_1
+                            order_dc0 = actions_env[agent_id][sku]  # Order to DC_0
+                            order_dc1 = actions_env[agent_id][3 + sku]  # Order to DC_1
                             if order_dc0 > 0:
                                 var_cost = env_state.C_var_retailer[retailer_idx][0][sku]
                                 ordering_cost_step += env_state.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_dc0)

@@ -375,18 +375,28 @@ class CRunner(BaseRunner):
 
     def log_train(self, train_infos, total_num_steps):
         total_agent_reward = 0
+        dc_reward = 0
+        retailer_reward = 0
+
         for agent_id in range(self.num_agents):
             agent_rew = np.mean(self.buffer[agent_id].rewards)
             train_infos[agent_id]["average_step_rewards"] = agent_rew
             total_agent_reward += agent_rew
-            
-            for k, v in train_infos[agent_id].items():
-                agent_k = "agent%i/" % agent_id + k
-                self.writter.add_scalars(agent_k, {agent_k: v}, total_num_steps)
-        
-        # Log total system reward (sum of all agents)
+
+            # Log each agent's reward individually (clean, no other metrics)
+            self.writter.add_scalar(f"agent_reward/agent{agent_id}", agent_rew, total_num_steps)
+
+            # Accumulate group rewards
+            if agent_id < 2:
+                dc_reward += agent_rew         # Agents 0-1 are DCs
+            else:
+                retailer_reward += agent_rew   # Agents 2-16 are Retailers
+
+        # Log group-level and system-level totals
+        self.writter.add_scalar("system/dc_total_reward", dc_reward, total_num_steps)
+        self.writter.add_scalar("system/retailer_total_reward", retailer_reward, total_num_steps)
         self.writter.add_scalar("system/total_average_step_reward", total_agent_reward, total_num_steps)
-        # Also log the estimated total episode reward (step_reward * episode_length) for easier comparison with eval
+        # Estimated episode reward for easy comparison with eval
         self.writter.add_scalar("system/total_episode_reward_estimated", total_agent_reward * self.episode_length, total_num_steps)
     
     @torch.no_grad()
