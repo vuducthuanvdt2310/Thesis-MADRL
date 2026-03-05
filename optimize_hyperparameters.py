@@ -44,7 +44,7 @@ from runners.separated.runner import CRunner as Runner
 # ---- episodes per trial: 20 episodes × 30 steps = 600 env steps ----
 # Small enough to finish in ~1 min per trial, big enough to rank hyperparams.
 EPISODES_PER_TRIAL = 20
-EPISODE_LENGTH     = 30
+EPISODE_LENGTH     = 150
 N_OPTUNA_STEPS     = EPISODES_PER_TRIAL * EPISODE_LENGTH  # = 600
 
 # Number of Optuna trials to run
@@ -83,14 +83,16 @@ def build_args(trial):
     all_args.n_rollout_threads          = 1
     all_args.n_eval_rollout_threads     = 1
     all_args.n_training_threads         = 1
-    all_args.use_eval                   = False   # Skip eval — saves ~50% of time
+    # Eval fires ONCE at the last episode so runner gets a real reward (not -inf)
+    all_args.use_eval                   = True
+    all_args.eval_interval              = EPISODES_PER_TRIAL - 1  # = 19 → fires at episode 19
     all_args.use_naive_recurrent_policy = False   # DISABLE LSTM → use fast MLP
     all_args.use_recurrent_policy       = False   # DISABLE LSTM
     all_args.ppo_epoch                  = 5       # Default 15 → 3× fewer update passes
     all_args.hidden_size                = 64      # Small network for fast forward/backward
     all_args.log_interval               = 9999    # Suppress console noise
-    all_args.n_warmup_evaluations       = 2
-    all_args.n_no_improvement_thres     = 99999   # No early stopping (no eval anyway)
+    all_args.n_warmup_evaluations       = 0       # No warmup — let best_reward update in first eval
+    all_args.n_no_improvement_thres     = 99999   # Never early-stop (only 1 eval run anyway)
 
     # -------------------------------------------------------
     # HYPERPARAMETERS to search — the ones that matter most
