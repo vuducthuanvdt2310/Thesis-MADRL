@@ -183,7 +183,9 @@ def collect_rollout(env: LiteEnvWrapper, policies, buffers, args):
         rnn_new, rnn_c_new = [], []
 
         for agent_id in range(n_agents):
-            policies[agent_id].eval()
+            # HAPPO_Policy is not nn.Module — call eval() on its sub-networks
+            policies[agent_id].actor.eval()
+            policies[agent_id].critic.eval()
             value, action, log_prob, rnn_s, rnn_c = policies[agent_id].get_actions(
                 share_obs_arr,                   # (1, total_obs)
                 obs_np[:, agent_id, :],          # (1, obs_dim)
@@ -329,7 +331,7 @@ def evaluate(env: LiteEnvWrapper, policies, args, n_episodes=3):
         for step in range(args.episode_length):
             actions_list = []
             for agent_id in range(args.num_agents):
-                policies[agent_id].eval()
+                policies[agent_id].actor.eval()
                 action, rnn_s = policies[agent_id].act(
                     obs_np[:, agent_id, :],
                     rnn_states[:, agent_id],
