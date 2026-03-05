@@ -44,10 +44,10 @@ from runners.separated.runner import CRunner as Runner
 # Number of environment steps per Optuna trial.
 # Lower = faster but noisier signal. Raise to e.g. 730_000 for more reliable results.
 # 365_000 ≈ ~1,000 episodes (365 steps × 1 thread)  →  used as a quick proxy.
-N_OPTUNA_STEPS = 365_000   # ← tune this: higher = slower but more accurate
+N_OPTUNA_STEPS = 73_000    # ≈ 200 episodes (365 steps × 1 thread). Raise to 365_000 for higher accuracy.
 
 # Number of Optuna trials to run
-N_TRIALS = 30
+N_TRIALS = 10
 
 # Maximum wall-clock seconds for the whole study (safety timeout)
 TIMEOUT_SECONDS = 7 * 3600  # 7 hours
@@ -76,10 +76,10 @@ def build_args(trial):
         algorithm_name="happo",
         experiment_name=f"optuna_trial_{trial.number}",
         use_eval=True,
-        eval_interval=10,             # Evaluate every 10 episodes during optimization
+        eval_interval=5,              # Evaluate every 5 episodes during optimization
         log_interval=9999,            # Suppress console logs during optimization
         n_warmup_evaluations=2,
-        n_no_improvement_thres=50,    # Allow up to 50 eval rounds with no improvement
+        n_no_improvement_thres=15,    # Stop a trial early after 15 evals with no improvement
         seed=[0],
     )
 
