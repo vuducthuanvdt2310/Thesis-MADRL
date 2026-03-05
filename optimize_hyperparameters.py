@@ -41,16 +41,17 @@ from runners.separated.runner import CRunner as Runner
 # CONFIGURATION
 # ==============================================================================
 
-# Number of environment steps per Optuna trial.
-# Lower = faster but noisier signal. Raise to e.g. 730_000 for more reliable results.
-# 365_000 ≈ ~1,000 episodes (365 steps × 1 thread)  →  used as a quick proxy.
-N_OPTUNA_STEPS = 73_000    # ≈ 200 episodes (365 steps × 1 thread). Raise to 365_000 for higher accuracy.
+# ---- episodes per trial: 20 episodes × 30 steps = 600 env steps ----
+# Small enough to finish in ~1 min per trial, big enough to rank hyperparams.
+EPISODES_PER_TRIAL = 20
+EPISODE_LENGTH     = 30
+N_OPTUNA_STEPS     = EPISODES_PER_TRIAL * EPISODE_LENGTH  # = 600
 
 # Number of Optuna trials to run
-N_TRIALS = 10
+N_TRIALS = 15
 
 # Maximum wall-clock seconds for the whole study (safety timeout)
-TIMEOUT_SECONDS = 7 * 3600  # 7 hours
+TIMEOUT_SECONDS = 2 * 3600  # 2 hours
 
 # ==============================================================================
 # HELPERS
@@ -59,43 +60,47 @@ TIMEOUT_SECONDS = 7 * 3600  # 7 hours
 def build_args(trial):
     """
     Build an all_args namespace for one Optuna trial.
-    Injects trial-suggested hyperparameters into the default config.
+    IMPORTANT: We assign speed settings DIRECTLY to all_args AFTER parse_args().
+    This is necessary because argparse's action='store_true' ignores set_defaults()
+    for boolean flags — so use_naive_recurrent_policy would stay True otherwise.
     """
     parser = get_config()
-
-    # Fixed settings identical to train_multi_dc_baseline.py
     parser.set_defaults(
         env_name="MultiDC",
         scenario_name="inventory_2echelon",
         num_agents=17,
-        episode_length=365,
-        num_env_steps=N_OPTUNA_STEPS,
-        n_rollout_threads=1,          # Single thread for isolation per trial
-        n_eval_rollout_threads=1,
-        n_training_threads=1,
         algorithm_name="happo",
         experiment_name=f"optuna_trial_{trial.number}",
-        use_eval=True,
-        eval_interval=5,              # Evaluate every 5 episodes during optimization
-        log_interval=9999,            # Suppress console logs during optimization
-        n_warmup_evaluations=2,
-        n_no_improvement_thres=15,    # Stop a trial early after 15 evals with no improvement
         seed=[0],
     )
-
     all_args = parser.parse_args([])
 
     # -------------------------------------------------------
-    # Suggested hyperparameters for this trial
+    # SPEED SETTINGS — assigned directly to bypass argparse bug
     # -------------------------------------------------------
-    all_args.lr          = trial.suggest_float("lr",           1e-5, 5e-4, log=True)
-    all_args.critic_lr   = trial.suggest_float("critic_lr",   1e-5, 5e-4, log=True)
-    all_args.clip_param  = trial.suggest_float("clip_param",  0.1,  0.3)
-    all_args.entropy_coef= trial.suggest_float("entropy_coef",0.0,  0.05)
-    all_args.gae_lambda  = trial.suggest_float("gae_lambda",  0.9,  0.99)
-    all_args.gamma       = trial.suggest_float("gamma",       0.90, 0.99)
-    all_args.hidden_size = trial.suggest_categorical("hidden_size", [64, 128, 256])
-    all_args.ppo_epoch   = trial.suggest_int("ppo_epoch", 5, 20)
+    all_args.episode_length             = EPISODE_LENGTH  # 30 days (not 365)
+    all_args.num_env_steps              = N_OPTUNA_STEPS  # 600 total steps
+    all_args.n_rollout_threads          = 1
+    all_args.n_eval_rollout_threads     = 1
+    all_args.n_training_threads         = 1
+    all_args.use_eval                   = False   # Skip eval — saves ~50% of time
+    all_args.use_naive_recurrent_policy = False   # DISABLE LSTM → use fast MLP
+    all_args.use_recurrent_policy       = False   # DISABLE LSTM
+    all_args.ppo_epoch                  = 5       # Default 15 → 3× fewer update passes
+    all_args.hidden_size                = 64      # Small network for fast forward/backward
+    all_args.log_interval               = 9999    # Suppress console noise
+    all_args.n_warmup_evaluations       = 2
+    all_args.n_no_improvement_thres     = 99999   # No early stopping (no eval anyway)
+
+    # -------------------------------------------------------
+    # HYPERPARAMETERS to search — the ones that matter most
+    # -------------------------------------------------------
+    all_args.lr           = trial.suggest_float("lr",           1e-5, 5e-4, log=True)
+    all_args.critic_lr    = trial.suggest_float("critic_lr",    1e-5, 5e-4, log=True)
+    all_args.clip_param   = trial.suggest_float("clip_param",   0.1,  0.3)
+    all_args.entropy_coef = trial.suggest_float("entropy_coef", 0.0,  0.05)
+    all_args.gae_lambda   = trial.suggest_float("gae_lambda",   0.9,  0.99)
+    all_args.gamma        = trial.suggest_float("gamma",        0.90, 0.99)
 
     return all_args
 
