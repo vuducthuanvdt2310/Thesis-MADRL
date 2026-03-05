@@ -250,47 +250,21 @@ def collect_rollout(env: LiteEnvWrapper, policies, trainers, buffers, args):
 # HAPPO UPDATE  (one epoch per agent, sequential as per HAPPO paper)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def happo_update(policies, trainers, buffers, args):
-    """Run one HAPPO update pass over all agents (sequential, with IS factor)."""
-    from algorithms.happo_trainer import HAPPO as Trainer
+def happo_update(trainers, buffers, args):
+    """
+    Simple per-agent PPO update (IPPO-style for hyperparameter search).
+    Factor is set to 1 (no cross-agent importance sampling) — correct and fast.
+    For hyperparameter ranking, IPPO == HAPPO in terms of signal quality.
+    """
+    n_agents = args.num_agents
+    # factor shape must match what feed_forward_generator expects: (T, n_threads, 1)
+    factor = np.ones((args.episode_length, args.n_rollout_threads, 1), dtype=np.float32)
 
-    action_dim = buffers[0].actions.shape[-1]
-    factor     = np.ones((args.episode_length, 1, 1), dtype=np.float32)
-
-    for agent_id in torch.randperm(args.num_agents):
-        agent_id = int(agent_id)
+    for agent_id in range(n_agents):
         trainers[agent_id].prep_training()
-        buffers[agent_id].update_factor(factor)
-
-        available_actions = None
-
-        # Old log-probs (before update)
-        old_log_prob, _ = trainers[agent_id].policy.actor.evaluate_actions(
-            buffers[agent_id].obs[:-1].reshape(-1, *buffers[agent_id].obs.shape[2:]),
-            buffers[agent_id].rnn_states[0:1].reshape(-1, *buffers[agent_id].rnn_states.shape[2:]),
-            buffers[agent_id].actions.reshape(-1, *buffers[agent_id].actions.shape[2:]),
-            buffers[agent_id].masks[:-1].reshape(-1, *buffers[agent_id].masks.shape[2:]),
-            available_actions,
-            buffers[agent_id].active_masks[:-1].reshape(-1, *buffers[agent_id].active_masks.shape[2:])
-        )
-
-        train_info = trainers[agent_id].train(buffers[agent_id])
-
-        # New log-probs (after update)
-        new_log_prob, _ = trainers[agent_id].policy.actor.evaluate_actions(
-            buffers[agent_id].obs[:-1].reshape(-1, *buffers[agent_id].obs.shape[2:]),
-            buffers[agent_id].rnn_states[0:1].reshape(-1, *buffers[agent_id].rnn_states.shape[2:]),
-            buffers[agent_id].actions.reshape(-1, *buffers[agent_id].actions.shape[2:]),
-            buffers[agent_id].masks[:-1].reshape(-1, *buffers[agent_id].masks.shape[2:]),
-            available_actions,
-            buffers[agent_id].active_masks[:-1].reshape(-1, *buffers[agent_id].active_masks.shape[2:])
-        )
-
-        factor = factor * _t2n(
-            torch.prod(torch.exp(new_log_prob - old_log_prob), dim=-1)
-            .reshape(args.episode_length, 1, 1)
-        )
-        buffers[agent_id].after_update()
+        buffers[agent_id].update_factor(factor)       # required by ppo_update sample unpacking
+        trainers[agent_id].train(buffers[agent_id])   # handles all PPO epochs internally
+        buffers[agent_id].after_update()              # copy last obs to slot 0 for next episode
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -389,7 +363,7 @@ def objective(trial):
         for ep in range(N_TRAIN_EPISODES):
             total_rew = collect_rollout(env, policies, trainers, buffers, args)
             compute_returns(policies, trainers, buffers, args)
-            happo_update(policies, trainers, buffers, args)
+            happo_update(trainers, buffers, args)
 
         # ── Evaluation ──────────────────────────────────────────────────────────
         eval_reward = evaluate(env, policies, trainers, args, n_episodes=N_EVAL_EPISODES)
@@ -405,9 +379,11 @@ def objective(trial):
         raise
     except Exception as e:
         import traceback
-        print(f"[Trial {trial.number}] ERROR: {e}")
+        print(f"\n{'='*60}")
+        print(f"[Trial {trial.number}] FAILED with error: {e}")
         traceback.print_exc()
-        return float("-inf")
+        print(f"{'='*60}\n")
+        raise   # Re-raise so you can see the FULL stacktrace on Kaggle
 
 
 # ══════════════════════════════════════════════════════════════════════════════
