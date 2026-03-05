@@ -47,28 +47,27 @@ constraints:
     - [5.0, 5.0, 5.0]  # Retailer_14
 
   # Safety-stock threshold: a SOFT, continuous penalty (not termination).
-  # When retailer inventory < this level, each missing unit costs safety_stock_penalty per step.
-  # Set to ~mean_demand * lead_time_days = roughly 2-3 days of demand as buffer.
+  # Demand mean ~1.41 units/step/SKU. Safety stock = ~3 days demand = ~5 units.
+  # Threshold must be calibrated to actual demand scale.
   safety_stock_threshold:
-    - [20.0, 20.0, 20.0]  # Retailer_0
-    - [20.0, 20.0, 20.0]  # Retailer_1
-    - [20.0, 20.0, 20.0]  # Retailer_2
-    - [20.0, 20.0, 20.0]  # Retailer_3
-    - [20.0, 20.0, 20.0]  # Retailer_4
-    - [20.0, 20.0, 20.0]  # Retailer_5
-    - [20.0, 20.0, 20.0]  # Retailer_6
-    - [20.0, 20.0, 20.0]  # Retailer_7
-    - [20.0, 20.0, 20.0]  # Retailer_8
-    - [20.0, 20.0, 20.0]  # Retailer_9
-    - [20.0, 20.0, 20.0]  # Retailer_10
-    - [20.0, 20.0, 20.0]  # Retailer_11
-    - [20.0, 20.0, 20.0]  # Retailer_12
-    - [20.0, 20.0, 20.0]  # Retailer_13
-    - [20.0, 20.0, 20.0]  # Retailer_14
+    - [5.0, 5.0, 5.0]  # Retailer_0
+    - [5.0, 5.0, 5.0]  # Retailer_1
+    - [5.0, 5.0, 5.0]  # Retailer_2
+    - [5.0, 5.0, 5.0]  # Retailer_3
+    - [5.0, 5.0, 5.0]  # Retailer_4
+    - [5.0, 5.0, 5.0]  # Retailer_5
+    - [5.0, 5.0, 5.0]  # Retailer_6
+    - [5.0, 5.0, 5.0]  # Retailer_7
+    - [5.0, 5.0, 5.0]  # Retailer_8
+    - [5.0, 5.0, 5.0]  # Retailer_9
+    - [5.0, 5.0, 5.0]  # Retailer_10
+    - [5.0, 5.0, 5.0]  # Retailer_11
+    - [5.0, 5.0, 5.0]  # Retailer_12
+    - [5.0, 5.0, 5.0]  # Retailer_13
+    - [5.0, 5.0, 5.0]  # Retailer_14
 
-  # Per-unit-per-step penalty for each unit below safety_stock_threshold.
-  # Should be between backlog_cost and holding_cost in magnitude.
-  # Higher value = stronger push to hold buffer stock.
+  # Per-unit-per-step penalty for falling below safety_stock_threshold.
+  # Should be > backlog cost to strongly incentivize maintaining safety stock.
   safety_stock_penalty: 3.0
 
 # Reward parameters
@@ -76,25 +75,27 @@ rewards:
   survival_reward: 0.0  # Bonus for each step not terminated
   termination_penalty: 500.0  # Penalty for violation termination
 
-# Cost parameters (Unit: 10,000 VND - e.g., 7.5 = 75,000 VND)
+# Cost parameters (Unit: 10,000 VND)
 costs:
-  # DC Costs (2 DCs × 3 SKUs)
+  # DC Costs (2 DCs x 3 SKUs)
   holding_cost_dc:
-    - [0.08, 0.06, 0.12]  # DC_0: 800, 600, 1200 VND/day - realistic 0.5-2% annual rate
+    - [0.08, 0.06, 0.12]  # DC_0
     - [0.07, 0.05, 0.10]  # DC_1
 
   backlog_cost_dc:
-    - [1.0, 0.8, 1.5]  # DC_0: 10k, 8k, 15k VND/day - reduced from overly punitive 30-40k
-    - [1.0, 0.8, 1.5]  # DC_1
+    # Increased penalty: DC stockouts cascade to all assigned retailers
+    - [2.0, 1.5, 3.0]  # DC_0
+    - [2.0, 1.5, 3.0]  # DC_1
   
   fixed_order_cost_dc:
-    - [100.0, 100.0, 100.0]  # DC_0: 1M VND - High fixed cost to force bulk ordering (Cycle Stock)
-    - [100.0, 100.0, 100.0]  # DC_1
+    - [50.0, 50.0, 50.0]  # DC_0 (reduced from 100 - less incentive to over-batch)
+    - [50.0, 50.0, 50.0]  # DC_1
   
-  # Retailer Costs (3 Retailers × 3 SKUs)
-  # BALANCED to match DC cost magnitude - prevent reward explosion
+  # Retailer Costs (15 Retailers x 3 SKUs)
   holding_cost_retailer:
-    - [0.12, 0.10, 0.15]  # Retailer_0: HIGHER than DC to penalize overstocking at retail
+    # Demand mean=1.41/step. With inv=10 units, holding cost = 10*0.12=1.2/step.
+    # Backlog at 1 unit = 2.0/step. Holding is CHEAP relative to backlog: correct ratio.
+    - [0.12, 0.10, 0.15]  # Retailer_0
     - [0.12, 0.10, 0.15]  # Retailer_1
     - [0.12, 0.10, 0.15]  # Retailer_2
     - [0.12, 0.10, 0.15]  # Retailer_3
@@ -111,7 +112,10 @@ costs:
     - [0.12, 0.10, 0.15]  # Retailer_14
   
   backlog_cost_retailer:
-    - [2.0, 1.8, 2.5]  # Retailer_0: HIGHEST penalty (Lost Sales)
+    # Kept high to penalize stockouts. With demand~1.41/step,
+    # 1 unit of backlog costs 2.0/step. Ordering 3 units costs ~2.0 (0.5 fixed + 0.5*3 var).
+    # So ordering 3 units = cost of 1 unit in backlog for 1 step: rational to order.
+    - [2.0, 1.8, 2.5]  # Retailer_0
     - [2.0, 1.8, 2.5]  # Retailer_1
     - [2.0, 1.8, 2.5]  # Retailer_2
     - [2.0, 1.8, 2.5]  # Retailer_3
@@ -128,73 +132,76 @@ costs:
     - [2.0, 1.8, 2.5]  # Retailer_14
   
   fixed_order_cost_retailer:
-    # REDUCED from 2.5 → 0.5: lower fixed cost encourages frequent small orders
-    # to maintain safety stock rather than batching until stockout.
-    - [0.5, 0.5, 0.5]  # Retailer_0
-    - [0.5, 0.5, 0.5]  # Retailer_1
-    - [0.5, 0.5, 0.5]  # Retailer_2
-    - [0.5, 0.5, 0.5]  # Retailer_3
-    - [0.5, 0.5, 0.5]  # Retailer_4
-    - [0.5, 0.5, 0.5]  # Retailer_5
-    - [0.5, 0.5, 0.5]  # Retailer_6
-    - [0.5, 0.5, 0.5]  # Retailer_7
-    - [0.5, 0.5, 0.5]  # Retailer_8
-    - [0.5, 0.5, 0.5]  # Retailer_9
-    - [0.5, 0.5, 0.5]  # Retailer_10
-    - [0.5, 0.5, 0.5]  # Retailer_11
-    - [0.5, 0.5, 0.5]  # Retailer_12
-    - [0.5, 0.5, 0.5]  # Retailer_13
-    - [0.5, 0.5, 0.5]  # Retailer_14
+    # Low fixed cost: don't punish frequent small orders.
+    # Demand is ~1.4/step; ordering every ~2-3 steps is optimal.
+    - [0.2, 0.2, 0.2]  # Retailer_0
+    - [0.2, 0.2, 0.2]  # Retailer_1
+    - [0.2, 0.2, 0.2]  # Retailer_2
+    - [0.2, 0.2, 0.2]  # Retailer_3
+    - [0.2, 0.2, 0.2]  # Retailer_4
+    - [0.2, 0.2, 0.2]  # Retailer_5
+    - [0.2, 0.2, 0.2]  # Retailer_6
+    - [0.2, 0.2, 0.2]  # Retailer_7
+    - [0.2, 0.2, 0.2]  # Retailer_8
+    - [0.2, 0.2, 0.2]  # Retailer_9
+    - [0.2, 0.2, 0.2]  # Retailer_10
+    - [0.2, 0.2, 0.2]  # Retailer_11
+    - [0.2, 0.2, 0.2]  # Retailer_12
+    - [0.2, 0.2, 0.2]  # Retailer_13
+    - [0.2, 0.2, 0.2]  # Retailer_14
   
   # Variable costs for ordering from DCs (per unit transportation/handling)
   # Shape: (n_retailers, n_dcs, n_skus)
-  # REDUCED to balance with DC market prices - prevent high ordering costs
+  # REDUCED: demand is ~1.4 units/step. Ordering 3 units should cost less than 1 unit in backlog.
+  # Backlog cost = 2.0/unit/step. Ordering 3 units: 0.2 fixed + 0.15*3 = 0.65 total.
+  # So ordering 3 units breaks even when expected backlog > 0.65/2.0 = 0.33 units/step.
+  # With demand_std=1.99 and no safety stock, expected shortage >> 0.33. Agent WILL order.
   variable_cost_retailer:
     # Retailer_0
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.15, 0.12, 0.20],
+        [0.18, 0.15, 0.25] ]
     # Retailer_1
-    - [ [0.6, 0.5, 0.8],
-        [0.5, 0.4, 0.7] ]
+    - [ [0.18, 0.15, 0.25],
+        [0.15, 0.12, 0.20] ]
     # Retailer_2
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.15, 0.12, 0.20],
+        [0.18, 0.15, 0.25] ]
     # Retailer_3
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.15, 0.12, 0.20],
+        [0.18, 0.15, 0.25] ]
     # Retailer_4
-    - [ [0.6, 0.5, 0.8],
-        [0.5, 0.4, 0.7] ]
+    - [ [0.18, 0.15, 0.25],
+        [0.15, 0.12, 0.20] ]
     # Retailer_5
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.15, 0.12, 0.20],
+        [0.18, 0.15, 0.25] ]
     # Retailer_6
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.15, 0.12, 0.20],
+        [0.18, 0.15, 0.25] ]
     # Retailer_7
-    - [ [0.6, 0.5, 0.8],
-        [0.5, 0.4, 0.7] ]
+    - [ [0.18, 0.15, 0.25],
+        [0.15, 0.12, 0.20] ]
     # Retailer_8
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.15, 0.12, 0.20],
+        [0.18, 0.15, 0.25] ]
     # Retailer_9
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.15, 0.12, 0.20],
+        [0.18, 0.15, 0.25] ]
     # Retailer_10
-    - [ [0.6, 0.5, 0.8],
-        [0.5, 0.4, 0.7] ]
+    - [ [0.18, 0.15, 0.25],
+        [0.15, 0.12, 0.20] ]
     # Retailer_11
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.15, 0.12, 0.20],
+        [0.18, 0.15, 0.25] ]
     # Retailer_12
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.15, 0.12, 0.20],
+        [0.18, 0.15, 0.25] ]
     # Retailer_13
-    - [ [0.6, 0.5, 0.8],
-        [0.5, 0.4, 0.7] ]
+    - [ [0.18, 0.15, 0.25],
+        [0.15, 0.12, 0.20] ]
     # Retailer_14
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.15, 0.12, 0.20],
+        [0.18, 0.15, 0.25] ]
 
 # Market Pricing (for DC orders from supplier)
 pricing:
