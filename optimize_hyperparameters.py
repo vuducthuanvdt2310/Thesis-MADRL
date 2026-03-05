@@ -158,10 +158,11 @@ class LiteEnvWrapper:
 # ══════════════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
-def collect_rollout(env: LiteEnvWrapper, policies, buffers, args):
+def collect_rollout(env: LiteEnvWrapper, policies, trainers, buffers, args):
     """
     Run one full episode and fill the replay buffers.
     Returns total episode reward (sum over all agents and steps).
+    Uses trainer.prep_rollout() to set eval mode correctly (standard HAPPO pattern).
     """
     n_agents   = env.n_agents
     rnn_states = np.zeros((1, n_agents, args.recurrent_N, args.hidden_size), dtype=np.float32)
@@ -171,10 +172,10 @@ def collect_rollout(env: LiteEnvWrapper, policies, buffers, args):
     obs_np, share_obs = env.reset()
 
     # Seed buffers with initial obs
-    share_obs_arr = np.tile(share_obs, (1, 1))   # (1, total_obs)
+    share_obs_arr = share_obs.copy()   # (1, total_obs)
     for agent_id in range(n_agents):
         buffers[agent_id].share_obs[0] = share_obs_arr.copy()
-        buffers[agent_id].obs[0]       = obs_np[:, agent_id, :].copy()  # (1, obs_dim)
+        buffers[agent_id].obs[0]       = obs_np[:, agent_id, :].copy()
 
     total_reward = 0.0
 
@@ -183,9 +184,9 @@ def collect_rollout(env: LiteEnvWrapper, policies, buffers, args):
         rnn_new, rnn_c_new = [], []
 
         for agent_id in range(n_agents):
-            # HAPPO_Policy is not nn.Module — call eval() on its sub-networks
-            policies[agent_id].actor.eval()
-            policies[agent_id].critic.eval()
+            # Use prep_rollout() — the standard pattern from base_runner.py
+            # This sets actor + critic to eval mode correctly.
+            trainers[agent_id].prep_rollout()
             value, action, log_prob, rnn_s, rnn_c = policies[agent_id].get_actions(
                 share_obs_arr,                   # (1, total_obs)
                 obs_np[:, agent_id, :],          # (1, obs_dim)
@@ -216,7 +217,7 @@ def collect_rollout(env: LiteEnvWrapper, policies, buffers, args):
         # Reset RNN on episode end
         for agent_id in range(n_agents):
             if dones_env[0]:
-                rnn_new[agent_id] = np.zeros_like(rnn_new[agent_id])
+                rnn_new[agent_id]   = np.zeros_like(rnn_new[agent_id])
                 rnn_c_new[agent_id] = np.zeros_like(rnn_c_new[agent_id])
 
         # Insert into buffers
@@ -234,12 +235,10 @@ def collect_rollout(env: LiteEnvWrapper, policies, buffers, args):
                 masks[:, agent_id],
             )
 
-        obs_np     = next_obs
+        obs_np        = next_obs
         share_obs_arr = next_share
-        rnn_states = np.array(rnn_new).transpose(1, 0, 2, 3)   if len(rnn_new[0].shape) == 3 else \
-                     np.stack(rnn_new, axis=1)
-        rnn_states_critic = np.array(rnn_c_new).transpose(1, 0, 2, 3) if len(rnn_c_new[0].shape) == 3 else \
-                            np.stack(rnn_c_new, axis=1)
+        rnn_states        = np.stack(rnn_new,   axis=1)  # (1, n_agents, recN, hidden)
+        rnn_states_critic = np.stack(rnn_c_new, axis=1)
 
         if dones_env[0]:
             break
@@ -319,7 +318,7 @@ def compute_returns(policies, trainers, buffers, args):
 # ══════════════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
-def evaluate(env: LiteEnvWrapper, policies, args, n_episodes=3):
+def evaluate(env: LiteEnvWrapper, policies, trainers, args, n_episodes=3):
     """Run N evaluation episodes and return mean total reward."""
     rewards_all = []
     for _ in range(n_episodes):
@@ -331,7 +330,7 @@ def evaluate(env: LiteEnvWrapper, policies, args, n_episodes=3):
         for step in range(args.episode_length):
             actions_list = []
             for agent_id in range(args.num_agents):
-                policies[agent_id].actor.eval()
+                trainers[agent_id].prep_rollout()   # sets eval mode
                 action, rnn_s = policies[agent_id].act(
                     obs_np[:, agent_id, :],
                     rnn_states[:, agent_id],
@@ -388,12 +387,12 @@ def objective(trial):
 
         # ── Training loop ───────────────────────────────────────────────────────
         for ep in range(N_TRAIN_EPISODES):
-            total_rew = collect_rollout(env, policies, buffers, args)
+            total_rew = collect_rollout(env, policies, trainers, buffers, args)
             compute_returns(policies, trainers, buffers, args)
             happo_update(policies, trainers, buffers, args)
 
         # ── Evaluation ──────────────────────────────────────────────────────────
-        eval_reward = evaluate(env, policies, args, n_episodes=N_EVAL_EPISODES)
+        eval_reward = evaluate(env, policies, trainers, args, n_episodes=N_EVAL_EPISODES)
 
         print(f"[Trial {trial.number}] eval reward = {eval_reward:.2f}")
         trial.report(eval_reward, step=1)
