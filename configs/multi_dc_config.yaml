@@ -46,6 +46,31 @@ constraints:
     - [5.0, 5.0, 5.0]  # Retailer_13
     - [5.0, 5.0, 5.0]  # Retailer_14
 
+  # Safety-stock threshold: a SOFT, continuous penalty (not termination).
+  # When retailer inventory < this level, each missing unit costs safety_stock_penalty per step.
+  # Set to ~mean_demand * lead_time_days = roughly 2-3 days of demand as buffer.
+  safety_stock_threshold:
+    - [20.0, 20.0, 20.0]  # Retailer_0
+    - [20.0, 20.0, 20.0]  # Retailer_1
+    - [20.0, 20.0, 20.0]  # Retailer_2
+    - [20.0, 20.0, 20.0]  # Retailer_3
+    - [20.0, 20.0, 20.0]  # Retailer_4
+    - [20.0, 20.0, 20.0]  # Retailer_5
+    - [20.0, 20.0, 20.0]  # Retailer_6
+    - [20.0, 20.0, 20.0]  # Retailer_7
+    - [20.0, 20.0, 20.0]  # Retailer_8
+    - [20.0, 20.0, 20.0]  # Retailer_9
+    - [20.0, 20.0, 20.0]  # Retailer_10
+    - [20.0, 20.0, 20.0]  # Retailer_11
+    - [20.0, 20.0, 20.0]  # Retailer_12
+    - [20.0, 20.0, 20.0]  # Retailer_13
+    - [20.0, 20.0, 20.0]  # Retailer_14
+
+  # Per-unit-per-step penalty for each unit below safety_stock_threshold.
+  # Should be between backlog_cost and holding_cost in magnitude.
+  # Higher value = stronger push to hold buffer stock.
+  safety_stock_penalty: 3.0
+
 # Reward parameters
 rewards:
   survival_reward: 0.0  # Bonus for each step not terminated
@@ -103,21 +128,23 @@ costs:
     - [2.0, 1.8, 2.5]  # Retailer_14
   
   fixed_order_cost_retailer:
-    - [2.5, 2.5, 2.5]  # Retailer_0
-    - [2.5, 2.5, 2.5]  # Retailer_1
-    - [2.5, 2.5, 2.5]  # Retailer_2
-    - [2.5, 2.5, 2.5]  # Retailer_3
-    - [2.5, 2.5, 2.5]  # Retailer_4
-    - [2.5, 2.5, 2.5]  # Retailer_5
-    - [2.5, 2.5, 2.5]  # Retailer_6
-    - [2.5, 2.5, 2.5]  # Retailer_7
-    - [2.5, 2.5, 2.5]  # Retailer_8
-    - [2.5, 2.5, 2.5]  # Retailer_9
-    - [2.5, 2.5, 2.5]  # Retailer_10
-    - [2.5, 2.5, 2.5]  # Retailer_11
-    - [2.5, 2.5, 2.5]  # Retailer_12
-    - [2.5, 2.5, 2.5]  # Retailer_13
-    - [2.5, 2.5, 2.5]  # Retailer_14
+    # REDUCED from 2.5 → 0.5: lower fixed cost encourages frequent small orders
+    # to maintain safety stock rather than batching until stockout.
+    - [0.5, 0.5, 0.5]  # Retailer_0
+    - [0.5, 0.5, 0.5]  # Retailer_1
+    - [0.5, 0.5, 0.5]  # Retailer_2
+    - [0.5, 0.5, 0.5]  # Retailer_3
+    - [0.5, 0.5, 0.5]  # Retailer_4
+    - [0.5, 0.5, 0.5]  # Retailer_5
+    - [0.5, 0.5, 0.5]  # Retailer_6
+    - [0.5, 0.5, 0.5]  # Retailer_7
+    - [0.5, 0.5, 0.5]  # Retailer_8
+    - [0.5, 0.5, 0.5]  # Retailer_9
+    - [0.5, 0.5, 0.5]  # Retailer_10
+    - [0.5, 0.5, 0.5]  # Retailer_11
+    - [0.5, 0.5, 0.5]  # Retailer_12
+    - [0.5, 0.5, 0.5]  # Retailer_13
+    - [0.5, 0.5, 0.5]  # Retailer_14
   
   # Variable costs for ordering from DCs (per unit transportation/handling)
   # Shape: (n_retailers, n_dcs, n_skus)

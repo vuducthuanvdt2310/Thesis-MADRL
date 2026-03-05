@@ -181,6 +181,17 @@ class MultiDCInventoryEnv:
         else:
             # Default to 0 if not specified
             self.on_shelf_quantity = np.zeros((self.n_retailers, self.n_skus), dtype=np.float32)
+
+        # Safety-stock threshold: continuous penalty when inventory < threshold
+        # Separate from on_shelf_quantity (termination); this is a soft incentive.
+        constraints_cfg = self.config.get('constraints', {})
+        if 'safety_stock_threshold' in constraints_cfg:
+            self.safety_stock_threshold = np.array(constraints_cfg['safety_stock_threshold'], dtype=np.float32)
+        else:
+            self.safety_stock_threshold = np.zeros((self.n_retailers, self.n_skus), dtype=np.float32)
+
+        # Penalty per unit below the safety-stock level, per step
+        self.safety_stock_penalty = float(constraints_cfg.get('safety_stock_penalty', 0.0))
     
     def _define_spaces(self):
         """Define observation and action spaces for each agent type."""
@@ -641,6 +652,13 @@ class MultiDCInventoryEnv:
                 if order_qty > 0:
                     var_cost = self.C_var_retailer[retailer_idx][assigned_dc][sku]
                     ordering = self.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_qty)
+
+                # Safety-stock penalty: continuous incentive to keep inventory above threshold.
+                # Unlike on_shelf_quantity (termination), this provides a smooth gradient.
+                ss_threshold = self.safety_stock_threshold[retailer_idx][sku]
+                if ss_threshold > 0:
+                    shortfall = max(0.0, ss_threshold - self.inventory[retailer_id][sku])
+                    ordering += self.safety_stock_penalty * shortfall  # added to cost
                 
                 total_cost += holding + backlog + ordering
             
