@@ -1,266 +1,475 @@
 """
-optimize_hyperparameters.py
-===========================
-Hyperparameter optimization for HAPPO on the real Multi-DC Inventory Environment.
+optimize_hyperparameters.py  — Clean redesign
+==============================================
+Lightweight Optuna optimizer for HAPPO hyperparameters.
 
-Uses Optuna (TPE sampler + Median pruner) to search over:
-  - learning_rate  → --lr
-  - clip_param     → --clip_param
-  - entropy_coef   → --entropy_coef
-  - gae_lambda     → --gae_lambda
-  - gamma          → --gamma
-  - hidden_size    → --hidden_size
+DESIGN PHILOSOPHY (why this is fast):
+  1. No CRunner — skips TensorBoard, CSV, model saving overhead entirely.
+  2. No LSTM — uses pure MLP for fast forward/backward on CPU.
+  3. Custom tight training loop: collect rollout → compute GAE → PPO update.
+  4. Small network (hidden=64) during search; best params transfer to full training.
+  5. 15 short train episodes + 3 eval episodes per trial → ~1-2 min/trial on CPU.
 
-Each trial runs a SHORT training session on DummyVecEnvMultiDC (your real env)
-and returns the actual eval reward from the supply chain simulation.
+After the study finishes, copy the printed params into train_multi_dc_baseline.py.
 
-To run:
+Run:
     python optimize_hyperparameters.py
-
-After completion, copy the best params into train_multi_dc_baseline.py's
-parser.set_defaults() block, mapping them by the arg names above.
 """
 
-import os
-import sys
-import shutil
-import tempfile
+import os, sys, tempfile, shutil
 import numpy as np
 import torch
+import torch.nn as nn
 import optuna
 from optuna.trial import TrialState
 from optuna.visualization import plot_optimization_history, plot_param_importances
 from pathlib import Path
+from itertools import chain
 
-# ---- Project imports ----
+# ── project imports ────────────────────────────────────────────────────────────
 from config import get_config
-from envs.env_wrappers import DummyVecEnvMultiDC
-from runners.separated.runner import CRunner as Runner
+from envs.multi_dc_env import MultiDCInventoryEnv
+from algorithms.happo_policy import HAPPO_Policy as Policy
+from utils.separated_buffer import SeparatedReplayBuffer
 
-# ==============================================================================
-# CONFIGURATION
-# ==============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
+# SETTINGS  (all tunable at the top)
+# ══════════════════════════════════════════════════════════════════════════════
 
-# ---- episodes per trial: 20 episodes × 30 steps = 600 env steps ----
-# Small enough to finish in ~1 min per trial, big enough to rank hyperparams.
-EPISODES_PER_TRIAL = 20
-EPISODE_LENGTH     = 150
-N_OPTUNA_STEPS     = EPISODES_PER_TRIAL * EPISODE_LENGTH  # = 600
+N_TRAIN_EPISODES = 15   # rollout episodes before evaluation
+N_EVAL_EPISODES  = 3    # evaluation episodes (no gradient)
+EPISODE_LENGTH   = 90   # days per episode  (90 = one quarter, enough for ordering signal)
+N_TRIALS         = 20   # Optuna trials
+TIMEOUT_HOURS    = 3    # wall-clock timeout for the whole study
+HIDDEN_SIZE      = 64   # network width during search (64 is 2× faster than 128)
+N_AGENTS         = 17   # 2 DCs + 15 Retailers
+DEVICE           = torch.device("cpu")
 
-# Number of Optuna trials to run
-N_TRIALS = 15
-
-# Maximum wall-clock seconds for the whole study (safety timeout)
-TIMEOUT_SECONDS = 2 * 3600  # 2 hours
-
-# ==============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
 # HELPERS
-# ==============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
 
-def build_args(trial):
-    """
-    Build an all_args namespace for one Optuna trial.
-    IMPORTANT: We assign speed settings DIRECTLY to all_args AFTER parse_args().
-    This is necessary because argparse's action='store_true' ignores set_defaults()
-    for boolean flags — so use_naive_recurrent_policy would stay True otherwise.
-    """
+def _t2n(x):
+    return x.detach().cpu().numpy()
+
+
+def make_args(trial):
+    """Build a minimal args namespace for one Optuna trial."""
     parser = get_config()
     parser.set_defaults(
         env_name="MultiDC",
-        scenario_name="inventory_2echelon",
-        num_agents=17,
+        num_agents=N_AGENTS,
         algorithm_name="happo",
-        experiment_name=f"optuna_trial_{trial.number}",
+        episode_length=EPISODE_LENGTH,
         seed=[0],
     )
-    all_args = parser.parse_args([])
+    args = parser.parse_args([])
 
-    # -------------------------------------------------------
-    # SPEED SETTINGS — assigned directly to bypass argparse bug
-    # -------------------------------------------------------
-    all_args.episode_length             = EPISODE_LENGTH  # 30 days (not 365)
-    all_args.num_env_steps              = N_OPTUNA_STEPS  # 600 total steps
-    all_args.n_rollout_threads          = 1
-    all_args.n_eval_rollout_threads     = 1
-    all_args.n_training_threads         = 1
-    # Eval fires ONCE at the last episode so runner gets a real reward (not -inf)
-    all_args.use_eval                   = True
-    all_args.eval_interval              = EPISODES_PER_TRIAL - 1  # = 19 → fires at episode 19
-    all_args.use_naive_recurrent_policy = False   # DISABLE LSTM → use fast MLP
-    all_args.use_recurrent_policy       = False   # DISABLE LSTM
-    all_args.ppo_epoch                  = 5       # Default 15 → 3× fewer update passes
-    all_args.hidden_size                = 64      # Small network for fast forward/backward
-    all_args.log_interval               = 9999    # Suppress console noise
-    all_args.n_warmup_evaluations       = 0       # No warmup — let best_reward update in first eval
-    all_args.n_no_improvement_thres     = 99999   # Never early-stop (only 1 eval run anyway)
+    # ── Speed flags (bypass argparse action='store_true' bug by direct assignment) ──
+    args.hidden_size                = HIDDEN_SIZE
+    args.use_naive_recurrent_policy = False   # MUST be False → MLP only
+    args.use_recurrent_policy       = False
+    args.recurrent_N                = 1
+    args.data_chunk_length          = EPISODE_LENGTH
+    args.use_centralized_V          = True
+    args.use_obs_instead_of_state   = False
 
-    # -------------------------------------------------------
-    # HYPERPARAMETERS to search — the ones that matter most
-    # -------------------------------------------------------
-    all_args.lr           = trial.suggest_float("lr",           1e-5, 5e-4, log=True)
-    all_args.critic_lr    = trial.suggest_float("critic_lr",    1e-5, 5e-4, log=True)
-    all_args.clip_param   = trial.suggest_float("clip_param",   0.1,  0.3)
-    all_args.entropy_coef = trial.suggest_float("entropy_coef", 0.0,  0.05)
-    all_args.gae_lambda   = trial.suggest_float("gae_lambda",   0.9,  0.99)
-    all_args.gamma        = trial.suggest_float("gamma",        0.90, 0.99)
+    # ── Hyperparameters suggested by Optuna ──
+    args.lr           = trial.suggest_float("lr",           1e-5, 5e-4, log=True)
+    args.critic_lr    = trial.suggest_float("critic_lr",    1e-5, 5e-4, log=True)
+    args.clip_param   = trial.suggest_float("clip_param",   0.10, 0.30)
+    args.entropy_coef = trial.suggest_float("entropy_coef", 0.0,  0.05)
+    args.gae_lambda   = trial.suggest_float("gae_lambda",   0.90, 0.99)
+    args.gamma        = trial.suggest_float("gamma",        0.90, 0.99)
+    args.ppo_epoch    = trial.suggest_int  ("ppo_epoch",    3,    10)
 
-    return all_args
+    return args
 
 
-# ==============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
+# LIGHTWEIGHT ENV WRAPPER
+# Wraps MultiDCInventoryEnv → returns numpy arrays compatible with Policy/Buffer
+# ══════════════════════════════════════════════════════════════════════════════
+
+class LiteEnvWrapper:
+    """
+    Minimal single-instance wrapper around MultiDCInventoryEnv.
+    Returns obs/rewards as (1, n_agents, obs_dim) arrays (batch_size=1).
+    """
+    def __init__(self):
+        self.env = MultiDCInventoryEnv(config_path='configs/multi_dc_config.yaml')
+        self.n_agents    = self.env.n_agents
+        self.max_obs_dim = self.env.obs_dim_dc          # 27 (DC obs, largest)
+        self.action_dim  = 6
+
+        from gymnasium import spaces
+        self.observation_space = [
+            spaces.Box(low=0, high=1, shape=(self.max_obs_dim,), dtype=np.float32)
+            for _ in range(self.n_agents)
+        ]
+        self.action_space = [
+            spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
+            for _ in range(self.n_agents)
+        ]
+        # Shared obs = concatenation of all padded agent obs
+        total_obs = self.max_obs_dim * self.n_agents
+        self.share_observation_space = [
+            spaces.Box(low=-np.inf, high=np.inf, shape=(total_obs,), dtype=np.float32)
+            for _ in range(self.n_agents)
+        ]
+
+    def _pack(self, obs_dict):
+        """Convert {agent_id: obs} dict → (1, n_agents, max_obs_dim) array."""
+        out = np.zeros((1, self.n_agents, self.max_obs_dim), dtype=np.float32)
+        for i in range(self.n_agents):
+            a = obs_dict[i]
+            out[0, i, :len(a)] = a
+        return out
+
+    def reset(self):
+        obs_dict = self.env.reset()
+        obs_np = self._pack(obs_dict)          # (1, 17, 27)
+        share_obs = obs_np.reshape(1, -1)      # (1, 17*27=459)
+        return obs_np, share_obs
+
+    def step(self, actions_np):
+        """
+        actions_np: (1, n_agents, action_dim) or (n_agents, action_dim)
+        Returns obs, share_obs, rewards (1,n_agents,1), dones (1,n_agents)
+        """
+        if actions_np.ndim == 3:
+            actions_np = actions_np[0]   # drop batch dim → (17, 6)
+
+        action_dict = {i: actions_np[i] for i in range(self.n_agents)}
+        obs_dict, rew_dict, done_dict, _ = self.env.step(action_dict)
+
+        obs_np    = self._pack(obs_dict)         # (1, 17, 27)
+        share_obs = obs_np.reshape(1, -1)        # (1, 459)
+        rewards   = np.array([[rew_dict[i] for i in range(self.n_agents)]],
+                              dtype=np.float32)  # (1, 17)
+        rewards   = rewards[:, :, np.newaxis]    # (1, 17, 1)
+        dones     = np.array([[done_dict[i] for i in range(self.n_agents)]],
+                              dtype=np.float32)  # (1, 17)
+        return obs_np, share_obs, rewards, dones
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ROLLOUT COLLECTION
+# ══════════════════════════════════════════════════════════════════════════════
+
+@torch.no_grad()
+def collect_rollout(env: LiteEnvWrapper, policies, buffers, args):
+    """
+    Run one full episode and fill the replay buffers.
+    Returns total episode reward (sum over all agents and steps).
+    """
+    n_agents   = env.n_agents
+    rnn_states = np.zeros((1, n_agents, args.recurrent_N, args.hidden_size), dtype=np.float32)
+    rnn_states_critic = np.zeros_like(rnn_states)
+    masks      = np.ones((1, n_agents, 1), dtype=np.float32)
+
+    obs_np, share_obs = env.reset()
+
+    # Seed buffers with initial obs
+    share_obs_arr = np.tile(share_obs, (1, 1))   # (1, total_obs)
+    for agent_id in range(n_agents):
+        buffers[agent_id].share_obs[0] = share_obs_arr.copy()
+        buffers[agent_id].obs[0]       = obs_np[:, agent_id, :].copy()  # (1, obs_dim)
+
+    total_reward = 0.0
+
+    for step in range(args.episode_length):
+        values, actions_list, log_probs_list = [], [], []
+        rnn_new, rnn_c_new = [], []
+
+        for agent_id in range(n_agents):
+            policies[agent_id].eval()
+            value, action, log_prob, rnn_s, rnn_c = policies[agent_id].get_actions(
+                share_obs_arr,                   # (1, total_obs)
+                obs_np[:, agent_id, :],          # (1, obs_dim)
+                rnn_states[:, agent_id],         # (1, recN, hidden)
+                rnn_states_critic[:, agent_id],
+                masks[:, agent_id],
+                None                             # no available_actions
+            )
+            values.append(_t2n(value))
+            actions_list.append(_t2n(action))
+            log_probs_list.append(_t2n(log_prob))
+            rnn_new.append(_t2n(rnn_s))
+            rnn_c_new.append(_t2n(rnn_c))
+
+        # Stack → (1, n_agents, dim)
+        actions_env = np.stack(actions_list, axis=1)  # (1, 17, 6)
+
+        # Step env
+        next_obs, next_share, rewards, dones = env.step(actions_env)
+        total_reward += float(np.sum(rewards))
+
+        dones_env = np.all(dones, axis=1)
+        if dones_env[0]:
+            masks = np.zeros((1, n_agents, 1), dtype=np.float32)
+        else:
+            masks = np.ones((1, n_agents, 1), dtype=np.float32)
+
+        # Reset RNN on episode end
+        for agent_id in range(n_agents):
+            if dones_env[0]:
+                rnn_new[agent_id] = np.zeros_like(rnn_new[agent_id])
+                rnn_c_new[agent_id] = np.zeros_like(rnn_c_new[agent_id])
+
+        # Insert into buffers
+        next_share_arr = next_share  # (1, 459)
+        for agent_id in range(n_agents):
+            buffers[agent_id].insert(
+                next_share_arr,
+                next_obs[:, agent_id, :],
+                np.array(rnn_new)[agent_id:agent_id+1].reshape(1, args.recurrent_N, args.hidden_size),
+                np.array(rnn_c_new)[agent_id:agent_id+1].reshape(1, *buffers[0].rnn_states_critic.shape[2:]),
+                actions_list[agent_id],
+                log_probs_list[agent_id],
+                values[agent_id],
+                rewards[:, agent_id],
+                masks[:, agent_id],
+            )
+
+        obs_np     = next_obs
+        share_obs_arr = next_share
+        rnn_states = np.array(rnn_new).transpose(1, 0, 2, 3)   if len(rnn_new[0].shape) == 3 else \
+                     np.stack(rnn_new, axis=1)
+        rnn_states_critic = np.array(rnn_c_new).transpose(1, 0, 2, 3) if len(rnn_c_new[0].shape) == 3 else \
+                            np.stack(rnn_c_new, axis=1)
+
+        if dones_env[0]:
+            break
+
+    return total_reward
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HAPPO UPDATE  (one epoch per agent, sequential as per HAPPO paper)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def happo_update(policies, trainers, buffers, args):
+    """Run one HAPPO update pass over all agents (sequential, with IS factor)."""
+    from algorithms.happo_trainer import HAPPO as Trainer
+
+    action_dim = buffers[0].actions.shape[-1]
+    factor     = np.ones((args.episode_length, 1, 1), dtype=np.float32)
+
+    for agent_id in torch.randperm(args.num_agents):
+        agent_id = int(agent_id)
+        trainers[agent_id].prep_training()
+        buffers[agent_id].update_factor(factor)
+
+        available_actions = None
+
+        # Old log-probs (before update)
+        old_log_prob, _ = trainers[agent_id].policy.actor.evaluate_actions(
+            buffers[agent_id].obs[:-1].reshape(-1, *buffers[agent_id].obs.shape[2:]),
+            buffers[agent_id].rnn_states[0:1].reshape(-1, *buffers[agent_id].rnn_states.shape[2:]),
+            buffers[agent_id].actions.reshape(-1, *buffers[agent_id].actions.shape[2:]),
+            buffers[agent_id].masks[:-1].reshape(-1, *buffers[agent_id].masks.shape[2:]),
+            available_actions,
+            buffers[agent_id].active_masks[:-1].reshape(-1, *buffers[agent_id].active_masks.shape[2:])
+        )
+
+        train_info = trainers[agent_id].train(buffers[agent_id])
+
+        # New log-probs (after update)
+        new_log_prob, _ = trainers[agent_id].policy.actor.evaluate_actions(
+            buffers[agent_id].obs[:-1].reshape(-1, *buffers[agent_id].obs.shape[2:]),
+            buffers[agent_id].rnn_states[0:1].reshape(-1, *buffers[agent_id].rnn_states.shape[2:]),
+            buffers[agent_id].actions.reshape(-1, *buffers[agent_id].actions.shape[2:]),
+            buffers[agent_id].masks[:-1].reshape(-1, *buffers[agent_id].masks.shape[2:]),
+            available_actions,
+            buffers[agent_id].active_masks[:-1].reshape(-1, *buffers[agent_id].active_masks.shape[2:])
+        )
+
+        factor = factor * _t2n(
+            torch.prod(torch.exp(new_log_prob - old_log_prob), dim=-1)
+            .reshape(args.episode_length, 1, 1)
+        )
+        buffers[agent_id].after_update()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPUTE RETURNS  (GAE)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@torch.no_grad()
+def compute_returns(policies, trainers, buffers, args):
+    """Bootstrap value and compute GAE returns for all agents."""
+    for agent_id in range(args.num_agents):
+        trainers[agent_id].prep_rollout()
+        # Read last centralized obs directly from buffer (no dummy reset needed)
+        last_share_obs = buffers[agent_id].share_obs[-1]          # (1, total_obs)
+        last_rnn_c     = buffers[agent_id].rnn_states_critic[-1]   # (1, recN, hidden)
+        last_masks     = buffers[agent_id].masks[-1]               # (1, 1)
+        next_value = trainers[agent_id].policy.get_values(
+            last_share_obs, last_rnn_c, last_masks
+        )
+        next_value = _t2n(next_value)
+        buffers[agent_id].compute_returns(next_value, trainers[agent_id].value_normalizer)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# EVALUATION  (pure greedy, no gradient)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@torch.no_grad()
+def evaluate(env: LiteEnvWrapper, policies, args, n_episodes=3):
+    """Run N evaluation episodes and return mean total reward."""
+    rewards_all = []
+    for _ in range(n_episodes):
+        obs_np, share_obs = env.reset()
+        rnn_states = np.zeros((1, args.num_agents, args.recurrent_N, args.hidden_size), dtype=np.float32)
+        masks      = np.ones((1, args.num_agents, 1), dtype=np.float32)
+        ep_reward  = 0.0
+
+        for step in range(args.episode_length):
+            actions_list = []
+            for agent_id in range(args.num_agents):
+                policies[agent_id].eval()
+                action, rnn_s = policies[agent_id].act(
+                    obs_np[:, agent_id, :],
+                    rnn_states[:, agent_id],
+                    masks[:, agent_id],
+                    None,
+                    deterministic=True
+                )
+                actions_list.append(_t2n(action))
+                rnn_states[0, agent_id] = _t2n(rnn_s)
+
+            actions_env = np.stack(actions_list, axis=1)   # (1, 17, 6)
+            obs_np, share_obs, rewards, dones = env.step(actions_env)
+            ep_reward += float(np.sum(rewards))
+
+            if np.all(dones):
+                break
+
+        rewards_all.append(ep_reward)
+    return float(np.mean(rewards_all))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # OPTUNA OBJECTIVE
-# ==============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
 
 def objective(trial):
-    """
-    Real objective: runs a short HAPPO training session on the actual
-    Multi-DC Inventory environment and returns the eval reward.
-    """
-    all_args = build_args(trial)
+    args = make_args(trial)
+    args.num_agents = N_AGENTS
 
-    # Use a temporary directory per trial so logs/models don't accumulate
-    tmp_dir = Path(tempfile.mkdtemp(prefix=f"optuna_trial_{trial.number}_"))
-    run_dir = tmp_dir / "run"
-    os.makedirs(str(run_dir / "models"), exist_ok=True)
-
-    device = torch.device("cpu")  # CPU for parallelism safety; change to cuda:0 if single-GPU
-
-    print(f"\n[Trial {trial.number}] lr={all_args.lr:.2e}, clip={all_args.clip_param:.3f}, "
-          f"ent={all_args.entropy_coef:.4f}, gae_λ={all_args.gae_lambda:.3f}, "
-          f"γ={all_args.gamma:.3f}, hidden={all_args.hidden_size}, ppo_epoch={all_args.ppo_epoch}")
+    print(f"\n[Trial {trial.number}] "
+          f"lr={args.lr:.2e}  clip={args.clip_param:.2f}  "
+          f"ent={args.entropy_coef:.4f}  gae_λ={args.gae_lambda:.3f}  "
+          f"γ={args.gamma:.3f}  ppo_epoch={args.ppo_epoch}")
 
     try:
-        # Create environments (single thread for isolation)
-        envs      = DummyVecEnvMultiDC(all_args)
-        eval_envs = DummyVecEnvMultiDC(all_args)
+        env = LiteEnvWrapper()
 
-        config = {
-            "all_args":  all_args,
-            "envs":      envs,
-            "eval_envs": eval_envs,
-            "num_agents":all_args.num_agents,
-            "device":    device,
-            "run_dir":   run_dir,
-        }
+        # ── Build one policy + trainer + buffer per agent ──────────────────────
+        from algorithms.happo_trainer import HAPPO as Trainer
+        policies, trainers, buffers = [], [], []
 
-        runner = Runner(config)
+        for agent_id in range(N_AGENTS):
+            share_obs_space = env.share_observation_space[agent_id]
+            obs_space       = env.observation_space[agent_id]
+            act_space       = env.action_space[agent_id]
 
-        # -------------------------------------------------------
-        # Run training — the runner returns (best_reward, best_bw)
-        # -------------------------------------------------------
-        best_reward, _ = runner.run()
+            policy = Policy(args, obs_space, share_obs_space, act_space, device=DEVICE)
+            trainer = Trainer(args, policy, device=DEVICE)
+            buf = SeparatedReplayBuffer(args, obs_space, share_obs_space, act_space)
 
-        # Report to Optuna (used by pruner and for result inspection)
-        trial.report(best_reward, step=1)
+            policies.append(policy)
+            trainers.append(trainer)
+            buffers.append(buf)
+
+        # ── Training loop ───────────────────────────────────────────────────────
+        for ep in range(N_TRAIN_EPISODES):
+            total_rew = collect_rollout(env, policies, buffers, args)
+            compute_returns(policies, trainers, buffers, args)
+            happo_update(policies, trainers, buffers, args)
+
+        # ── Evaluation ──────────────────────────────────────────────────────────
+        eval_reward = evaluate(env, policies, args, n_episodes=N_EVAL_EPISODES)
+
+        print(f"[Trial {trial.number}] eval reward = {eval_reward:.2f}")
+        trial.report(eval_reward, step=1)
         if trial.should_prune():
             raise optuna.TrialPruned()
 
-        print(f"[Trial {trial.number}] best eval reward = {best_reward:.2f}")
-        return best_reward
+        return eval_reward
 
     except optuna.TrialPruned:
         raise
-
     except Exception as e:
-        print(f"[Trial {trial.number}] FAILED with error: {e}")
         import traceback
+        print(f"[Trial {trial.number}] ERROR: {e}")
         traceback.print_exc()
-        # Return a very bad value so Optuna deprioritises this region
         return float("-inf")
 
-    finally:
-        try:
-            envs.close()
-        except Exception:
-            pass
-        try:
-            eval_envs.close()
-        except Exception:
-            pass
-        # Clean up temporary files (logs, models) to save disk space
-        try:
-            shutil.rmtree(str(tmp_dir), ignore_errors=True)
-        except Exception:
-            pass
 
-
-# ==============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN
-# ==============================================================================
+# ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("HAPPO Hyperparameter Optimization (Real Environment)")
+    print("HAPPO Hyperparameter Optimization — Lightweight Direct Loop")
     print("=" * 70)
-    print(f"  Steps per trial : {N_OPTUNA_STEPS:,}")
-    print(f"  Number of trials: {N_TRIALS}")
-    print(f"  Timeout         : {TIMEOUT_SECONDS // 3600}h")
+    print(f"  Training episodes/trial : {N_TRAIN_EPISODES}")
+    print(f"  Eval    episodes/trial  : {N_EVAL_EPISODES}")
+    print(f"  Episode length          : {EPISODE_LENGTH} days")
+    print(f"  Network hidden size     : {HIDDEN_SIZE}")
+    print(f"  Trials                  : {N_TRIALS}")
+    print(f"  Timeout                 : {TIMEOUT_HOURS}h")
     print("=" * 70 + "\n")
 
-    # Create Optuna study
     study = optuna.create_study(
-        study_name="happo_inventory_real",
-        direction="maximize",           # Maximize eval reward (= minimize cost)
+        study_name="happo_inventory_lite",
+        direction="maximize",
         sampler=optuna.samplers.TPESampler(seed=42),
-        pruner=optuna.pruners.MedianPruner(
-            n_startup_trials=5,         # Run 5 full trials before pruning
-            n_warmup_steps=1,
-            interval_steps=1,
-        ),
+        pruner=optuna.pruners.MedianPruner(n_startup_trials=4, n_warmup_steps=0),
     )
 
-    study.optimize(objective, n_trials=N_TRIALS, timeout=TIMEOUT_SECONDS)
+    study.optimize(objective, n_trials=N_TRIALS, timeout=TIMEOUT_HOURS * 3600)
 
-    # ------------------------------------------------------------------
-    # Results
-    # ------------------------------------------------------------------
-    pruned_trials   = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
-    complete_trials = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
+    # ── Summary ──────────────────────────────────────────────────────────────
+    pruned   = study.get_trials(deepcopy=False, states=[TrialState.PRUNED])
+    complete = study.get_trials(deepcopy=False, states=[TrialState.COMPLETE])
 
     print("\n" + "=" * 70)
-    print("Optimization Results")
+    print("Optimization Complete")
     print("=" * 70)
-    print(f"  Finished trials : {len(study.trials)}")
-    print(f"  Pruned trials   : {len(pruned_trials)}")
-    print(f"  Complete trials : {len(complete_trials)}")
+    print(f"  Total trials    : {len(study.trials)}")
+    print(f"  Complete        : {len(complete)}")
+    print(f"  Pruned          : {len(pruned)}")
 
     best = study.best_trial
-    print(f"\nBest Trial #{best.number}")
-    print(f"  Eval Reward: {best.value:.2f}")
+    print(f"\nBest Trial #{best.number}  —  Eval Reward: {best.value:.2f}")
     print("  Params:")
-    for key, value in best.params.items():
-        print(f"    {key}: {value}")
+    for k, v in best.params.items():
+        print(f"    {k}: {v}")
 
-    # ------------------------------------------------------------------
-    # Print ready-to-paste block for train_multi_dc_baseline.py
-    # ------------------------------------------------------------------
+    p = best.params
     print("\n" + "=" * 70)
     print("Copy-paste into train_multi_dc_baseline.py → parser.set_defaults(...):")
     print("=" * 70)
-    p = best.params
-    print(f"    lr           = {p.get('lr', 1e-4)},")
-    print(f"    critic_lr    = {p.get('critic_lr', 1e-4)},")
-    print(f"    clip_param   = {p.get('clip_param', 0.2)},")
+    print(f"    lr           = {p.get('lr',           1e-4)},")
+    print(f"    critic_lr    = {p.get('critic_lr',    1e-4)},")
+    print(f"    clip_param   = {p.get('clip_param',   0.2)},")
     print(f"    entropy_coef = {p.get('entropy_coef', 0.01)},")
-    print(f"    gae_lambda   = {p.get('gae_lambda', 0.95)},")
-    print(f"    gamma        = {p.get('gamma', 0.95)},")
-    print(f"    hidden_size  = {p.get('hidden_size', 128)},")
-    print(f"    ppo_epoch    = {p.get('ppo_epoch', 15)},")
+    print(f"    gae_lambda   = {p.get('gae_lambda',   0.95)},")
+    print(f"    gamma        = {p.get('gamma',        0.95)},")
+    print(f"    ppo_epoch    = {p.get('ppo_epoch',    15)},")
     print("=" * 70)
 
-    # ------------------------------------------------------------------
-    # Visualizations
-    # ------------------------------------------------------------------
+    # ── Visualizations ───────────────────────────────────────────────────────
     try:
-        print("\nGenerating visualization plots...")
-        fig1 = plot_optimization_history(study)
-        fig1.write_html("optuna_optimization_history.html")
+        print("\nGenerating plots...")
+        plot_optimization_history(study).write_html("optuna_optimization_history.html")
         print("  Saved: optuna_optimization_history.html")
-
-        fig2 = plot_param_importances(study)
-        fig2.write_html("optuna_param_importance.html")
+        plot_param_importances(study).write_html("optuna_param_importance.html")
         print("  Saved: optuna_param_importance.html")
-    except ImportError:
-        print("  Visualization libraries not installed. Skipping plots.")
     except Exception as e:
-        print(f"  Error generating plots: {e}")
+        print(f"  Plot error: {e}")
