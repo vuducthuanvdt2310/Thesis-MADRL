@@ -162,7 +162,7 @@ if __name__ == "__main__":
     all_args = parse_args(sys.argv[1:], parser)
 
     # CRITICAL: Force single_agent_obs_dim to 36 (max obs dim for retailers)
-    all_args.single_agent_obs_dim = 27  # DC obs=27D; retailer obs=21D padded to 27D
+    all_args.single_agent_obs_dim = 28  # DC obs=28D; retailer obs=22D padded to 28D
 
     # --- Resume Training (Optional) ---
     RESUME_MODEL_DIR = None

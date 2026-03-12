@@ -119,7 +119,7 @@ if __name__ == "__main__":
         experiment_name="full_training",
         use_eval=True,
         n_eval_rollout_threads=1,
-        eval_interval=1,     # Evaluate every 1 episodes (was 500 - too large!)
+        eval_interval=10,    # Evaluate every 10 episodes (1=too noisy for best-model tracking)
         eval_episodes=5,
         log_interval=1,
         n_warmup_evaluations=3,  # Minimum evaluations before early stopping kicks in

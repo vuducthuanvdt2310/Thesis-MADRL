@@ -233,19 +233,23 @@ class GNNRunner(object):
 
         for episode in range(start_episode, episodes):
             episode_rewards = []
+            episode_sl_log = []  # Collect step SL values for TensorBoard logging
             total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads
 
             if episode % self.eval_interval == 0 and self.use_eval:
-                re, bw_res = self.eval()
+                eval_sl_list = []  # Collect eval SL values
+                re, bw_res = self.eval(eval_sl_list)
                 print()
                 print("Eval total episode reward: ", re, " Eval ordering fluctuation measurement (downstream to upstream): ", bw_res)
 
                 if re > best_reward and episode > 0:
                     self.save(reward=re)
 
-                # Log evaluation reward to TensorBoard
+                # Log evaluation reward and service level to TensorBoard
                 self.writter.add_scalar("eval/total_episode_reward", re, total_num_steps)
                 self.writter.add_scalar("eval/bullwhip_effect", np.mean(bw_res) if len(bw_res) > 0 else 0, total_num_steps)
+                if eval_sl_list:
+                    self.writter.add_scalar("eval/service_level", np.mean(eval_sl_list), total_num_steps)
 
                 if re > best_reward and episode > 0:
                     training_state = {
@@ -296,6 +300,22 @@ class GNNRunner(object):
                        values, actions, action_log_probs, \
                        rnn_states, rnn_states_critic
 
+                # Collect step service level from infos for training logging
+                try:
+                    sl_vals = []
+                    for env_infos in infos:
+                        if isinstance(env_infos, (list, tuple)):
+                            for agent_info in env_infos:
+                                if isinstance(agent_info, dict) and 'step_service_level' in agent_info:
+                                    sl_vals.append(agent_info['step_service_level'])
+                                    break
+                        elif isinstance(env_infos, dict) and 'step_service_level' in env_infos:
+                            sl_vals.append(env_infos['step_service_level'])
+                    if sl_vals:
+                        episode_sl_log.append(np.mean(sl_vals))
+                except Exception:
+                    pass
+
                 self.insert(data)
 
             # Episode-level CSV logging
@@ -313,6 +333,10 @@ class GNNRunner(object):
             # Log training metrics to TensorBoard
             if episode % self.log_interval == 0:
                 self.log_train(train_infos, total_num_steps)
+                # Log average training service level
+                if episode_sl_log:
+                    self.writter.add_scalar("train/service_level", np.mean(episode_sl_log), total_num_steps)
+                episode_sl_log = []
 
             # Console log
             if episode % self.log_interval == 0:
@@ -550,7 +574,12 @@ class GNNRunner(object):
     # eval() — GNN version: uses structured obs + adjacency matrix
     # =========================================================================
     @torch.no_grad()
-    def eval(self):
+    def eval(self, eval_sl_list=None):
+        """Run evaluation episodes and return total reward + bullwhip.
+
+        Args:
+            eval_sl_list: Optional list to append per-step service level values into.
+        """
         overall_reward = []
         eval_num = self.eval_envs.get_eval_num()
 
@@ -628,6 +657,23 @@ class GNNRunner(object):
                 # Calculate system reward for this step (sum of all agents)
                 step_reward = np.sum(np.mean(eval_rewards, axis=0))
                 overall_reward.append(step_reward)
+
+                # Collect service level from infos
+                if eval_sl_list is not None:
+                    try:
+                        sl_vals = []
+                        for env_infos in eval_infos:
+                            if isinstance(env_infos, (list, tuple)):
+                                for agent_info in env_infos:
+                                    if isinstance(agent_info, dict) and 'step_service_level' in agent_info:
+                                        sl_vals.append(agent_info['step_service_level'])
+                                        break
+                            elif isinstance(env_infos, dict) and 'step_service_level' in env_infos:
+                                sl_vals.append(env_infos['step_service_level'])
+                        if sl_vals:
+                            eval_sl_list.append(np.mean(sl_vals))
+                    except Exception:
+                        pass
 
                 eval_dones_env = np.all(eval_dones, axis=1)
 

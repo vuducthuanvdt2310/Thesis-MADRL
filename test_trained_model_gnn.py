@@ -367,7 +367,10 @@ class GNNModelEvaluator:
             'ordering_costs': [0.0] * self.n_agents,
             'avg_inventory': [0.0] * self.n_agents,
             'avg_backlog': [0.0] * self.n_agents,
+            # True demand fill-rate (retailers only)
             'service_level': [0.0] * self.n_agents,
+            '_demand_total': [0.0] * self.n_agents,
+            '_demand_met':   [0.0] * self.n_agents,
             'final_inventory': None,
             'final_backlog': None,
         }
@@ -381,6 +384,11 @@ class GNNModelEvaluator:
             }
 
         for step in range(self.args.episode_length):
+            # Capture market prices BEFORE step so DC ordering cost uses the
+            # same price that _calculate_rewards() uses inside step().
+            _pre_env_list = getattr(self.env, 'env_list', getattr(self.env, 'envs', None))
+            pre_step_prices = _pre_env_list[0].market_prices.copy() if _pre_env_list else None
+
             # Build padded structured obs: [1, n_agents, max_obs_dim]
             obs_structured = np.zeros(
                 (1, self.n_agents, max_obs_dim), dtype=np.float32
@@ -444,24 +452,39 @@ class GNNModelEvaluator:
                             b_cost += (env_state.backlog[agent_id][sku]
                                        * env_state.B_dc[dc_idx][sku])
                             if actions_env[agent_id][sku] > 0:
+                                # Use PRE-STEP price (matches _calculate_rewards inside step())
+                                price = pre_step_prices[sku] if pre_step_prices is not None else env_state.market_prices[sku]
                                 o_cost += (env_state.C_fixed_dc[dc_idx][sku]
-                                           + env_state.market_prices[sku]
-                                           * actions_env[agent_id][sku])
+                                           + price * actions_env[agent_id][sku])
                     else:
                         r_idx = agent_id - 2
+                        assigned_dc = env_state.retailer_to_dc[agent_id]
                         for sku in range(3):
                             h_cost += (env_state.inventory[agent_id][sku]
                                        * env_state.H_retailer[r_idx][sku])
                             b_cost += (env_state.backlog[agent_id][sku]
                                        * env_state.B_retailer[r_idx][sku])
-                            q0 = actions_env[agent_id][sku]
-                            q1 = actions_env[agent_id][3 + sku]
-                            if q0 > 0:
+                            # Retailers use action[0:3] from their ASSIGNED DC only.
+                            # action[3:6] is UNUSED (always zero — uniform 6D action space).
+                            order_qty = actions_env[agent_id][sku]
+                            if order_qty > 0:
                                 o_cost += (env_state.C_fixed_retailer[r_idx][sku]
-                                           + env_state.C_var_retailer[r_idx][0][sku] * q0)
-                            if q1 > 0:
-                                o_cost += (env_state.C_fixed_retailer[r_idx][sku]
-                                           + env_state.C_var_retailer[r_idx][1][sku] * q1)
+                                           + env_state.C_var_retailer[r_idx][assigned_dc][sku] * order_qty)
+
+                        # --- True service level: use exact demand_fulfilled tracked by env ---
+                        # demand_fulfilled[retailer_id][sku] is set precisely inside
+                        # _process_customer_demand() and supports partial fulfillment.
+                        for sku in range(3):
+                            actual_demand = 0.0
+                            if (sku < len(env_state.demand_history) and
+                                    r_idx < len(env_state.demand_history[sku]) and
+                                    len(env_state.demand_history[sku][r_idx]) > 0):
+                                actual_demand = float(env_state.demand_history[sku][r_idx][-1])
+                            ep_data['_demand_total'][agent_id] += actual_demand
+                            if agent_id in env_state.demand_fulfilled:
+                                ep_data['_demand_met'][agent_id] += float(
+                                    env_state.demand_fulfilled[agent_id][sku]
+                                )
 
                     ep_data['holding_costs'][agent_id] += h_cost
                     ep_data['backlog_costs'][agent_id] += b_cost
@@ -471,8 +494,6 @@ class GNNModelEvaluator:
                     bl = env_state.backlog[agent_id].sum()
                     ep_data['avg_inventory'][agent_id] += inv
                     ep_data['avg_backlog'][agent_id] += bl
-                    if inv > 0:
-                        ep_data['service_level'][agent_id] += 1
 
                     if save_trajectory:
                         traj['inventory'][agent_id].append(float(inv))
@@ -494,9 +515,14 @@ class GNNModelEvaluator:
         for agent_id in range(self.n_agents):
             ep_data['avg_inventory'][agent_id] /= T
             ep_data['avg_backlog'][agent_id] /= T
-            ep_data['service_level'][agent_id] = (
-                ep_data['service_level'][agent_id] / T * 100
-            )
+            # True demand fill-rate for retailers; DC gets 100% (they rarely stockout)
+            if agent_id >= 2:
+                total_d = ep_data['_demand_total'][agent_id]
+                ep_data['service_level'][agent_id] = (
+                    (ep_data['_demand_met'][agent_id] / total_d * 100.0) if total_d > 0 else 100.0
+                )
+            else:
+                ep_data['service_level'][agent_id] = 100.0  # placeholder for DCs
 
         if save_trajectory:
             self.detailed_trajectory = traj
@@ -673,7 +699,7 @@ class GNNModelEvaluator:
                     f'{h:.1f}%', ha='center', va='bottom', fontsize=9)
         ax.axhline(y=95, color='red', linestyle='--', linewidth=2, label='Target 95%')
         ax.set_ylabel('Service Level (%)', fontsize=12)
-        ax.set_title('Service Level by Agent (GNN-HAPPO)',
+        ax.set_title('Service Level by Agent (Demand Fill-Rate for Retailers)',
                      fontsize=14, fontweight='bold')
         ax.set_ylim([0, 110])
         ax.legend()

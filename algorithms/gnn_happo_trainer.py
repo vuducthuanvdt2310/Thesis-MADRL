@@ -67,18 +67,18 @@ class GNN_HAPPO():
         """
         Reconstruct structured observations [batch, n_agents, obs_dim] from concatenated share_obs_batch.
 
-        All agents now have uniform 30D observations, so:
-            total_obs_dim = n_agents * 30  (e.g. 17 * 30 = 510)
+        All agents now have uniform 28D observations (DC=28D, Retailer=22D zero-padded to 28D), so:
+            total_obs_dim = n_agents * 28  (e.g. 17 * 28 = 476)
 
         Args:
             share_obs_batch: Concatenated observations [batch, total_obs_dim]
 
         Returns:
-            obs_structured: [batch, n_agents, 30]
+            obs_structured: [batch, n_agents, 28]
         """
         batch_size = share_obs_batch.shape[0]
         n_agents = self.n_agents
-        obs_dim = 27   # max obs dim: DC=27D (retailer 21D zero-padded to 27D)
+        obs_dim = 28   # max obs dim: DC=28D (retailer 22D zero-padded to 28D)
         expected_total = n_agents * obs_dim
 
         # Convert to numpy for slicing

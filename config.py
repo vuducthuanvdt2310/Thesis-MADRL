@@ -77,7 +77,7 @@ def get_config():
     parser.add_argument("--use_valuenorm", action='store_false', 
                         default=True, help="by default True, use running mean and std to normalize rewards.")
     parser.add_argument("--use_feature_normalization", action='store_false',
-                        default=False, help="Whether to apply layernorm to the inputs")
+                        default=True, help="Whether to apply layernorm to the inputs")
     parser.add_argument("--use_orthogonal", action='store_false', 
                         default=True, help="Whether to use Orthogonal initialization for weights and 0 initialization for biases")
     parser.add_argument("--gain", type=float, 
@@ -95,13 +95,13 @@ def get_config():
     parser.add_argument("--recurrent_N", type=int, 
                         default=2, help="The number of recurrent layers.")
     parser.add_argument("--data_chunk_length", type=int, 
-                        default=10, help="Time length of chunks used to train a recurrent_policy")
+                        default=25, help="Time length of chunks used to train a recurrent_policy (set to max lead time=25)")
     
     # optimizer parameters
     parser.add_argument("--lr", type=float, 
-                        default=1.7258215396625005e-05, help='learning rate (default: 5e-4)')
+                        default=5e-4, help='learning rate (default: 5e-4)')
     parser.add_argument("--critic_lr", type=float, 
-                        default=3.135775732257744e-05, help='critic learning rate (default: 5e-4)')
+                        default=5e-4, help='critic learning rate (default: 5e-4)')
     parser.add_argument("--opti_eps", type=float, 
                         default=1e-5, help='RMSprop optimizer epsilon (default: 1e-5)')
     parser.add_argument("--weight_decay", type=float, default=0)
@@ -117,26 +117,26 @@ def get_config():
 
     # ppo parameters
     parser.add_argument("--ppo_epoch", type=int, 
-                        default=7, help='number of ppo epochs (default: 15)')
+                        default=10, help='number of ppo epochs (default: 15)')
     parser.add_argument("--use_clipped_value_loss", action='store_false', 
                         default=True, help="by default, clip loss value. If set, do not clip loss value.")
     parser.add_argument("--clip_param", type=float, 
-                        default=0.17327236865873835, help='ppo clip parameter (default: 0.2)')
+                        default=0.2, help='ppo clip parameter (default: 0.2)')
     parser.add_argument("--num_mini_batch", type=int, 
-                        default=1, help='number of batches for ppo (default: 1)')
+                        default=2, help='number of batches for ppo (default: 1)')
     parser.add_argument("--entropy_coef", type=float, 
-                        default=0.0228034992108518, help='entropy term coefficient (default: 0.01)')
+                        default=0.01, help='entropy term coefficient (default: 0.01)')
     parser.add_argument("--value_loss_coef", type=float,
                         default=0.5, help='value loss coefficient (default: 0.5)')
     parser.add_argument("--use_max_grad_norm", action='store_false', 
-                        default=False, help="by default, use max norm of gradients. If set, do not use.")
+                        default=True, help="by default True, use max norm of gradients. If set, do not use.")
     parser.add_argument("--max_grad_norm", type=float, 
                         default=0.5, help='max norm of gradients (default: 0.5)')
     parser.add_argument("--use_gae", action='store_false',
                         default=True, help='use generalized advantage estimation')
-    parser.add_argument("--gamma", type=float, default=0.9179706403942524,
+    parser.add_argument("--gamma", type=float, default=0.99,
                         help='discount factor for rewards (default: 0.99)')
-    parser.add_argument("--gae_lambda", type=float, default=0.9706658365253712,
+    parser.add_argument("--gae_lambda", type=float, default=0.95,
                         help='gae lambda parameter (default: 0.95)')
     parser.add_argument("--use_proper_time_limits", action='store_true',
                         default=True, help='compute returns taking into account time limits')

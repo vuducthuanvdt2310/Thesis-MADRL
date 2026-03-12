@@ -351,7 +351,10 @@ class ModelEvaluator:
             'final_backlog': None,
             'avg_inventory': [0] * self.args.num_agents,
             'avg_backlog': [0] * self.args.num_agents,
-            'service_level': [0] * self.args.num_agents,  # % of time with inventory > 0
+            # Service level: true demand fill-rate = demand_met / total_demand
+            'service_level': [0] * self.args.num_agents,
+            '_demand_total': [0.0] * self.args.num_agents,   # cumulative demand (retailers only)
+            '_demand_met':   [0.0] * self.args.num_agents,   # cumulative demand fulfilled
         }
 
         # Trajectory data (only for first episode)
@@ -365,6 +368,13 @@ class ModelEvaluator:
 
         # Run episode
         for step in range(self.args.episode_length):
+            # Capture market prices BEFORE step so DC ordering cost uses the
+            # same price that _calculate_rewards() uses inside step().
+            env_list_pre = getattr(self.env, 'env_list', getattr(self.env, 'envs', None))
+            pre_step_prices = None
+            if env_list_pre:
+                pre_step_prices = env_list_pre[0].market_prices.copy()
+
             # Get actions from all agents
             actions_env = []
 
@@ -452,27 +462,42 @@ class ModelEvaluator:
                             holding_cost_step += env_state.inventory[agent_id][sku] * env_state.H_dc[dc_idx][sku]
                             # Backlog cost = backlog * backlog_cost_param
                             backlog_cost_step += env_state.backlog[agent_id][sku] * env_state.B_dc[dc_idx][sku]
-                            # Ordering cost = fixed_cost + (market_price * quantity)
+                            # Ordering cost: use PRE-STEP price (same as _calculate_rewards inside step())
                             order_qty = actions_env[agent_id][sku]
                             if order_qty > 0:
-                                ordering_cost_step += env_state.C_fixed_dc[dc_idx][sku] + (env_state.market_prices[sku] * order_qty)
+                                price = pre_step_prices[sku] if pre_step_prices is not None else env_state.market_prices[sku]
+                                ordering_cost_step += env_state.C_fixed_dc[dc_idx][sku] + (price * order_qty)
                     else:
                         # Retailer costs
                         retailer_idx = agent_id - 2  # Offset by number of DCs
+                        assigned_dc = env_state.retailer_to_dc[agent_id]
                         for sku in range(3):
                             # Holding cost
                             holding_cost_step += env_state.inventory[agent_id][sku] * env_state.H_retailer[retailer_idx][sku]
                             # Backlog cost
                             backlog_cost_step += env_state.backlog[agent_id][sku] * env_state.B_retailer[retailer_idx][sku]
-                            # Ordering cost (from both DCs)
-                            order_dc0 = actions_env[agent_id][sku]  # Order to DC_0
-                            order_dc1 = actions_env[agent_id][3 + sku]  # Order to DC_1
-                            if order_dc0 > 0:
-                                var_cost = env_state.C_var_retailer[retailer_idx][0][sku]
-                                ordering_cost_step += env_state.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_dc0)
-                            if order_dc1 > 0:
-                                var_cost = env_state.C_var_retailer[retailer_idx][1][sku]
-                                ordering_cost_step += env_state.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_dc1)
+                            # Ordering cost: retailers use action[0:3] from their ASSIGNED DC only.
+                            # action[3:6] is UNUSED (kept for uniform 6D action space, always zero).
+                            order_qty = actions_env[agent_id][sku]
+                            if order_qty > 0:
+                                var_cost = env_state.C_var_retailer[retailer_idx][assigned_dc][sku]
+                                ordering_cost_step += env_state.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_qty)
+
+                        # --- True service level: use exact demand_fulfilled tracked by env ---
+                        # demand_fulfilled[retailer_id][sku] is set precisely inside
+                        # _process_customer_demand() each step.
+                        for sku in range(3):
+                            actual_demand = 0.0
+                            if (sku < len(env_state.demand_history) and
+                                    retailer_idx < len(env_state.demand_history[sku]) and
+                                    len(env_state.demand_history[sku][retailer_idx]) > 0):
+                                actual_demand = float(env_state.demand_history[sku][retailer_idx][-1])
+                            episode_data['_demand_total'][agent_id] += actual_demand
+                            # demand_fulfilled is now exact (partial fulfillment tracked)
+                            if retailer_id in env_state.demand_fulfilled:
+                                episode_data['_demand_met'][agent_id] += float(
+                                    env_state.demand_fulfilled[retailer_id][sku]
+                                )
                     
                     # Accumulate cost components
                     episode_data['holding_costs'][agent_id] += holding_cost_step
@@ -482,13 +507,9 @@ class ModelEvaluator:
                     # Track inventory and backlog
                     inv = env_state.inventory[agent_id].sum()
                     bl = env_state.backlog[agent_id].sum()
-                    
+
                     episode_data['avg_inventory'][agent_id] += inv
                     episode_data['avg_backlog'][agent_id] += bl
-                    
-                    # Service level: count steps with positive inventory
-                    if inv > 0:
-                        episode_data['service_level'][agent_id] += 1
                     
                     if save_trajectory:
                         trajectory['inventory'][agent_id].append(inv)
@@ -508,9 +529,19 @@ class ModelEvaluator:
         for agent_id in range(self.args.num_agents):
             episode_data['avg_inventory'][agent_id] /= self.args.episode_length
             episode_data['avg_backlog'][agent_id] /= self.args.episode_length
-            episode_data['service_level'][agent_id] = (
-                episode_data['service_level'][agent_id] / self.args.episode_length * 100
-            )
+            # True demand fill-rate service level (retailers); DCs use inv>0 heuristic
+            if agent_id >= 2:  # retailer
+                total_d = episode_data['_demand_total'][agent_id]
+                episode_data['service_level'][agent_id] = (
+                    (episode_data['_demand_met'][agent_id] / total_d * 100.0) if total_d > 0 else 100.0
+                )
+            else:  # DC: fraction of steps where DC had positive inventory
+                episode_data['service_level'][agent_id] = (
+                    sum(1 for v in episode_data.get('_dc_inv_positive', {}).get(agent_id, [])
+                        if v) / self.args.episode_length * 100
+                    if episode_data.get('_dc_inv_positive') else
+                    100.0  # DCs almost always have positive inventory
+                )
         
         # Save trajectory for first episode
         if save_trajectory:
@@ -728,7 +759,8 @@ class ModelEvaluator:
         agents = list(stats['per_agent'].keys())
         service_levels = [stats['per_agent'][a]['service_level'] for a in agents]
         
-        colors = ['#2E86AB', '#2E86AB', '#A23B72', '#A23B72', '#A23B72']
+        n_agents = len(agents)
+        colors = ['#2E86AB'] * 2 + ['#A23B72'] * (n_agents - 2)
         bars = ax.bar(agents, service_levels, color=colors, alpha=0.8, edgecolor='black')
         
         # Add value labels
@@ -742,7 +774,7 @@ class ModelEvaluator:
         ax.axhline(y=95, color='red', linestyle='--', linewidth=2, label='Target (95%)')
         
         ax.set_ylabel('Service Level (%)', fontsize=12)
-        ax.set_title('Service Level: % of Time with Positive Inventory', fontsize=14, fontweight='bold')
+        ax.set_title('Service Level by Agent (Demand Fill-Rate for Retailers)', fontsize=14, fontweight='bold')
         ax.set_ylim([0, 105])
         ax.legend()
         ax.grid(True, axis='y', alpha=0.3)

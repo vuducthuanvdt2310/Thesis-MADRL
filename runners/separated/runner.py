@@ -64,11 +64,13 @@ class CRunner(BaseRunner):
 
         for episode in range(start_episode, episodes):
             episode_rewards = []
+            episode_sl_log = []  # Collect step SL values during training for logging
             # Calculate total steps for logging (used in eval and training logs)
             total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads
 
             if episode % self.eval_interval == 0 and self.use_eval:
-                re, bw_res = self.eval()
+                eval_sl_list = []  # Collect eval SL values
+                re, bw_res = self.eval(eval_sl_list)
                 print()
                 print("Eval total episode reward: ", re, " Eval ordering fluctuation measurement (downstream to upstream): ", bw_res)
                 
@@ -79,9 +81,11 @@ class CRunner(BaseRunner):
                 if(re > best_reward and episode > 0):
                     self.save(reward=re)
                 
-                # Log evaluation reward to TensorBoard
+                # Log evaluation reward and service level to TensorBoard
                 self.writter.add_scalar("eval/total_episode_reward", re, total_num_steps)
                 self.writter.add_scalar("eval/bullwhip_effect", np.mean(bw_res) if len(bw_res) > 0 else 0, total_num_steps)
+                if eval_sl_list:
+                    self.writter.add_scalar("eval/service_level", np.mean(eval_sl_list), total_num_steps)
 
                 if(re > best_reward and episode > 0):
                     # Save training state
@@ -133,6 +137,17 @@ class CRunner(BaseRunner):
                        values, actions, action_log_probs, \
                        rnn_states, rnn_states_critic 
                 
+                # Collect step service level from infos for training logging
+                # infos: list of dicts per env (length = n_rollout_threads), each containing
+                # 'step_service_level' for every agent (same value replicated across agents)
+                try:
+                    step_sl_vals = [info.get('step_service_level', None) for env_info in infos for info in (env_info if isinstance(env_info, (list, tuple)) else [env_info])]
+                    step_sl_vals = [v for v in step_sl_vals if v is not None]
+                    if step_sl_vals:
+                        episode_sl_log.append(np.mean(step_sl_vals))
+                except Exception:
+                    pass
+                
                 # insert data into buffer
                 self.insert(data)
 
@@ -155,9 +170,12 @@ class CRunner(BaseRunner):
             # total_num_steps is now calculated at start of loop
 
             # Log training metrics to TensorBoard
-            # Ensure logging happens based on log_interval to capture gradual improvement consistently
             if episode % self.log_interval == 0:
                 self.log_train(train_infos, total_num_steps)
+                # Log average training service level
+                if episode_sl_log:
+                    self.writter.add_scalar("train/service_level", np.mean(episode_sl_log), total_num_steps)
+                episode_sl_log = []
 
             # Console log information (keep episode-based for readability)
             if episode % self.log_interval == 0:
@@ -400,8 +418,13 @@ class CRunner(BaseRunner):
         self.writter.add_scalar("system/total_episode_reward_estimated", total_agent_reward * self.episode_length, total_num_steps)
     
     @torch.no_grad()
-    def eval(self):
-        
+    def eval(self, eval_sl_list=None):
+        """Run evaluation episodes and return total reward + bullwhip.
+
+        Args:
+            eval_sl_list: Optional list to append per-step service level values into.
+                          Populated in-place so the caller can log them.
+        """
         overall_reward = []
         eval_num = self.eval_envs.get_eval_num()
 
@@ -415,12 +438,8 @@ class CRunner(BaseRunner):
             
             # For GNN-HAPPO: Reshape observations to [batch, n_agents, obs_dim]
             if self.algorithm_name == "gnn_happo":
-                # eval_obs is a list/array of per-environment observations
-                # Each env has observations for all agents
-                # We need to convert to [batch, n_agents, obs_dim] where obs_dim may vary per agent
-                
-                # Get max obs dim for padding (both DCs and Retailers now have 30D)
-                max_obs_dim = 30
+                # Get max obs dim for padding (DC=28D max)
+                max_obs_dim = 28
                 
                 # Create structured observations [batch, n_agents, max_obs_dim]
                 eval_obs_structured = np.zeros((self.n_eval_rollout_threads, self.num_agents, max_obs_dim), dtype=np.float32)
@@ -519,6 +538,24 @@ class CRunner(BaseRunner):
                 # eval_rewards shape: [n_threads, n_agents, 1]
                 step_reward = np.sum(np.mean(eval_rewards, axis=0))
                 overall_reward.append(step_reward)
+
+                # Collect service level from infos
+                if eval_sl_list is not None:
+                    try:
+                        sl_vals = []
+                        for env_infos in eval_infos:
+                            # env_infos may be a list/dict per agent
+                            if isinstance(env_infos, (list, tuple)):
+                                for agent_info in env_infos:
+                                    if isinstance(agent_info, dict) and 'step_service_level' in agent_info:
+                                        sl_vals.append(agent_info['step_service_level'])
+                                        break  # same value for all agents in the env
+                            elif isinstance(env_infos, dict) and 'step_service_level' in env_infos:
+                                sl_vals.append(env_infos['step_service_level'])
+                        if sl_vals:
+                            eval_sl_list.append(np.mean(sl_vals))
+                    except Exception:
+                        pass
 
                 eval_dones_env = np.all(eval_dones, axis=1)
 
