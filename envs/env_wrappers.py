@@ -251,16 +251,14 @@ class SubprocVecEnvMultiDC(object):
         self.force_discrete_action = False
         
         
-        # === UNIFORM ACTION SPACES (All agents 6D) ===
-        # DC agents: use first 3 dimensions, last 3 ignored
-        # Retailer agents: use all 6 dimensions
-        # This uniformity is required for HAPPO runner compatibility
+        # === UNIFORM 3D ACTION SPACE ===
+        # All agents (DCs and retailers) use 3 continuous actions — one per SKU.
+        # Each retailer is assigned to exactly one DC, so no need for 6D anymore.
+        self.action_dim = 3  # One per SKU (n_skus = 3)
         
-        self.action_dim = 6  # Uniform for all agents
-        
-        # Observation dims come from the env directly (DC=27D, Retailer=21D)
-        self.max_obs_dim = self.env_list[0].obs_dim_dc          # 27 — largest obs dim
-        self.retailer_obs_dim = self.env_list[0].obs_dim_retailer  # 21
+        # Observation dims from env (DC=28D, Retailer=22D)
+        self.max_obs_dim = self.env_list[0].obs_dim_dc           # 28 — largest obs dim
+        self.retailer_obs_dim = self.env_list[0].obs_dim_retailer # 22
 
         # Initialize empty lists
         self.action_space = []
@@ -273,9 +271,9 @@ class SubprocVecEnvMultiDC(object):
                 spaces.Box(low=0, high=1, shape=(self.max_obs_dim,), dtype=np.float32)
             )
             self.action_space.append(
-                spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
+                spaces.Box(low=0, high=70, shape=(self.action_dim,), dtype=np.float32)
             )
-        # Shared obs: concatenate all padded agent obs  27 * 17 = 459
+        # Shared obs: concatenate all padded agent obs  28 * 17 = 476
         total_obs_dim = self.max_obs_dim * self.num_agent
         self.share_observation_space = [
             spaces.Box(low=-np.inf, high=+np.inf, shape=(total_obs_dim,), dtype=np.float32)
@@ -405,16 +403,16 @@ class DummyVecEnvMultiDC(object):
         self.force_discrete_action = False
         
         
-        # Observation dims from env (DC=27D, Retailer=21D)
-        self.max_obs_dim = self.env_list[0].obs_dim_dc          # 27
-        self.retailer_obs_dim = self.env_list[0].obs_dim_retailer  # 21
+        # Observation dims from env (DC=28D, Retailer=22D)
+        self.max_obs_dim = self.env_list[0].obs_dim_dc           # 28
+        self.retailer_obs_dim = self.env_list[0].obs_dim_retailer # 22
 
         # Configure spaces
         self.action_space = []
         self.observation_space = []
         self.share_observation_space = []
 
-        self.action_dim = 6  # Uniform for all agents
+        self.action_dim = 3  # 3D: one order qty per SKU (uniform for all agents)
 
         for agent_id in range(self.num_agent):
             # All agents use max_obs_dim; retailers are zero-padded
@@ -422,10 +420,10 @@ class DummyVecEnvMultiDC(object):
                 spaces.Box(low=0, high=1, shape=(self.max_obs_dim,), dtype=np.float32)
             )
             self.action_space.append(
-                spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
+                spaces.Box(low=0, high=70, shape=(self.action_dim,), dtype=np.float32)
             )
 
-        total_obs_dim = self.max_obs_dim * self.num_agent  # 27 * 17 = 459
+        total_obs_dim = self.max_obs_dim * self.num_agent  # 28 * 17 = 476
         self.share_observation_space = [
             spaces.Box(low=-np.inf, high=+np.inf, shape=(total_obs_dim,), dtype=np.float32)
             for _ in range(self.num_agent)

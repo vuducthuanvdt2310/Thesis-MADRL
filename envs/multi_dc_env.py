@@ -219,18 +219,15 @@ class MultiDCInventoryEnv:
         self.obs_dim_retailer = self.n_skus * 7 + 1
         self.obs_space_retailer = spaces.Box(0, 1, (self.obs_dim_retailer,), dtype=np.float32)
         
-        # === UNIFORM ACTION SPACES FOR HAPPO COMPATIBILITY ===
-        # All agents have 6D continuous actions for uniformity.
-        # DC agents:       use action[0:3] (order qty per SKU from supplier)
-        #                  action[3:6] ignored
-        # Retailer agents: use action[0:3] (order qty per SKU from their ASSIGNED DC)
-        #                  action[3:6] ignored
+        # === UNIFORM 3D ACTION SPACE ===
+        # All agents use 3 continuous actions — one order quantity per SKU.
+        # DCs:      action[sku] = units to order from the supplier
+        # Retailers: action[sku] = units to order from their assigned DC
+        # With each retailer assigned to exactly one DC, 3D is sufficient for everyone.
         
-        self.action_dim = 6            # Uniform for all agents
-        self.action_dim_dc_used = 3    # DCs only use first 3
-        self.action_dim_retailer = 3   # Retailers only use first 3 (assigned DC)
+        self.action_dim = 3            # One per SKU (n_skus = 3)
         
-        # Uniform action space for all agents
+        # Uniform action space for all agents: [0, 70] per SKU
         self.action_space = spaces.Box(0, 70, (self.action_dim,), dtype=np.float32)
         
         # Combined spaces (uniform for compatibility)
@@ -297,10 +294,9 @@ class MultiDCInventoryEnv:
         
         Args:
             actions: {agent_id: action_array}
-                - ALL actions shape (6,) for uniformity
-                - DC actions: Only first 3 values used (order qty per SKU from supplier)
-                              Last 3 values ignored
-                - Retailer actions: All 6 values used [DC0_SKU0, DC0_SKU1, DC0_SKU2, DC1_SKU0, DC1_SKU1, DC1_SKU2]
+                - ALL actions shape (3,): one order quantity per SKU
+                - DC actions:      action[sku] = units to order from supplier
+                - Retailer actions: action[sku] = units to order from assigned DC
         
         Returns:
             observations, rewards, dones, infos
@@ -415,26 +411,24 @@ class MultiDCInventoryEnv:
     
     def _process_retailer_orders(self, actions: Dict[int, np.ndarray]) -> Dict:
         """
-        Parse retailer actions and register orders with their ASSIGNED DC only.
-        
-        Each retailer exclusively serves one DC (see self.retailer_to_dc).
-        action[0:3] = order quantities per SKU for the assigned DC.
-        action[3:6] = unused (kept for uniform 6D action space).
-        
+        Retailers place orders to their assigned DC.
+
+        Each retailer is permanently assigned to one DC (see dc_assignments in config).
+        action shape is 3D: action[sku] = units to order from the assigned DC.
+
         Returns:
             retailer_orders: {dc_id: {retailer_id: {sku: qty}}}
         """
         retailer_orders = {dc_id: {} for dc_id in self.dc_ids}
         
         for retailer_id in self.retailer_ids:
-            action = actions[retailer_id]  # Shape: (6,) but only [0:3] used
+            action = actions[retailer_id]  # Shape: (3,) — one value per SKU
             assigned_dc = self.retailer_to_dc[retailer_id]
             
-            # action[0:3] → order from assigned DC per SKU
+            # action[sku] → order qty for that SKU from assigned DC
             retailer_orders[assigned_dc][retailer_id] = {
                 sku: float(action[sku]) for sku in range(self.n_skus)
             }
-            # action[3:6] is deliberately unused (maintained for HAPPO buffer uniformity)
             
             # Track total order for logging
             self.last_actions[retailer_id] = float(np.sum(action[:self.n_skus]))

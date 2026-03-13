@@ -247,7 +247,7 @@ if __name__ == "__main__":
         print(f"Environments created: {envs.num_envs} parallel envs")
         print(f"Agents per env: {num_agents}")
         print(f"Observation spaces: DC=27D, Retailer=21D (zero-padded to 27D for GNN)")
-        print(f"Action spaces: DCs=3D active (6D buffer), Retailers=3D active (6D buffer)\n")
+        print(f"Action spaces: DCs=3D continuous, Retailers=3D continuous\n")
 
         config = {
             "all_args": all_args,
