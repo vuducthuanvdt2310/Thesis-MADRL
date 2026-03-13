@@ -97,6 +97,11 @@ rewards:
   sale_revenue_retailer: 5.0   # per unit of customer demand fulfilled (retailer)
   sale_revenue_dc: 2.0          # per unit shipped to retailers (DC)
 
+  # Alpha-weighted local + global reward mixing.
+  # Each agent's reward = (1 - alpha) * local + alpha * global_mean.
+  # 0.0 = purely local (old behaviour), 0.2 = recommended, 1.0 = purely global.
+  alpha: 0.2
+
 # Cost parameters (Unit: 10,000 VND)
 costs:
   # DC Costs (2 DCs x 3 SKUs)

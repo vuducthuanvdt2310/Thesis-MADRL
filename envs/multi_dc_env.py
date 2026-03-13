@@ -175,6 +175,13 @@ class MultiDCInventoryEnv:
         self.sale_revenue_retailer = float(rewards_cfg.get('sale_revenue_retailer', 5.0))
         self.sale_revenue_dc = float(rewards_cfg.get('sale_revenue_dc', 2.0))
 
+        # --- Alpha-weighted global reward mixing ---
+        # Each agent's final reward = (1 - alpha) * local + alpha * global_mean.
+        # alpha=0.0  → purely local (current default, backward-compatible).
+        # alpha=0.2  → recommended starting point from literature.
+        # alpha=1.0  → purely global (all agents share the mean reward).
+        self.reward_alpha = float(rewards_cfg.get('alpha', 0.0))
+
         # --- Bulk discount tiers for DC→Supplier orders ---
         discount_cfg = rewards_cfg.get('bulk_discount', {})
         self.bulk_discount_tiers = discount_cfg.get('tiers', [
@@ -783,6 +790,20 @@ class MultiDCInventoryEnv:
         # All relative cost ratios are preserved — incentive structure is unchanged.
         norm = float(self.max_days)
         rewards = {agent_id: r / norm for agent_id, r in rewards.items()}
+
+        # === Alpha-weighted local + global reward mixing ===
+        # Blends each agent's purely local reward with the system-wide mean reward.
+        # This encourages cooperative behaviour without losing the sharp local gradient.
+        # Controlled by self.reward_alpha (set via config key 'rewards.alpha'):
+        #   0.0 → purely local (default, backward-compatible)
+        #   0.2 → recommended starting point
+        #   1.0 → purely global
+        if self.reward_alpha > 0.0:
+            global_mean = sum(rewards.values()) / len(rewards)
+            rewards = {
+                agent_id: (1 - self.reward_alpha) * r + self.reward_alpha * global_mean
+                for agent_id, r in rewards.items()
+            }
 
         return rewards
 
