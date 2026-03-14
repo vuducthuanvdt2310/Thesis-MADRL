@@ -390,7 +390,8 @@ class GNNModelEvaluator:
 
         if save_trajectory:
             traj = {
-                'inventory': [[] for _ in range(self.n_agents)],
+                'inventory': [[] for _ in range(self.n_agents)],           # total inventory per agent
+                'inventory_skus': [[] for _ in range(self.n_agents)],      # per-SKU inventory per agent
                 'backlog': [[] for _ in range(self.n_agents)],
                 'actions': [[] for _ in range(self.n_agents)],
                 'rewards': [[] for _ in range(self.n_agents)],
@@ -511,13 +512,17 @@ class GNNModelEvaluator:
                     ep_data['backlog_costs'][agent_id] += b_cost
                     ep_data['ordering_costs'][agent_id] += o_cost
 
-                    inv = env_state.inventory[agent_id].sum()
+                    inv_vec = env_state.inventory[agent_id]
+                    inv = inv_vec.sum()
                     bl = env_state.backlog[agent_id].sum()
                     ep_data['avg_inventory'][agent_id] += inv
                     ep_data['avg_backlog'][agent_id] += bl
 
                     if save_trajectory:
                         traj['inventory'][agent_id].append(float(inv))
+                        traj['inventory_skus'][agent_id].append(
+                            np.array(inv_vec, dtype=float).copy()
+                        )
                         traj['backlog'][agent_id].append(float(bl))
                         traj['rewards'][agent_id].append(reward)
                         traj['actions'][agent_id].append(executed_actions[agent_id].copy())
@@ -684,6 +689,7 @@ class GNNModelEvaluator:
                 agent_label = f'{"DC" if aid < 2 else "Retailer"}_{aid}'
 
                 inv = traj['inventory'][aid][step]
+                inv_skus = np.array(traj['inventory_skus'][aid][step], dtype=float).flatten()
                 bl = traj['backlog'][aid][step]
                 rew = traj['rewards'][aid][step]
                 action_vec = np.array(traj['actions'][aid][step], dtype=float).flatten()
@@ -706,6 +712,10 @@ class GNNModelEvaluator:
                 # Add demand per SKU: demand_0, demand_1, ...
                 for idx, val in enumerate(demand_vec):
                     row[f'demand_{idx}'] = val
+
+                # Add per-SKU inventory: inv_sku_0, inv_sku_1, ...
+                for idx, val in enumerate(inv_skus):
+                    row[f'inv_sku_{idx}'] = val
 
                 rows.append(row)
 

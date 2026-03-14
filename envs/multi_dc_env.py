@@ -467,7 +467,7 @@ class MultiDCInventoryEnv:
             if agent_id in self.dc_ids:
                 clipped[agent_id] = np.clip(action, 0, 500)   # DC: 0 to 1000 units
             else:
-                clipped[agent_id] = np.clip(action, 35, 70)    # Retailer: 0 to 100 units
+                clipped[agent_id] = np.clip(action, 20, 70)    # Retailer: 0 to 100 units
         return clipped
 
 
