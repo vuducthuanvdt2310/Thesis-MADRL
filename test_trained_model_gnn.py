@@ -26,6 +26,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import json
+import pandas as pd
 
 from config import get_config
 from envs.env_wrappers import DummyVecEnvMultiDC
@@ -115,6 +116,14 @@ class GNNModelEvaluator:
 
         # 1. Create environment
         self.env = self._create_env()
+
+        # Infer number of SKUs from underlying MultiDC env (for logging demand etc.)
+        base_env_list = getattr(self.env, 'env_list', getattr(self.env, 'envs', None))
+        if base_env_list:
+            base_env = base_env_list[0]
+            self.n_skus = getattr(base_env, 'n_skus', 3)
+        else:
+            self.n_skus = 3
 
         # 2. Build graph adjacency
         self.adj_tensor = self._build_graph()
@@ -385,6 +394,7 @@ class GNNModelEvaluator:
                 'backlog': [[] for _ in range(self.n_agents)],
                 'actions': [[] for _ in range(self.n_agents)],
                 'rewards': [[] for _ in range(self.n_agents)],
+                'demand': [[] for _ in range(self.n_agents)],
             }
 
         for step in range(self.args.episode_length):
@@ -403,6 +413,7 @@ class GNNModelEvaluator:
                 obs_structured[0, aid, :d] = raw[0]
 
             actions_env = []
+            raw_actions = {}
             for agent_id in range(self.n_agents):
                 with torch.no_grad():
                     action, rnn_state = self.policies[agent_id].act(
@@ -424,10 +435,11 @@ class GNNModelEvaluator:
                     if isinstance(action, torch.Tensor)
                     else action
                 )
-                actions_env.append(action_np[0])
+                raw_action = action_np[0]
 
-                if save_trajectory:
-                    traj['actions'][agent_id].append(action_np[0].copy())
+                # Pass raw policy actions to the environment (it will clip them internally).
+                actions_env.append(raw_action)
+                raw_actions[agent_id] = raw_action.copy()
 
             # Step environment
             obs, rewards, dones, infos = self.env.step([actions_env])
@@ -437,6 +449,11 @@ class GNNModelEvaluator:
                                getattr(self.env, 'envs', None))
             if env_list:
                 env_state = env_list[0]
+
+                # Recompute the executed (clipped) actions so logging matches
+                # the exact quantities the environment used internally.
+                executed_actions = env_state._clip_actions(raw_actions)
+
                 for agent_id in range(self.n_agents):
                     reward = float(np.array(rewards[0][agent_id]).item())
                     cost = -reward
@@ -460,11 +477,11 @@ class GNNModelEvaluator:
                                 for r_id in env_state.dc_assignments[agent_id]
                             )
                             b_cost += dc_owed_sku * env_state.B_dc[dc_idx][sku]
-                            if actions_env[agent_id][sku] > 0:
+                            if executed_actions[agent_id][sku] > 0:
                                 # Use PRE-STEP price (matches _calculate_rewards inside step())
                                 price = pre_step_prices[sku] if pre_step_prices is not None else env_state.market_prices[sku]
                                 o_cost += (env_state.C_fixed_dc[dc_idx][sku]
-                                           + price * actions_env[agent_id][sku])
+                                           + price * executed_actions[agent_id][sku])
                     else:
                         r_idx = agent_id - 2
                         assigned_dc = env_state.retailer_to_dc[agent_id]
@@ -475,7 +492,7 @@ class GNNModelEvaluator:
                                        * env_state.B_retailer[r_idx][sku])
                             # Retailers use action[0:3] from their ASSIGNED DC only.
                             # action[3:6] is UNUSED (always zero — uniform 6D action space).
-                            order_qty = actions_env[agent_id][sku]
+                            order_qty = executed_actions[agent_id][sku]
                             if order_qty > 0:
                                 o_cost += (env_state.C_fixed_retailer[r_idx][sku]
                                            + env_state.C_var_retailer[r_idx][assigned_dc][sku] * order_qty)
@@ -503,6 +520,17 @@ class GNNModelEvaluator:
                         traj['inventory'][agent_id].append(float(inv))
                         traj['backlog'][agent_id].append(float(bl))
                         traj['rewards'][agent_id].append(reward)
+                        traj['actions'][agent_id].append(executed_actions[agent_id].copy())
+                        if agent_id < 2:
+                            # DC: no direct customer demand; log zeros per SKU
+                            demand_vec = np.zeros(self.n_skus, dtype=float)
+                        else:
+                            # Retailer: log per-SKU customer demand for this step
+                            demand_vec = np.array(
+                                env_state.step_demand.get(agent_id, np.zeros(self.n_skus, dtype=float)),
+                                dtype=float,
+                            )
+                        traj['demand'][agent_id].append(demand_vec.copy())
 
                 if step == self.args.episode_length - 1:
                     ep_data['final_inventory'] = [
@@ -554,6 +582,7 @@ class GNNModelEvaluator:
         self._save_metrics_json(stats)
         self._save_metrics_csv()
         self._create_visualizations(stats)
+        self._save_step_trajectory_excel()
         self._print_summary(stats)
         print(f'\n[OK] Report saved to: {self.save_dir}\n')
 
@@ -632,6 +661,58 @@ class GNNModelEvaluator:
         )
 
         return stats
+
+    def _save_step_trajectory_excel(self):
+        """
+        Save per-step, per-agent actions and state (inventory, backlog, reward)
+        for the first evaluated episode to an Excel file.
+
+        The file is named 'step_trajectory_ep1.xlsx' and stored in self.save_dir.
+        """
+        if not self.detailed_trajectory:
+            # No trajectory was recorded (e.g., evaluate() not called or episode_length=0)
+            return
+
+        traj = self.detailed_trajectory
+
+        # Infer number of steps from any agent's trajectory (they should all match)
+        num_steps = len(traj['inventory'][0])
+
+        rows = []
+        for step in range(num_steps):
+            for aid in range(self.n_agents):
+                agent_label = f'{"DC" if aid < 2 else "Retailer"}_{aid}'
+
+                inv = traj['inventory'][aid][step]
+                bl = traj['backlog'][aid][step]
+                rew = traj['rewards'][aid][step]
+                action_vec = np.array(traj['actions'][aid][step], dtype=float).flatten()
+                demand_vec = np.array(traj['demand'][aid][step], dtype=float).flatten()
+
+                row = {
+                    'episode': 1,              # we only record detailed trajectory for the first episode
+                    'step': step + 1,          # 1-based day index
+                    'agent_id': aid,
+                    'agent_label': agent_label,
+                    'inventory_total': inv,
+                    'backlog_total': bl,
+                    'reward': rew,
+                }
+
+                # Add action components as separate columns: action_0, action_1, ...
+                for idx, val in enumerate(action_vec):
+                    row[f'action_{idx}'] = val
+
+                # Add demand per SKU: demand_0, demand_1, ...
+                for idx, val in enumerate(demand_vec):
+                    row[f'demand_{idx}'] = val
+
+                rows.append(row)
+
+        df = pd.DataFrame(rows)
+        out_path = self.save_dir / 'step_trajectory_ep1.xlsx'
+        df.to_excel(out_path, index=False)
+        print(f'[OK] Saved per-step trajectory Excel: {out_path.name}')
 
     def _save_metrics_json(self, stats):
         path = self.save_dir / 'evaluation_metrics.json'

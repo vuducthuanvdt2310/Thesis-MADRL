@@ -2,6 +2,6 @@ tensorboard --logdir "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on
 
 python train_multi_dc_baseline.py --experiment_name "eval_best_model" --model_dir "results/05Mar_2base/run_seed_1"
 python train_multi_dc_gnn.py --experiment_name "gnn"
-python test_trained_model.py --model_dir "results\10Mar_base1\run_seed_1\models" --episode_length 365 --num_episodes 1 --experiment_name "eval_3months"
+python test_trained_model.py --model_dir "results\13Mar_base2_kaggle\run_seed_1\models" --episode_length 90 --num_episodes 1  --experiment_name "eval_base"
 
-python test_trained_model_gnn.py --model_dir "results/10Mar_gnn1/run_seed_1/models" --episode_length 365 --num_episodes 5 --experiment_name "eval_gnn_365"
+python test_trained_model_gnn.py --model_dir "results/14Mar_gnn1_colab/run_seed_1/models" --episode_length 90 --num_episodes 1 --experiment_name "eval_gnn3"
