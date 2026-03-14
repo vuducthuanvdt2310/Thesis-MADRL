@@ -367,10 +367,14 @@ class GNNModelEvaluator:
             'ordering_costs': [0.0] * self.n_agents,
             'avg_inventory': [0.0] * self.n_agents,
             'avg_backlog': [0.0] * self.n_agents,
-            # True demand fill-rate (retailers only)
+            # Retailer order-count Fill Rate SL
+            # An order = one (retailer, sku) demand event per step.
+            # Fulfilled from on-hand = demand fully covered without adding any backlog.
             'service_level': [0.0] * self.n_agents,
-            '_demand_total': [0.0] * self.n_agents,
-            '_demand_met':   [0.0] * self.n_agents,
+            '_orders_placed':     [0] * self.n_agents,  # total demand events (count)
+            '_orders_from_stock': [0] * self.n_agents,  # demand events fully met from on-hand
+            # DC Cycle SL: (orders_received - orders_with_backlog) / orders_received
+            'dc_cycle_service_level': {},   # {dc_id: float}
             'final_inventory': None,
             'final_backlog': None,
         }
@@ -449,8 +453,13 @@ class GNNModelEvaluator:
                         for sku in range(3):
                             h_cost += (env_state.inventory[agent_id][sku]
                                        * env_state.H_dc[dc_idx][sku])
-                            b_cost += (env_state.backlog[agent_id][sku]
-                                       * env_state.B_dc[dc_idx][sku])
+                            # DC's flat backlog[dc_id] is always 0 after per-retailer migration;
+                            # use the sum of dc_retailer_backlog across assigned retailers instead.
+                            dc_owed_sku = sum(
+                                env_state.dc_retailer_backlog[agent_id][r_id][sku]
+                                for r_id in env_state.dc_assignments[agent_id]
+                            )
+                            b_cost += dc_owed_sku * env_state.B_dc[dc_idx][sku]
                             if actions_env[agent_id][sku] > 0:
                                 # Use PRE-STEP price (matches _calculate_rewards inside step())
                                 price = pre_step_prices[sku] if pre_step_prices is not None else env_state.market_prices[sku]
@@ -471,20 +480,15 @@ class GNNModelEvaluator:
                                 o_cost += (env_state.C_fixed_retailer[r_idx][sku]
                                            + env_state.C_var_retailer[r_idx][assigned_dc][sku] * order_qty)
 
-                        # --- True service level: use exact demand_fulfilled tracked by env ---
-                        # demand_fulfilled[retailer_id][sku] is set precisely inside
-                        # _process_customer_demand() and supports partial fulfillment.
+                        # --- Retailer Order-Count Fill Rate ---
+                        # An order = one (retailer, sku) demand event per step.
+                        # Fulfilled from on-hand: demand[sku] covered WITHOUT shortage (no backlog added).
+                        # Read directly from env step_orders_placed / step_orders_from_stock.
                         for sku in range(3):
-                            actual_demand = 0.0
-                            if (sku < len(env_state.demand_history) and
-                                    r_idx < len(env_state.demand_history[sku]) and
-                                    len(env_state.demand_history[sku][r_idx]) > 0):
-                                actual_demand = float(env_state.demand_history[sku][r_idx][-1])
-                            ep_data['_demand_total'][agent_id] += actual_demand
-                            if agent_id in env_state.demand_fulfilled:
-                                ep_data['_demand_met'][agent_id] += float(
-                                    env_state.demand_fulfilled[agent_id][sku]
-                                )
+                            placed = env_state.step_orders_placed.get(agent_id, {}).get(sku, 0)
+                            from_stock = env_state.step_orders_from_stock.get(agent_id, {}).get(sku, 0)
+                            ep_data['_orders_placed'][agent_id]     += placed
+                            ep_data['_orders_from_stock'][agent_id] += from_stock
 
                     ep_data['holding_costs'][agent_id] += h_cost
                     ep_data['backlog_costs'][agent_id] += b_cost
@@ -510,19 +514,30 @@ class GNNModelEvaluator:
                         for i in range(self.n_agents)
                     ]
 
+            # Read DC Cycle SL from infos (populated by env every step)
+            info_dc_sl = infos[0][0].get('dc_cycle_service_level', {}) if infos and infos[0] else {}
+            ep_data['dc_cycle_service_level'] = {
+                int(dc_id): float(sl_val)
+                for dc_id, sl_val in info_dc_sl.items()
+            }
+
         # Normalise
         T = self.args.episode_length
         for agent_id in range(self.n_agents):
             ep_data['avg_inventory'][agent_id] /= T
             ep_data['avg_backlog'][agent_id] /= T
-            # True demand fill-rate for retailers; DC gets 100% (they rarely stockout)
             if agent_id >= 2:
-                total_d = ep_data['_demand_total'][agent_id]
+                # Retailer: order-count Fill Rate
+                # = orders fully met from on-hand / total orders placed (as %)
+                placed     = ep_data['_orders_placed'][agent_id]
+                from_stock = ep_data['_orders_from_stock'][agent_id]
                 ep_data['service_level'][agent_id] = (
-                    (ep_data['_demand_met'][agent_id] / total_d * 100.0) if total_d > 0 else 100.0
+                    (from_stock / placed * 100.0) if placed > 0 else 100.0
                 )
             else:
-                ep_data['service_level'][agent_id] = 100.0  # placeholder for DCs
+                # DC: use Cycle SL from env (filled last step of episode)
+                dc_sl_map = ep_data.get('dc_cycle_service_level', {})
+                ep_data['service_level'][agent_id] = dc_sl_map.get(agent_id, 100.0)
 
         if save_trajectory:
             self.detailed_trajectory = traj
@@ -562,10 +577,30 @@ class GNNModelEvaluator:
                 'max': float(np.max(arr('total_cost'))),
             },
             'per_agent': {},
+            # DC Cycle SL aggregated over episodes
+            'dc_cycle_service_level': {
+                dc_id: float(np.mean([
+                    m['dc_cycle_service_level'].get(dc_id, 100.0)
+                    for m in self.episode_metrics
+                ]))
+                for dc_id in range(2)
+            },
         }
 
         for aid in range(self.n_agents):
             label = f'{"DC" if aid < 2 else "Retailer"}_{aid}'
+
+            if aid >= 2:
+                # Retailer: pooled order-count fill rate across ALL episodes
+                # = total orders_from_stock / total orders_placed  (not average of per-ep %)
+                # Pooling is more accurate when episode SL variance is high.
+                total_placed     = sum(m['_orders_placed'][aid]     for m in self.episode_metrics)
+                total_from_stock = sum(m['_orders_from_stock'][aid] for m in self.episode_metrics)
+                pooled_sl = (total_from_stock / total_placed * 100.0) if total_placed > 0 else 100.0
+            else:
+                # DC: mean of per-episode cycle SL (already a cumulative episode value)
+                pooled_sl = float(np.mean([m['service_level'][aid] for m in self.episode_metrics]))
+
             stats['per_agent'][label] = {
                 'avg_reward': float(np.mean([m['agent_rewards'][aid]
                                              for m in self.episode_metrics])),
@@ -581,9 +616,21 @@ class GNNModelEvaluator:
                                                 for m in self.episode_metrics])),
                 'avg_backlog': float(np.mean([m['avg_backlog'][aid]
                                               for m in self.episode_metrics])),
-                'service_level': float(np.mean([m['service_level'][aid]
-                                                for m in self.episode_metrics])),
+                'service_level': pooled_sl,
             }
+
+        # System-wide retailer fill rate (pooled across all retailer agents and episodes)
+        total_placed_all     = sum(m['_orders_placed'][aid]
+                                   for m in self.episode_metrics
+                                   for aid in range(2, self.n_agents))
+        total_from_stock_all = sum(m['_orders_from_stock'][aid]
+                                   for m in self.episode_metrics
+                                   for aid in range(2, self.n_agents))
+        stats['system_retailer_fill_rate'] = (
+            (total_from_stock_all / total_placed_all * 100.0)
+            if total_placed_all > 0 else 100.0
+        )
+
         return stats
 
     def _save_metrics_json(self, stats):
@@ -765,14 +812,23 @@ class GNNModelEvaluator:
               f"(+/-{stats['total_cost']['std']:.2f})")
         print(f"Best reward   : {stats['total_reward']['max']:>14.2f}")
         print(f"Worst reward  : {stats['total_reward']['min']:>14.2f}")
+        # System-wide KPI: pooled fill rate across all retailers and all episodes
+        sys_fr = stats.get('system_retailer_fill_rate', 0.0)
+        print(f"Retailer Fill Rate (system): {sys_fr:>6.1f}%   <- KPI")
+        # DC Cycle SL
+        dc_csl = stats.get('dc_cycle_service_level', {})
+        for dc_id, csl_val in dc_csl.items():
+            print(f"DC_{dc_id} Cycle SL : {csl_val:>6.1f}%")
         print('-' * 70)
         print(f"{'Agent':<14} {'Avg Reward':>12} {'Avg Cost':>12} "
-              f"{'Holding':>12} {'Backlog':>12} {'Svc%':>8}")
+              f"{'Holding':>12} {'Backlog':>12} {'Svc%':>8} {'SL Type':>12}")
         print('-' * 70)
         for agent, data in stats['per_agent'].items():
+            is_dc  = agent.startswith('DC')
+            sl_type = 'Cycle SL' if is_dc else 'Fill-Rate'
             print(f"{agent:<14} {data['avg_reward']:>12.1f} {data['avg_cost']:>12.1f} "
                   f"{data['avg_holding_cost']:>12.1f} {data['avg_backlog_cost']:>12.1f} "
-                  f"{data['service_level']:>7.1f}%")
+                  f"{data['service_level']:>7.1f}% {sl_type:>12}")
         print('=' * 70)
 
 

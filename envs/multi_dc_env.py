@@ -112,11 +112,33 @@ class MultiDCInventoryEnv:
 
         # Per-step demand before fulfillment — used for SL calculation
         self.step_demand = {}   # {retailer_id: np.array(n_skus)}
+        # Per-step fresh-demand-met (separate from backlog clearance for correct SL)
+        self.step_demand_met = {}  # {retailer_id: np.array(n_skus)}
+
+        # ── DC per-retailer backlog (replaces flat dc backlog for downstream shortfalls) ──
+        # dc_retailer_backlog[dc_id][retailer_id] = {sku: float}  (units owed to that retailer)
+        self.dc_retailer_backlog = {}
+
+        # ── DC Cycle Service Level tracking ──
+        # Cycle SL = (orders received - orders that triggered any backlog) / orders received
+        # Tracked per DC across the entire episode.
+        self.dc_cycle_sl_orders_received  = {}  # {dc_id: int}  total retailer orders sent to DC
+        self.dc_cycle_sl_orders_no_backlog = {}  # {dc_id: int}  orders fulfilled without any backlog
 
         # Rolling service level tracking
         # sl_history[retailer_id] = deque of (fulfilled, demanded) tuples (last 7 steps)
         self.sl_history = {}   # {retailer_id: {'fulfilled': list, 'demanded': list}}
         self.episode_sl = 0.0  # Tracks whole-episode SL for infos
+
+        # ── Order-count Fill Rate tracking (retailer level) ──
+        # An "order" = one (retailer, sku) demand event per step.
+        # Fulfilled from on-hand = demand[sku] covered ENTIRELY without adding to backlog.
+        # step trackers (reset each step)
+        self.step_orders_placed      = {}  # {retailer_id: {sku: int}}  orders placed this step
+        self.step_orders_from_stock  = {}  # {retailer_id: {sku: int}}  fully met from on-hand
+        # episode accumulators (reset each episode)
+        self.ep_orders_placed     = 0  # cumulative across all retailers, SKUs, steps
+        self.ep_orders_from_stock = 0  # cumulative orders fully met from on-hand
 
         # Market price tracking (for DCs ordering from supplier)
         self.market_prices = None
@@ -235,7 +257,7 @@ class MultiDCInventoryEnv:
         self.action_dim = 3            # One per SKU (n_skus = 3)
         
         # Uniform action space for all agents: [0, 70] per SKU
-        self.action_space = spaces.Box(0, 70, (self.action_dim,), dtype=np.float32)
+        self.action_space = spaces.Box(40, 70, (self.action_dim,), dtype=np.float32)
         
         # Combined spaces (uniform for compatibility)
         self.observation_spaces = {
@@ -280,11 +302,28 @@ class MultiDCInventoryEnv:
             self.demand_fulfilled[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
             self.dc_fulfilled[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
             self.step_demand[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
+            self.step_demand_met[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
+
+        # Initialize DC per-retailer backlog and cycle-SL counters
+        for dc_id in self.dc_ids:
+            self.dc_retailer_backlog[dc_id] = {
+                r_id: {sku: 0.0 for sku in range(self.n_skus)}
+                for r_id in self.retailer_ids
+            }
+            self.dc_cycle_sl_orders_received[dc_id]   = 0
+            self.dc_cycle_sl_orders_no_backlog[dc_id] = 0
 
         # Initialize rolling service level history
         for retailer_id in self.retailer_ids:
             self.sl_history[retailer_id] = {'fulfilled': [], 'demanded': []}
         self.episode_sl = 0.0
+
+        # Initialize order-count fill rate trackers
+        for retailer_id in self.retailer_ids:
+            self.step_orders_placed[retailer_id]     = {sku: 0 for sku in range(self.n_skus)}
+            self.step_orders_from_stock[retailer_id] = {sku: 0 for sku in range(self.n_skus)}
+        self.ep_orders_placed     = 0
+        self.ep_orders_from_stock = 0
 
         # demand stats are pre-computed at __init__; no need to reload CSV every episode
 
@@ -364,21 +403,39 @@ class MultiDCInventoryEnv:
         dones = {i: done for i in range(self.n_agents)}
         
         # === PHASE 10: Compute step and episode service level ===
-        step_total_demand    = 0.0
-        step_total_fulfilled = 0.0
+        # Order-count Fill Rate: orders fully met from on-hand / total orders placed
+        # (Quantity-based step_demand_met kept for rolling obs signal — not changed)
+        step_orders_placed     = 0
+        step_orders_from_stock = 0
         for retailer_id in self.retailer_ids:
-            step_total_demand    += float(np.sum(self.step_demand[retailer_id]))
-            step_total_fulfilled += float(np.sum(self.demand_fulfilled[retailer_id]))
+            for sku in range(self.n_skus):
+                step_orders_placed     += self.step_orders_placed[retailer_id][sku]
+                step_orders_from_stock += self.step_orders_from_stock[retailer_id][sku]
 
-        step_sl = (step_total_fulfilled / step_total_demand) if step_total_demand > 0 else 1.0
+        step_sl = (
+            step_orders_from_stock / step_orders_placed
+            if step_orders_placed > 0 else 1.0
+        )
 
-        # Running episode average: exponential moving with simple accumulation
-        alpha = 1.0 / self.current_day  # decays as more steps accumulate
-        self.episode_sl = self.episode_sl + alpha * (step_sl - self.episode_sl)
+        # Accumulate into episode fill rate
+        self.ep_orders_placed     += step_orders_placed
+        self.ep_orders_from_stock += step_orders_from_stock
+        episode_fill_rate = (
+            self.ep_orders_from_stock / self.ep_orders_placed
+            if self.ep_orders_placed > 0 else 1.0
+        )
+
+        # Cycle Service Level per DC
+        dc_cycle_sl = {}
+        for dc_id in self.dc_ids:
+            received   = self.dc_cycle_sl_orders_received[dc_id]
+            no_backlog = self.dc_cycle_sl_orders_no_backlog[dc_id]
+            dc_cycle_sl[dc_id] = (no_backlog / received * 100.0) if received > 0 else 100.0
 
         infos = {i: {
-            'step_service_level':    step_sl,
-            'episode_service_level': self.episode_sl,
+            'step_service_level':    step_sl,          # order-count fill rate this step
+            'episode_service_level': episode_fill_rate, # cumulative order-count fill rate
+            'dc_cycle_service_level': dc_cycle_sl,
         } for i in range(self.n_agents)}
         
         return observations, rewards, dones, infos
@@ -448,8 +505,18 @@ class MultiDCInventoryEnv:
     
     def _fulfill_retailer_orders(self, retailer_orders: Dict):
         """
-        DCs fulfill retailer orders with proportional rationing if needed.
-        Tracks dc_fulfilled[dc_id][sku] for the sale revenue bonus.
+        DCs fulfill retailer orders per-retailer with a per-retailer backlog.
+
+        Fulfillment rules:
+          - If the DC has enough stock: ship the full order; no backlog added.
+          - If the DC is short: ship all available stock proportionally; the
+            unfulfilled remainder is added to dc_retailer_backlog[dc_id][retailer_id]
+            (per-retailer, NOT aggregated into a single flat DC backlog).
+
+        Cycle Service Level is updated here:
+          - Each (retailer, sku) order that arrives counts as one order received.
+          - An order is "fulfilled without backlog" only if the entire qty is shipped
+            immediately (no partial).
 
         Args:
             retailer_orders: {dc_id: {retailer_id: {sku: qty}}}
@@ -462,42 +529,54 @@ class MultiDCInventoryEnv:
             dc_orders = retailer_orders[dc_id]
 
             for sku in range(self.n_skus):
-                # Calculate total demand for this SKU
+                # Total requested qty for this SKU across all retailers of this DC
                 total_demand = sum(
-                    retailer_orders[sku] for retailer_orders in dc_orders.values()
+                    orders[sku] for orders in dc_orders.values()
                 )
+
+                if total_demand == 0:
+                    continue  # No orders this step for this sku
 
                 available = self.inventory[dc_id][sku]
 
-                if total_demand == 0:
-                    continue  # No orders
-
                 if available >= total_demand:
-                    # Fulfill all orders completely
+                    # ── Full fulfillment ──
                     for retailer_id, orders in dc_orders.items():
                         qty = orders[sku]
                         if qty > 0:
-                            self._ship_to_retailer(dc_id, retailer_id, sku, qty, lead_time_sample=True)
+                            self._ship_to_retailer(dc_id, retailer_id, sku, qty,
+                                                   lead_time_sample=True)
                             self.inventory[dc_id][sku] -= qty
-                            self.dc_fulfilled[dc_id][sku] += qty  # track fulfilled
+                            self.dc_fulfilled[dc_id][sku] += qty
+                            # Cycle SL: order fulfilled without any backlog
+                            self.dc_cycle_sl_orders_received[dc_id]   += 1
+                            self.dc_cycle_sl_orders_no_backlog[dc_id] += 1
                 else:
-                    # RATIONING: Proportional fulfillment
+                    # ── Proportional rationing — per-retailer backlog ──
                     for retailer_id, orders in dc_orders.items():
                         qty_ordered = orders[sku]
+                        if qty_ordered == 0:
+                            continue
 
-                        if qty_ordered > 0:
-                            ratio = qty_ordered / total_demand
-                            fulfilled_qty = available * ratio
-                            unfulfilled_qty = qty_ordered - fulfilled_qty
+                        # Count as one order received
+                        self.dc_cycle_sl_orders_received[dc_id] += 1
 
-                            if fulfilled_qty > 0:
-                                self._ship_to_retailer(dc_id, retailer_id, sku, fulfilled_qty, lead_time_sample=True)
-                                self.dc_fulfilled[dc_id][sku] += fulfilled_qty  # track fulfilled
+                        ratio = qty_ordered / total_demand
+                        # Each retailer gets a proportional share of what's available
+                        fulfilled_qty   = available * ratio
+                        unfulfilled_qty = qty_ordered - fulfilled_qty
 
-                            if unfulfilled_qty > 0:
-                                self.backlog[dc_id][sku] += unfulfilled_qty
+                        if fulfilled_qty > 0:
+                            self._ship_to_retailer(dc_id, retailer_id, sku,
+                                                   fulfilled_qty, lead_time_sample=True)
+                            self.dc_fulfilled[dc_id][sku] += fulfilled_qty
 
-                    # DC inventory depleted
+                        if unfulfilled_qty > 0:
+                            # Add to per-retailer backlog (NOT the flat DC backlog)
+                            self.dc_retailer_backlog[dc_id][retailer_id][sku] += unfulfilled_qty
+                            # This order triggered a backlog — do NOT increment no_backlog counter
+
+                    # DC inventory for this sku is fully depleted
                     self.inventory[dc_id][sku] = 0
     
     def _ship_to_retailer(self, dc_id: int, retailer_id: int, sku: int, qty: float, lead_time_sample: bool = True):
@@ -554,34 +633,70 @@ class MultiDCInventoryEnv:
             self.last_actions[dc_id] = np.sum(action[:self.n_skus])
     
     def _process_arrivals(self):
-        """Process all pipeline arrivals for all agents."""
+        """Process all pipeline arrivals for all agents.
+
+        For DCs: after adding arriving stock, automatically fulfil any
+        outstanding per-retailer backlog (dc_retailer_backlog) before new
+        retailer orders are placed.  This ensures that retailers who were
+        shorted in a previous step receive their goods as soon as the DC
+        is restocked.
+        """
         for agent_id in range(self.n_agents):
             # Find orders arriving today
             arrived = [order for order in self.pipeline[agent_id]
                       if order['arrival_day'] == self.current_day]
-            
+
             # Add to inventory
             for order in arrived:
                 self.inventory[agent_id][order['sku']] += order['qty']
-            
+
             # Remove arrived orders from pipeline
             self.pipeline[agent_id] = [order for order in self.pipeline[agent_id]
                                        if order['arrival_day'] > self.current_day]
+
+            # ── DC restocking: auto-fulfill outstanding per-retailer backlogs ──
+            if agent_id in self.dc_ids:
+                dc_id = agent_id
+                for retailer_id in self.retailer_ids:
+                    for sku in range(self.n_skus):
+                        owed = self.dc_retailer_backlog[dc_id][retailer_id][sku]
+                        if owed <= 0:
+                            continue
+                        avail = self.inventory[dc_id][sku]
+                        if avail <= 0:
+                            continue
+                        # Ship as much of the backlog as currently available
+                        ship_qty = min(owed, avail)
+                        self._ship_to_retailer(dc_id, retailer_id, sku,
+                                               ship_qty, lead_time_sample=True)
+                        self.dc_fulfilled[dc_id][sku]                         += ship_qty
+                        self.inventory[dc_id][sku]                            -= ship_qty
+                        self.dc_retailer_backlog[dc_id][retailer_id][sku]    -= ship_qty
     
     def _process_customer_demand(self):
         """Process customer demand at retailer level.
 
-        Key change: existing backlog is cleared FIRST using available inventory
-        before new demand is served.  This makes the MDP recoverable — agents
-        learn that replenishing stock erases past penalties, creating a clear
-        incentive to order aggressively after a stockout.
+        Service-Level calculation design:
+          - `step_demand`     : today's FRESH customer demand (denominator of SL).
+          - `step_demand_met` : units of TODAY'S fresh demand actually fulfilled
+                               (numerator of Fill-Rate SL).  Backlog clearance
+                               is intentionally excluded from the numerator so
+                               that SL measures the fraction of new demand served,
+                               not historical recovery.
+          - `demand_fulfilled`: total units served this step (fresh + backlog
+                               clearance) — used for the SALE REVENUE bonus only.
 
-        Tracks demand_fulfilled and step_demand for service-level calculation.
+        Backlog is still cleared first (before serving fresh demand) so that
+        agents learn that restocking recovers past shortfalls.
         """
         # Reset per-step trackers
         for retailer_id in self.retailer_ids:
             self.demand_fulfilled[retailer_id] = np.zeros(self.n_skus, dtype=np.float32)
-            self.step_demand[retailer_id]       = np.zeros(self.n_skus, dtype=np.float32)
+            self.step_demand_met[retailer_id]   = np.zeros(self.n_skus, dtype=np.float32)
+            self.step_demand[retailer_id]        = np.zeros(self.n_skus, dtype=np.float32)
+            # Reset order-count fill rate step trackers
+            self.step_orders_placed[retailer_id]     = {sku: 0 for sku in range(self.n_skus)}
+            self.step_orders_from_stock[retailer_id] = {sku: 0 for sku in range(self.n_skus)}
 
         for retailer_idx, retailer_id in enumerate(self.retailer_ids):
             demand = self._get_demand(retailer_idx, self.current_day)
@@ -599,23 +714,38 @@ class MultiDCInventoryEnv:
                 avail = self.inventory[retailer_id][sku]
 
                 # ── Step A: Clear existing backlog with available inventory ──
-                # If there is backlog from prior stockouts and we now have stock,
-                # fulfil the backlog first.  This removes the permanent-penalty
-                # death-spiral and teaches agents that restocking pays off.
+                # Backlog clearance earns sale revenue but is NOT counted in SL
+                # numerator (step_demand_met) because it satisfies PAST demand,
+                # not today's fresh demand.
                 if self.backlog[retailer_id][sku] > 0 and avail > 0:
                     backlog_cleared = min(self.backlog[retailer_id][sku], avail)
                     avail -= backlog_cleared
                     self.backlog[retailer_id][sku] -= backlog_cleared
-                    # Count cleared backlog as fulfilled demand (service recovery)
+                    # Only goes to demand_fulfilled (revenue), NOT step_demand_met (SL)
                     self.demand_fulfilled[retailer_id][sku] += backlog_cleared
+
+                # ── Order-count Fill Rate: check BEFORE touching inventory for fresh demand ──
+                # avail at this point = on-hand stock available for today's fresh order
+                # (after old backlog was already cleared above).
+                if demand[sku] > 0:
+                    self.step_orders_placed[retailer_id][sku] = 1  # one order this step per sku
+                    if avail >= demand[sku]:
+                        # Demand fully covered from on-hand — no backlog needed
+                        self.step_orders_from_stock[retailer_id][sku] = 1
+                    else:
+                        # Demand partially or fully unmet — backlog will be added
+                        self.step_orders_from_stock[retailer_id][sku] = 0
 
                 # ── Step B: Serve today's fresh customer demand ──
                 if avail >= demand[sku]:
                     avail -= demand[sku]
-                    self.demand_fulfilled[retailer_id][sku] += demand[sku]  # fully met
+                    # Fresh demand served: counted in BOTH revenue AND SL numerator
+                    self.demand_fulfilled[retailer_id][sku] += demand[sku]
+                    self.step_demand_met[retailer_id][sku]   += demand[sku]
                 else:
-                    # Partial fulfillment on today's demand
+                    # Partial: avail < demand
                     self.demand_fulfilled[retailer_id][sku] += avail
+                    self.step_demand_met[retailer_id][sku]   += avail
                     shortage = demand[sku] - avail
                     avail = 0
                     self.backlog[retailer_id][sku] += shortage
@@ -623,9 +753,10 @@ class MultiDCInventoryEnv:
                 self.inventory[retailer_id][sku] = avail
 
             # ── Update rolling SL history (last 7 steps) for observation feature ──
+            # Use only fresh-demand numerator/denominator for the rolling SL signal.
             step_demanded  = float(np.sum(self.step_demand[retailer_id]))
-            step_fulfilled = float(np.sum(self.demand_fulfilled[retailer_id]))
-            self.sl_history[retailer_id]['fulfilled'].append(step_fulfilled)
+            step_fresh_met = float(np.sum(self.step_demand_met[retailer_id]))
+            self.sl_history[retailer_id]['fulfilled'].append(step_fresh_met)
             self.sl_history[retailer_id]['demanded'].append(step_demanded)
             # Keep only most recent 7 steps
             if len(self.sl_history[retailer_id]['fulfilled']) > 7:
@@ -731,7 +862,13 @@ class MultiDCInventoryEnv:
 
             for sku in range(self.n_skus):
                 holding  = self.H_dc[dc_id][sku] * self.inventory[dc_id][sku]
-                backlog  = self.B_dc[dc_id][sku] * self.backlog[dc_id][sku]
+                # DC backlog cost: penalise the total quantity still owed to retailers
+                # (dc_retailer_backlog replaced the old flat backlog[dc_id] which is now 0)
+                total_owed_sku = sum(
+                    self.dc_retailer_backlog[dc_id][r_id][sku]
+                    for r_id in self.dc_assignments[dc_id]
+                )
+                backlog  = self.B_dc[dc_id][sku] * total_owed_sku
 
                 order_qty = actions[dc_id][sku]
                 if order_qty > 0:
@@ -848,8 +985,14 @@ class MultiDCInventoryEnv:
             # Realistic ceiling: ~1000 units (25 days x 70 / ~2 cycle overlap).
             obs.append(self.inventory[dc_id][sku] / 1000.0)
             
-            # 2. DC Backlog (failure-state signal; chronic large backlog = bad policy)
-            obs.append(self.backlog[dc_id][sku] / 100.0)
+            # 2. DC total owed to retailers (per-retailer backlog sum for this SKU)
+            # Replaces flat backlog[dc_id] which is always 0 after the per-retailer backlog migration.
+            # A non-zero value means the DC shipped partial orders; tells the agent to reorder fast.
+            total_owed_sku = sum(
+                self.dc_retailer_backlog[dc_id][r_id][sku]
+                for r_id in self.dc_assignments[dc_id]
+            )
+            obs.append(total_owed_sku / 100.0)
             
             # 3-5. Pipeline bins aligned with Uniform[7, 14] lead time (new config).
             # Arrivals expected between day+7 and day+14.
@@ -860,14 +1003,14 @@ class MultiDCInventoryEnv:
             pipeline_13_14 = sum(o['qty'] for o in self.pipeline[dc_id]
                                if o['sku'] == sku and self.current_day + 13 <= o['arrival_day'] <= self.current_day + 14)
             
-            obs.append(pipeline_7_9  / 70.0)   # 3-day window early
-            obs.append(pipeline_10_12 / 70.0)  # 3-day window mid
-            obs.append(pipeline_13_14 / 70.0)  # 2-day window late
+            obs.append(pipeline_7_9  / 500.0)   # 3-day window early  (norm by DC max order cap)
+            obs.append(pipeline_10_12 / 500.0)  # 3-day window mid
+            obs.append(pipeline_13_14 / 500.0)  # 2-day window late
             
             # 6. Total DC pipeline
-            # Max lead time=14, max order=70/step -> ceiling ~980; use 1000 for safety.
+            # Max lead time=14, max DC order=500/step → ceiling ~7000; use 7000 for safety.
             total_pipeline = sum(o['qty'] for o in self.pipeline[dc_id] if o['sku'] == sku)
-            obs.append(total_pipeline / 1000.0)
+            obs.append(total_pipeline / 7000.0)
             
             # 7. Current market price (normalized by its own price ceiling)
             obs.append(self.market_prices[sku] / self.price_bounds['max'][sku])
