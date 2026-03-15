@@ -92,10 +92,13 @@ class Categorical(nn.Module):
 #         return FixedNormal(action_mean, action_logstd.exp())
 
 class DiagGaussian(nn.Module):
-    def __init__(self, num_inputs, num_outputs, use_orthogonal=True, gain=0.01, args=None):
+    def __init__(self, num_inputs, num_outputs, use_orthogonal=True, gain=0.01, args=None, action_low=None, action_range=None):
         super(DiagGaussian, self).__init__()
 
         init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][use_orthogonal]
+
+        self.action_low = action_low
+        self.action_range = action_range
 
         def init_(m):
             return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain)
@@ -112,8 +115,15 @@ class DiagGaussian(nn.Module):
 
     def forward(self, x, available_actions=None):
         action_mean = self.fc_mean(x)
+        
+        if self.action_low is not None and self.action_range is not None:
+            tanh_out = torch.tanh(action_mean)
+            action_mean_scaled = self.action_low + ((tanh_out + 1.0) / 2.0) * self.action_range
+        else:
+            action_mean_scaled = action_mean
+            
         action_std = torch.sigmoid(self.log_std / self.std_x_coef) * self.std_y_coef
-        return FixedNormal(action_mean, action_std)
+        return FixedNormal(action_mean_scaled, action_std)
 
 class Bernoulli(nn.Module):
     def __init__(self, num_inputs, num_outputs, use_orthogonal=True, gain=0.01):

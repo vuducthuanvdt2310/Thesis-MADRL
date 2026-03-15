@@ -256,8 +256,12 @@ class MultiDCInventoryEnv:
         
         self.action_dim = 3            # One per SKU (n_skus = 3)
         
-        # Uniform action space for all agents: [0, 70] per SKU
-        self.action_space = spaces.Box(20, 70, (self.action_dim,), dtype=np.float32)
+        # Action space bounds for DCs and Retailers
+        self.action_space_dc = spaces.Box(0, 500, (self.action_dim,), dtype=np.float32)
+        self.action_space_retailer = spaces.Box(20, 70, (self.action_dim,), dtype=np.float32)
+
+        # Uniform action space for compatibility
+        self.action_space = spaces.Box(0, 500, (self.action_dim,), dtype=np.float32)
         
         # Combined spaces (uniform for compatibility)
         self.observation_spaces = {
@@ -266,7 +270,7 @@ class MultiDCInventoryEnv:
         }
         
         self.action_spaces = {
-            i: self.action_space  # Same for all agents now
+            i: self.action_space_dc if i in self.dc_ids else self.action_space_retailer
             for i in range(self.n_agents)
         }
     
