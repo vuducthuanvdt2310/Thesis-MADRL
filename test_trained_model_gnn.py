@@ -522,7 +522,16 @@ class GNNModelEvaluator:
 
                     inv_vec = env_state.inventory[agent_id]
                     inv = inv_vec.sum()
-                    bl = env_state.backlog[agent_id].sum()
+                    
+                    if is_dc:
+                        # DC: aggregate per-retailer backlog
+                        bl = sum(
+                            sum(env_state.dc_retailer_backlog[agent_id][r_id].values())
+                            for r_id in env_state.dc_assignments[agent_id]
+                        )
+                    else:
+                        bl = env_state.backlog[agent_id].sum()
+                        
                     ep_data['avg_inventory'][agent_id] += inv
                     ep_data['avg_backlog'][agent_id] += bl
 
