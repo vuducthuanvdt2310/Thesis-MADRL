@@ -396,6 +396,14 @@ class GNNModelEvaluator:
                 'actions': [[] for _ in range(self.n_agents)],
                 'rewards': [[] for _ in range(self.n_agents)],
                 'demand': [[] for _ in range(self.n_agents)],
+                # Normalized (same scales as env obs): demand, inventory, order qty for retailers
+                'norm_demand': [[] for _ in range(self.n_agents)],
+                'norm_inventory': [[] for _ in range(self.n_agents)],
+                'norm_order': [[] for _ in range(self.n_agents)],
+                # SL: order-count fill rate (0/1 per SKU per step)
+                'orders_placed': [[] for _ in range(self.n_agents)],
+                'orders_from_stock': [[] for _ in range(self.n_agents)],
+                'norm_scales': None,  # set once from env (demand_cap, inv_scale, order range)
             }
 
         for step in range(self.args.episode_length):
@@ -537,6 +545,51 @@ class GNNModelEvaluator:
                             )
                         traj['demand'][agent_id].append(demand_vec.copy())
 
+                        # Normalized demand, inventory, order (same scales as env obs; retailers only)
+                        # Demand: cap = mean + 3*std per SKU (from _get_retailer_observation)
+                        # Inventory: retailer own inv / 150.0
+                        # Order: (qty - 20) / 50 for retailer [20, 70] -> [0, 1]
+                        if agent_id < 2:
+                            traj['norm_demand'][agent_id].append(np.zeros(self.n_skus, dtype=float))
+                            traj['norm_inventory'][agent_id].append(np.zeros(self.n_skus, dtype=float))
+                            traj['norm_order'][agent_id].append(np.zeros(self.n_skus, dtype=float))
+                        else:
+                            dm = getattr(env_state, 'demand_mean', np.ones(self.n_skus) * 1.5)
+                            ds = getattr(env_state, 'demand_std', np.ones(self.n_skus) * 1.0)
+                            demand_cap = np.maximum(dm + 3.0 * ds, 1e-6)
+                            norm_d = (demand_vec / demand_cap).astype(float)
+                            norm_inv = (np.array(inv_vec, dtype=float) / 150.0)
+                            act = executed_actions[agent_id]
+                            norm_ord = np.clip((np.array(act, dtype=float) - 20.0) / 50.0, 0.0, 1.0)
+                            traj['norm_demand'][agent_id].append(norm_d)
+                            traj['norm_inventory'][agent_id].append(norm_inv)
+                            traj['norm_order'][agent_id].append(norm_ord)
+
+                        op = [env_state.step_orders_placed.get(agent_id, {}).get(s, 0) for s in range(self.n_skus)]
+                        ofs = [env_state.step_orders_from_stock.get(agent_id, {}).get(s, 0) for s in range(self.n_skus)]
+                        traj['orders_placed'][agent_id].append(np.array(op, dtype=float))
+                        traj['orders_from_stock'][agent_id].append(np.array(ofs, dtype=float))
+
+                        # Store normalization scales once (from env; same as used in obs)
+                        if traj['norm_scales'] is None and hasattr(env_state, 'demand_mean'):
+                            dm = np.array(env_state.demand_mean, dtype=float).flatten()
+                            ds = np.array(env_state.demand_std, dtype=float).flatten()
+                            traj['norm_scales'] = {
+                                'demand_mean_0': float(dm[0]) if len(dm) > 0 else 0,
+                                'demand_mean_1': float(dm[1]) if len(dm) > 1 else 0,
+                                'demand_mean_2': float(dm[2]) if len(dm) > 2 else 0,
+                                'demand_std_0': float(ds[0]) if len(ds) > 0 else 0,
+                                'demand_std_1': float(ds[1]) if len(ds) > 1 else 0,
+                                'demand_std_2': float(ds[2]) if len(ds) > 2 else 0,
+                                'demand_cap_0': float(dm[0] + 3 * ds[0]) if len(dm) > 0 else 0,
+                                'demand_cap_1': float(dm[1] + 3 * ds[1]) if len(dm) > 1 else 0,
+                                'demand_cap_2': float(dm[2] + 3 * ds[2]) if len(dm) > 2 else 0,
+                                'inv_scale_retailer': 150.0,
+                                'backlog_scale_retailer': 100.0,
+                                'order_min_retailer': 20.0,
+                                'order_max_retailer': 70.0,
+                            }
+
                 if step == self.args.episode_length - 1:
                     ep_data['final_inventory'] = [
                         float(env_state.inventory[i].sum())
@@ -669,60 +722,81 @@ class GNNModelEvaluator:
 
     def _save_step_trajectory_excel(self):
         """
-        Save per-step, per-agent actions and state (inventory, backlog, reward)
-        for the first evaluated episode to an Excel file.
-
-        The file is named 'step_trajectory_ep1.xlsx' and stored in self.save_dir.
+        Save one Excel with two sheets:
+          - Data: step, agent, state (inv, backlog), demand, action, normalized values, SL (step + cum).
+          - Scales: normalization constants (demand_cap, inv_scale, order range) for train/test check.
+        SL = order-count fill rate: cum_sl_pct = 100 * cum_orders_from_stock / cum_orders_placed (retailers).
         """
         if not self.detailed_trajectory:
-            # No trajectory was recorded (e.g., evaluate() not called or episode_length=0)
             return
 
         traj = self.detailed_trajectory
-
-        # Infer number of steps from any agent's trajectory (they should all match)
         num_steps = len(traj['inventory'][0])
+        cum_orders_placed = {aid: 0 for aid in range(self.n_agents)}
+        cum_orders_from_stock = {aid: 0 for aid in range(self.n_agents)}
 
         rows = []
         for step in range(num_steps):
             for aid in range(self.n_agents):
-                agent_label = f'{"DC" if aid < 2 else "Retailer"}_{aid}'
-
                 inv = traj['inventory'][aid][step]
-                inv_skus = np.array(traj['inventory_skus'][aid][step], dtype=float).flatten()
                 bl = traj['backlog'][aid][step]
-                rew = traj['rewards'][aid][step]
                 action_vec = np.array(traj['actions'][aid][step], dtype=float).flatten()
                 demand_vec = np.array(traj['demand'][aid][step], dtype=float).flatten()
+                norm_d = np.array(traj['norm_demand'][aid][step], dtype=float).flatten()
+                norm_inv = np.array(traj['norm_inventory'][aid][step], dtype=float).flatten()
+                norm_ord = np.array(traj['norm_order'][aid][step], dtype=float).flatten()
+                op_vec = np.array(traj['orders_placed'][aid][step], dtype=float).flatten()
+                ofs_vec = np.array(traj['orders_from_stock'][aid][step], dtype=float).flatten()
+
+                step_placed = int(np.sum(op_vec))
+                step_from_stock = int(np.sum(ofs_vec))
+                cum_orders_placed[aid] += step_placed
+                cum_orders_from_stock[aid] += step_from_stock
+                cum_placed = cum_orders_placed[aid]
+                cum_from_stock = cum_orders_from_stock[aid]
 
                 row = {
-                    'episode': 1,              # we only record detailed trajectory for the first episode
-                    'step': step + 1,          # 1-based day index
+                    'step': step + 1,
                     'agent_id': aid,
-                    'agent_label': agent_label,
-                    'inventory_total': inv,
-                    'backlog_total': bl,
-                    'reward': rew,
+                    'agent': f'{"DC" if aid < 2 else "R"}_{aid}',
+                    'inv': inv,
+                    'backlog': bl,
+                    'reward': traj['rewards'][aid][step],
                 }
-
-                # Add action components as separate columns: action_0, action_1, ...
-                for idx, val in enumerate(action_vec):
-                    row[f'action_{idx}'] = val
-
-                # Add demand per SKU: demand_0, demand_1, ...
-                for idx, val in enumerate(demand_vec):
-                    row[f'demand_{idx}'] = val
-
-                # Add per-SKU inventory: inv_sku_0, inv_sku_1, ...
-                for idx, val in enumerate(inv_skus):
-                    row[f'inv_sku_{idx}'] = val
-
+                for i in range(self.n_skus):
+                    row[f'demand_{i}'] = demand_vec[i] if i < len(demand_vec) else 0
+                    row[f'order_{i}'] = action_vec[i] if i < len(action_vec) else 0
+                    row[f'norm_d_{i}'] = round(norm_d[i], 4) if i < len(norm_d) else 0
+                    row[f'norm_inv_{i}'] = round(norm_inv[i], 4) if i < len(norm_inv) else 0
+                    row[f'norm_ord_{i}'] = round(norm_ord[i], 4) if i < len(norm_ord) else 0
+                row['orders_placed'] = step_placed
+                row['orders_from_stock'] = step_from_stock
+                row['step_sl_pct'] = round(step_from_stock / step_placed * 100, 1) if step_placed > 0 else 100
+                row['cum_placed'] = cum_placed
+                row['cum_from_stock'] = cum_from_stock
+                row['cum_sl_pct'] = round(cum_from_stock / cum_placed * 100, 1) if cum_placed > 0 else 100
                 rows.append(row)
 
         df = pd.DataFrame(rows)
         out_path = self.save_dir / 'step_trajectory_ep1.xlsx'
-        df.to_excel(out_path, index=False)
-        print(f'[OK] Saved per-step trajectory Excel: {out_path.name}')
+        with pd.ExcelWriter(out_path, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Data', index=False)
+            scales = traj.get('norm_scales')
+            if scales:
+                # One row: key scales only (demand_cap = norm divisor, inv/backlog/order range)
+                df_scales = pd.DataFrame([{
+                    'demand_cap_0': scales.get('demand_cap_0'),
+                    'demand_cap_1': scales.get('demand_cap_1'),
+                    'demand_cap_2': scales.get('demand_cap_2'),
+                    'inv_scale': scales.get('inv_scale_retailer'),
+                    'backlog_scale': scales.get('backlog_scale_retailer'),
+                    'order_min': scales.get('order_min_retailer'),
+                    'order_max': scales.get('order_max_retailer'),
+                }])
+                df_scales.to_excel(writer, sheet_name='Scales', index=False)
+            else:
+                pd.DataFrame([{'note': 'Scales not captured'}]).to_excel(writer, sheet_name='Scales', index=False)
+        print(f'[OK] Saved step_trajectory_ep1.xlsx (Data + Scales)')
 
     def _save_metrics_json(self, stats):
         path = self.save_dir / 'evaluation_metrics.json'
@@ -773,6 +847,7 @@ class GNNModelEvaluator:
         self._plot_service_levels(stats)
         if self.detailed_trajectory:
             self._plot_trajectory()
+            self._plot_normalized_trajectory()
         self._plot_performance_distribution()
         print('[OK] All visualizations created')
 
@@ -871,6 +946,43 @@ class GNNModelEvaluator:
         plt.tight_layout()
         plt.savefig(self.save_dir / 'detailed_trajectory.png', dpi=300)
         plt.close()
+
+    def _plot_normalized_trajectory(self):
+        """Plot normalized demand, normalized inventory, normalized order quantity for retailers (Ep 1)."""
+        traj = self.detailed_trajectory
+        if not traj or 'norm_demand' not in traj:
+            return
+        days = range(1, self.args.episode_length + 1)
+        # Plot first 5 retailers to avoid clutter (or all if n_agents is small)
+        retailer_ids = [i for i in range(self.n_agents) if i >= 2]
+        n_show = min(5, len(retailer_ids))
+        fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
+        for i, aid in enumerate(retailer_ids[:n_show]):
+            label = f'R_{aid}'
+            # Per-SKU average for this retailer (or sum; here we use mean across SKUs for one line)
+            norm_d = np.array(traj['norm_demand'][aid], dtype=float)   # [T, n_skus]
+            norm_inv = np.array(traj['norm_inventory'][aid], dtype=float)
+            norm_ord = np.array(traj['norm_order'][aid], dtype=float)
+            axes[0].plot(days, norm_d.mean(axis=1), label=label, linewidth=1.2, alpha=0.85)
+            axes[1].plot(days, norm_inv.mean(axis=1), label=label, linewidth=1.2, alpha=0.85)
+            axes[2].plot(days, norm_ord.mean(axis=1), label=label, linewidth=1.2, alpha=0.85)
+        for ax, title, ylabel in zip(
+            axes,
+            ['Normalized Demand (Ep 1, mean over SKUs)',
+             'Normalized Inventory (Ep 1, mean over SKUs)',
+             'Normalized Order Qty (Ep 1, mean over SKUs)'],
+            ['Demand / (mean+3*std)', 'Inventory / 150', 'Order: (qty-20)/50']
+        ):
+            ax.set_title(title, fontsize=12, fontweight='bold')
+            ax.set_ylabel(ylabel, fontsize=11)
+            ax.legend(loc='upper right', fontsize=8)
+            ax.grid(True, alpha=0.3)
+            ax.set_ylim(-0.05, 1.15)
+        axes[2].set_xlabel('Day', fontsize=11)
+        plt.tight_layout()
+        plt.savefig(self.save_dir / 'normalized_trajectory.png', dpi=300)
+        plt.close()
+        print('[OK] Saved normalized trajectory plot: normalized_trajectory.png')
 
     def _plot_performance_distribution(self):
         if len(self.episode_metrics) < 2:
