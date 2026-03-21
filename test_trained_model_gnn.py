@@ -544,8 +544,12 @@ class GNNModelEvaluator:
                         traj['rewards'][agent_id].append(reward)
                         traj['actions'][agent_id].append(executed_actions[agent_id].copy())
                         if agent_id < 2:
-                            # DC: no direct customer demand; log zeros per SKU
+                            # DC: actual demand is the sum of orders placed by its assigned retailers
                             demand_vec = np.zeros(self.n_skus, dtype=float)
+                            for r_id in env_state.dc_assignments[agent_id]:
+                                op = env_state.step_orders_placed.get(r_id, {})
+                                for s in range(self.n_skus):
+                                    demand_vec[s] += op.get(s, 0.0)
                         else:
                             # Retailer: log per-SKU customer demand for this step
                             demand_vec = np.array(
