@@ -286,9 +286,9 @@ class MultiDCInventoryEnv:
         # builds up given the 1-day DC→Retailer lead time).
         for agent_id in range(self.n_agents):
             if agent_id in self.dc_ids:
-                self.inventory[agent_id] = np.full(self.n_skus, 3200.0, dtype=np.float32)
+                self.inventory[agent_id] = np.full(self.n_skus, 3000.0, dtype=np.float32)
             else:
-                self.inventory[agent_id] = np.full(self.n_skus, 50.0, dtype=np.float32)
+                self.inventory[agent_id] = np.full(self.n_skus, 30.0, dtype=np.float32)
             self.backlog[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
             self.pipeline[agent_id] = []
         
