@@ -258,7 +258,7 @@ class MultiDCInventoryEnv:
         
         # Action space bounds for DCs and Retailers
         self.action_space_dc = spaces.Box(0, 5000, (self.action_dim,), dtype=np.float32)
-        self.action_space_retailer = spaces.Box(5, 40, (self.action_dim,), dtype=np.float32)
+        self.action_space_retailer = spaces.Box(1, 10, (self.action_dim,), dtype=np.float32)
 
         # Uniform action space for compatibility
         self.action_space = spaces.Box(0, 5000, (self.action_dim,), dtype=np.float32)
@@ -471,7 +471,7 @@ class MultiDCInventoryEnv:
             if agent_id in self.dc_ids:
                 clipped[agent_id] = np.clip(action, 0, 5000)   # DC: 0 to 5000 units
             else:
-                clipped[agent_id] = np.clip(action, 5, 40)    # Retailer: 0 to 100 units
+                clipped[agent_id] = np.clip(action, 1, 10)    # Retailer: 0 to 100 units
         return clipped
 
 
