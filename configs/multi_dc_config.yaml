@@ -118,10 +118,11 @@ costs:
     - [3.0, 2.5, 4.0]  # DC_1
 
   fixed_order_cost_dc:
-    # Very low fixed cost — no reason not to order when inventory is low.
-    # Main cost signal comes from market price * quantity ordered.
-    - [0.5, 0.5, 0.5]  # DC_0
-    - [0.5, 0.5, 0.5]  # DC_1
+    # Raised from 0.5 → 2.0: ensures a fixed ordering cost registers visibly
+    # on the chart even against the large market-price variable component.
+    # Still tiny vs DC holding/backlog (thousands per episode).
+    - [2.0, 2.0, 2.0]  # DC_0
+    - [2.0, 2.0, 2.0]  # DC_1
   
   # Retailer Costs (15 Retailers x 3 SKUs)
   holding_cost_retailer:
@@ -166,76 +167,77 @@ costs:
     - [6.0, 5.0, 8.0]  # Retailer_14
   
   fixed_order_cost_retailer:
-    # Near-zero: almost no friction to place an order.
-    # Revenue of 5.0/unit * 1.41 demand/step = 7.05/step when fully stocked.
-    # Fixed cost must be tiny so ordering every step is always profitable.
-    - [0.05, 0.05, 0.05]  # Retailer_0
-    - [0.05, 0.05, 0.05]  # Retailer_1
-    - [0.05, 0.05, 0.05]  # Retailer_2
-    - [0.05, 0.05, 0.05]  # Retailer_3
-    - [0.05, 0.05, 0.05]  # Retailer_4
-    - [0.05, 0.05, 0.05]  # Retailer_5
-    - [0.05, 0.05, 0.05]  # Retailer_6
-    - [0.05, 0.05, 0.05]  # Retailer_7
-    - [0.05, 0.05, 0.05]  # Retailer_8
-    - [0.05, 0.05, 0.05]  # Retailer_9
-    - [0.05, 0.05, 0.05]  # Retailer_10
-    - [0.05, 0.05, 0.05]  # Retailer_11
-    - [0.05, 0.05, 0.05]  # Retailer_12
-    - [0.05, 0.05, 0.05]  # Retailer_13
-    - [0.05, 0.05, 0.05]  # Retailer_14
+    # Raised from 0.05 → 0.5 per SKU per order.
+    # At 0.5 fixed + 0.6 variable, ordering 2 units/SKU costs ~1.7/SKU = ~5.1/step.
+    # Revenue for 1.41 demand filled = 5.0*1.41 = 7.05/step/SKU  → still profitable.
+    # Over 90 steps this adds ~460 ordering cost per retailer, a visible 5-8% slice.
+    - [0.5, 0.5, 0.5]  # Retailer_0
+    - [0.5, 0.5, 0.5]  # Retailer_1
+    - [0.5, 0.5, 0.5]  # Retailer_2
+    - [0.5, 0.5, 0.5]  # Retailer_3
+    - [0.5, 0.5, 0.5]  # Retailer_4
+    - [0.5, 0.5, 0.5]  # Retailer_5
+    - [0.5, 0.5, 0.5]  # Retailer_6
+    - [0.5, 0.5, 0.5]  # Retailer_7
+    - [0.5, 0.5, 0.5]  # Retailer_8
+    - [0.5, 0.5, 0.5]  # Retailer_9
+    - [0.5, 0.5, 0.5]  # Retailer_10
+    - [0.5, 0.5, 0.5]  # Retailer_11
+    - [0.5, 0.5, 0.5]  # Retailer_12
+    - [0.5, 0.5, 0.5]  # Retailer_13
+    - [0.5, 0.5, 0.5]  # Retailer_14
   
   # Variable costs for ordering from DCs (per unit transportation/handling)
   # Shape: (n_retailers, n_dcs, n_skus)
-  # Very low: ordering is cheap relative to sale revenue (5.0/unit).
-  # Variable cost ~0.04-0.08/unit. Revenue = 5.0/unit.
-  # Even ordering 10 units/step (0.05*10=0.50) earns 10*5=50 if demand is there.
+  # Raised from 0.04-0.08 → 0.5-0.8/unit so ordering cost is ~5-8% of total.
+  # Revenue = 5.0/unit demand fulfilled; ordering 2 units/step at 0.65/unit = 1.3 variable
+  # vs 7.05 revenue → ordering still clearly profitable.
   variable_cost_retailer:
     # Retailer_0
-    - [ [0.05, 0.04, 0.07],
-        [0.06, 0.05, 0.08] ]
+    - [ [0.50, 0.45, 0.65],
+        [0.60, 0.50, 0.75] ]
     # Retailer_1
-    - [ [0.06, 0.05, 0.08],
-        [0.05, 0.04, 0.07] ]
+    - [ [0.60, 0.50, 0.75],
+        [0.50, 0.45, 0.65] ]
     # Retailer_2
-    - [ [0.05, 0.04, 0.07],
-        [0.06, 0.05, 0.08] ]
+    - [ [0.50, 0.45, 0.65],
+        [0.60, 0.50, 0.75] ]
     # Retailer_3
-    - [ [0.05, 0.04, 0.07],
-        [0.06, 0.05, 0.08] ]
+    - [ [0.50, 0.45, 0.65],
+        [0.60, 0.50, 0.75] ]
     # Retailer_4
-    - [ [0.06, 0.05, 0.08],
-        [0.05, 0.04, 0.07] ]
+    - [ [0.60, 0.50, 0.75],
+        [0.50, 0.45, 0.65] ]
     # Retailer_5
-    - [ [0.05, 0.04, 0.07],
-        [0.06, 0.05, 0.08] ]
+    - [ [0.50, 0.45, 0.65],
+        [0.60, 0.50, 0.75] ]
     # Retailer_6
-    - [ [0.05, 0.04, 0.07],
-        [0.06, 0.05, 0.08] ]
+    - [ [0.50, 0.45, 0.65],
+        [0.60, 0.50, 0.75] ]
     # Retailer_7
-    - [ [0.06, 0.05, 0.08],
-        [0.05, 0.04, 0.07] ]
+    - [ [0.60, 0.50, 0.75],
+        [0.50, 0.45, 0.65] ]
     # Retailer_8
-    - [ [0.05, 0.04, 0.07],
-        [0.06, 0.05, 0.08] ]
+    - [ [0.50, 0.45, 0.65],
+        [0.60, 0.50, 0.75] ]
     # Retailer_9
-    - [ [0.05, 0.04, 0.07],
-        [0.06, 0.05, 0.08] ]
+    - [ [0.50, 0.45, 0.65],
+        [0.60, 0.50, 0.75] ]
     # Retailer_10
-    - [ [0.06, 0.05, 0.08],
-        [0.05, 0.04, 0.07] ]
+    - [ [0.60, 0.50, 0.75],
+        [0.50, 0.45, 0.65] ]
     # Retailer_11
-    - [ [0.05, 0.04, 0.07],
-        [0.06, 0.05, 0.08] ]
+    - [ [0.50, 0.45, 0.65],
+        [0.60, 0.50, 0.75] ]
     # Retailer_12
-    - [ [0.05, 0.04, 0.07],
-        [0.06, 0.05, 0.08] ]
+    - [ [0.50, 0.45, 0.65],
+        [0.60, 0.50, 0.75] ]
     # Retailer_13
-    - [ [0.06, 0.05, 0.08],
-        [0.05, 0.04, 0.07] ]
+    - [ [0.60, 0.50, 0.75],
+        [0.50, 0.45, 0.65] ]
     # Retailer_14
-    - [ [0.05, 0.04, 0.07],
-        [0.06, 0.05, 0.08] ]
+    - [ [0.50, 0.45, 0.65],
+        [0.60, 0.50, 0.75] ]
 
 # Market Pricing (for DC orders from supplier)
 pricing:

@@ -861,6 +861,8 @@ class GNNModelEvaluator:
         if self.detailed_trajectory:
             self._plot_trajectory()
             self._plot_normalized_trajectory()
+            self._plot_dc_inventory_fluctuation()
+            self._plot_retailer_inventory_fluctuation()
         self._plot_performance_distribution()
         print('[OK] All visualizations created')
 
@@ -896,7 +898,7 @@ class GNNModelEvaluator:
         ax.bar(x, hc, w, label='Holding', color='#4ECDC4', edgecolor='black')
         ax.bar(x, bc, w, bottom=hc, label='Backlog', color='#FF6B6B', edgecolor='black')
         ax.bar(x, oc, w, bottom=np.array(hc) + np.array(bc),
-               label='Ordering', color='#95E1D3', edgecolor='black')
+               label='Ordering', color='#FFD700', edgecolor='black')
         for i in range(len(agents)):
             total = hc[i] + bc[i] + oc[i]
             ax.text(i, total, f'{total:.0f}', ha='center', va='bottom',
@@ -996,6 +998,137 @@ class GNNModelEvaluator:
         plt.savefig(self.save_dir / 'normalized_trajectory.png', dpi=300)
         plt.close()
         print('[OK] Saved normalized trajectory plot: normalized_trajectory.png')
+
+    def _plot_dc_inventory_fluctuation(self):
+        """Plot inventory fluctuation over steps for each DC (episode 1).
+
+        Layout: 2 rows x (n_skus+1) columns.
+          - Row per DC.
+          - First n_skus sub-plots: per-SKU inventory.
+          - Last sub-plot: total inventory across all SKUs.
+        """
+        traj = self.detailed_trajectory
+        days = np.arange(1, self.args.episode_length + 1)
+        dc_ids = [i for i in range(self.n_agents) if i < 2]
+        n_dcs = len(dc_ids)
+        n_cols = self.n_skus + 1  # per-SKU cols + total col
+
+        fig, axes = plt.subplots(
+            n_dcs, n_cols,
+            figsize=(5 * n_cols, 4 * n_dcs),
+            squeeze=False,
+        )
+        fig.suptitle('DC Inventory Fluctuation Over Steps (Episode 1)',
+                     fontsize=15, fontweight='bold', y=1.01)
+
+        sku_colors = ['#2196F3', '#4CAF50', '#FF9800']  # one colour per SKU
+        total_color = '#9C27B0'
+
+        for row, dc_id in enumerate(dc_ids):
+            dc_label = f'DC_{dc_id}'
+            inv_skus = np.array(traj['inventory_skus'][dc_id], dtype=float)  # [T, n_skus]
+            inv_total = np.array(traj['inventory'][dc_id], dtype=float)       # [T]
+
+            # Per-SKU sub-plots
+            for sku in range(self.n_skus):
+                ax = axes[row][sku]
+                ax.plot(days, inv_skus[:, sku],
+                        color=sku_colors[sku % len(sku_colors)],
+                        linewidth=1.5, alpha=0.85)
+                ax.fill_between(days, inv_skus[:, sku], alpha=0.15,
+                                color=sku_colors[sku % len(sku_colors)])
+                ax.set_title(f'{dc_label} — SKU {sku}', fontsize=11, fontweight='bold')
+                ax.set_ylabel('Inventory', fontsize=10)
+                ax.set_xlabel('Step (day)', fontsize=10)
+                ax.grid(True, alpha=0.3)
+                ax.set_xlim(days[0], days[-1])
+
+            # Total inventory sub-plot (last column)
+            ax_total = axes[row][n_cols - 1]
+            ax_total.plot(days, inv_total,
+                          color=total_color, linewidth=2.0, alpha=0.9,
+                          label='Total')
+            ax_total.fill_between(days, inv_total, alpha=0.12, color=total_color)
+            ax_total.axhline(np.mean(inv_total), color='red', linestyle='--',
+                             linewidth=1.2, label=f'Mean: {np.mean(inv_total):.0f}')
+            ax_total.set_title(f'{dc_label} — Total Inventory', fontsize=11, fontweight='bold')
+            ax_total.set_ylabel('Total Inventory', fontsize=10)
+            ax_total.set_xlabel('Step (day)', fontsize=10)
+            ax_total.legend(fontsize=9)
+            ax_total.grid(True, alpha=0.3)
+            ax_total.set_xlim(days[0], days[-1])
+
+        plt.tight_layout()
+        out = self.save_dir / 'dc_inventory_fluctuation.png'
+        plt.savefig(out, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f'[OK] Saved DC inventory fluctuation plot: {out.name}')
+
+    def _plot_retailer_inventory_fluctuation(self):
+        """Plot inventory fluctuation over steps for all retailers (episode 1).
+
+        One figure with two sub-plots:
+          - Top: per-retailer total inventory (all on same axes — useful for comparison).
+          - Bottom: system-wide average retailer inventory with std band.
+        """
+        traj = self.detailed_trajectory
+        days = np.arange(1, self.args.episode_length + 1)
+        retailer_ids = [i for i in range(self.n_agents) if i >= 2]
+        n_retailers = len(retailer_ids)
+
+        # Gather total inventory arrays per retailer
+        inv_matrix = np.array(
+            [traj['inventory'][rid] for rid in retailer_ids], dtype=float
+        )  # [n_retailers, T]
+
+        # ---- Figure 1: individual retailer lines ----
+        fig, axes = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
+        fig.suptitle('Retailer Inventory Fluctuation Over Steps (Episode 1)',
+                     fontsize=15, fontweight='bold')
+
+        cmap = plt.cm.get_cmap('tab20', n_retailers)
+        ax_lines = axes[0]
+        for i, rid in enumerate(retailer_ids):
+            ax_lines.plot(days, inv_matrix[i],
+                          color=cmap(i), linewidth=1.2, alpha=0.75,
+                          label=f'R_{rid}')
+        ax_lines.set_title('Individual Retailer Inventory', fontsize=12, fontweight='bold')
+        ax_lines.set_ylabel('Total Inventory', fontsize=11)
+        ax_lines.legend(
+            loc='upper right',
+            ncol=max(1, n_retailers // 5),
+            fontsize=7,
+            framealpha=0.7,
+        )
+        ax_lines.grid(True, alpha=0.3)
+
+        # ---- Bottom: system-wide mean ± std ----
+        ax_avg = axes[1]
+        mean_inv = inv_matrix.mean(axis=0)   # [T]
+        std_inv  = inv_matrix.std(axis=0)    # [T]
+        ax_avg.plot(days, mean_inv, color='#1565C0', linewidth=2.0,
+                    label='Mean (all retailers)')
+        ax_avg.fill_between(
+            days,
+            np.maximum(mean_inv - std_inv, 0),
+            mean_inv + std_inv,
+            alpha=0.2, color='#1565C0', label='±1 std'
+        )
+        ax_avg.axhline(mean_inv.mean(), color='red', linestyle='--',
+                       linewidth=1.2,
+                       label=f'Time-avg: {mean_inv.mean():.0f}')
+        ax_avg.set_title('System-Wide Avg Retailer Inventory', fontsize=12, fontweight='bold')
+        ax_avg.set_ylabel('Avg Total Inventory', fontsize=11)
+        ax_avg.set_xlabel('Step (day)', fontsize=11)
+        ax_avg.legend(fontsize=9)
+        ax_avg.grid(True, alpha=0.3)
+        ax_avg.set_xlim(days[0], days[-1])
+
+        plt.tight_layout()
+        out = self.save_dir / 'retailer_inventory_fluctuation.png'
+        plt.savefig(out, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f'[OK] Saved retailer inventory fluctuation plot: {out.name}')
 
     def _plot_performance_distribution(self):
         if len(self.episode_metrics) < 2:

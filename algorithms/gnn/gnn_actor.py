@@ -101,9 +101,22 @@ class GNNActor(nn.Module):
             self.rnn = RNNLayer(self.hidden_size, self.hidden_size, 
                                self._recurrent_N, self._use_orthogonal)
         
-        # Action head (same as standard HAPPO)
-        self.act = ACTLayer(action_space, self.hidden_size, 
-                           self._use_orthogonal, self._gain, args)
+        # Action head: pass action bounds so DiagGaussian uses tanh-squashing
+        # to map outputs into [action_low, action_low + action_range].
+        # Without action_low/action_range, DiagGaussian outputs a raw (unscaled)
+        # Gaussian centred near 0 (orthogonal init with gain=0.01), which gets
+        # hard-clipped to the minimum bound (1 for retailers, 0 for DCs) by
+        # _clip_actions in the environment — causing the "always order 1" behaviour.
+        if hasattr(action_space, 'high') and hasattr(action_space, 'low'):
+            action_low   = float(action_space.low[0])
+            action_range = float(action_space.high[0] - action_space.low[0])
+        else:
+            action_low   = None
+            action_range = None
+
+        self.act = ACTLayer(action_space, self.hidden_size,
+                           self._use_orthogonal, self._gain, args,
+                           action_low, action_range)
         
         self.to(device)
     

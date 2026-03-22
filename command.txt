@@ -1,7 +1,7 @@
 tensorboard --logdir "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\10Mar_gnn1\run_seed_1\logs"
 
 python train_multi_dc_baseline.py --experiment_name "eval_best_model" --model_dir "results/05Mar_2base/run_seed_1"
-python train_multi_dc_gnn.py --experiment_name "gnn"
+python train_multi_dc_gnn.py --experiment_name "21Mar_gnn1"
 python test_trained_model.py --model_dir "results\13Mar_base2_kaggle\run_seed_1\models" --episode_length 90 --num_episodes 1  --experiment_name "eval_base"
 
-python test_trained_model_gnn.py --model_dir "results/15Mar_gnn_colab/run_seed_1/models" --episode_length 90 --num_episodes 1 --experiment_name "eval_gnn4"
+python test_trained_model_gnn.py --model_dir "results/21Mar_gnn3_colab/run_seed_1/models" --episode_length 90 --num_episodes 1 --experiment_name "eval_gnn"
