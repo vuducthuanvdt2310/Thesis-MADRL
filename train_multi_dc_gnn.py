@@ -156,7 +156,11 @@ if __name__ == "__main__":
         eval_episodes=5,
         log_interval=1,
         n_warmup_evaluations=3,
-        n_no_improvement_thres=1000
+        n_no_improvement_thres=1000,
+        
+        # --- EXPLORATION HYPERPARAMETERS ---
+        entropy_coef=0.05,    # Default is 0.01. Higher value encourages policy to remain Stochastic
+        std_x_coef=2.0,       # Default is 1.0. Higher initial standard deviation for continuous actions
     )
 
     all_args = parse_args(sys.argv[1:], parser)

@@ -186,7 +186,6 @@ class MultiDCInventoryEnv:
         """Load reward parameters from config."""
         rewards_cfg = self.config.get('rewards', {})
 
-        self.survival_reward = float(rewards_cfg.get('survival_reward', 0.0))
         self.termination_penalty = float(rewards_cfg.get('termination_penalty', 0.0))
 
         # --- Sale revenue bonus ---
@@ -258,7 +257,7 @@ class MultiDCInventoryEnv:
         
         # Action space bounds for DCs and Retailers
         self.action_space_dc = spaces.Box(0, 5000, (self.action_dim,), dtype=np.float32)
-        self.action_space_retailer = spaces.Box(0, 5, (self.action_dim,), dtype=np.float32)
+        self.action_space_retailer = spaces.Box(0, 4, (self.action_dim,), dtype=np.float32)
 
         # Uniform action space for compatibility
         self.action_space = spaces.Box(0, 5000, (self.action_dim,), dtype=np.float32)
@@ -471,7 +470,7 @@ class MultiDCInventoryEnv:
             if agent_id in self.dc_ids:
                 clipped[agent_id] = np.clip(action, 0, 5000)   # DC: 0 to 5000 units
             else:
-                clipped[agent_id] = np.clip(action, 0, 5)    # Retailer: 0 to 100 units
+                clipped[agent_id] = np.clip(action, 0, 4)    # Retailer: 0 to 100 units
         return clipped
 
 
@@ -923,7 +922,7 @@ class MultiDCInventoryEnv:
                 np.sum(self.demand_fulfilled[retailer_id])
             )
 
-            rewards[retailer_id] = -total_cost + retailer_sale_revenue + self.survival_reward
+            rewards[retailer_id] = -total_cost + retailer_sale_revenue
 
         # === Normalize all rewards by episode length ===
         # Prevents quadratic reward blow-up from cumulative backlog costs in long episodes.
