@@ -215,6 +215,18 @@ class MultiDCInventoryEnv:
             self.bulk_discount_tiers, key=lambda t: t['threshold'], reverse=True
         )
 
+        # --- Excess inventory penalty ---
+        # Applied when inventory > target_stock_days × mean_daily_demand.
+        # Discourages hoarding far beyond what demand requires.
+        self.target_stock_days_retailer = float(rewards_cfg.get('target_stock_days_retailer', 7))
+        self.target_stock_days_dc       = float(rewards_cfg.get('target_stock_days_dc', 14))
+        self.excess_penalty_retailer    = float(rewards_cfg.get('excess_penalty_retailer', 0.0))
+        self.excess_penalty_dc          = float(rewards_cfg.get('excess_penalty_dc', 0.0))
+        # Pre-compute per-SKU target levels (populated after demand stats are computed).
+        # Updated in reset() once demand stats are available.
+        self._retailer_target_stock = None
+        self._dc_target_stock       = None
+
     def _load_constraints(self):
         """Load constraints from config."""
         if 'constraints' in self.config:
@@ -329,6 +341,18 @@ class MultiDCInventoryEnv:
         self.ep_orders_from_stock = 0
 
         # demand stats are pre-computed at __init__; no need to reload CSV every episode
+
+        # Pre-compute excess-inventory target stock levels (per SKU).
+        # Retailer target: target_stock_days_retailer × mean daily demand per SKU.
+        # DC target: target_stock_days_dc × (n_retailers_per_dc × mean daily demand per SKU).
+        self._retailer_target_stock = (
+            self.target_stock_days_retailer * self.demand_mean
+        )  # shape: (n_skus,)
+        # Each DC serves a different number of retailers; use the larger group as conservative bound.
+        avg_retailers_per_dc = self.n_retailers / self.n_dcs
+        self._dc_target_stock = (
+            self.target_stock_days_dc * avg_retailers_per_dc * self.demand_mean
+        )  # shape: (n_skus,)
 
         # Get initial observations
         observations = self._get_observations()
@@ -882,6 +906,12 @@ class MultiDCInventoryEnv:
                 else:
                     ordering = 0.0
 
+                # Excess inventory penalty for DCs: discourages stocking far beyond
+                # what's needed to cover one lead-time cycle of retailer demand.
+                if self.excess_penalty_dc > 0.0 and self._dc_target_stock is not None:
+                    excess = max(0.0, self.inventory[dc_id][sku] - self._dc_target_stock[sku])
+                    ordering += self.excess_penalty_dc * excess
+
                 total_cost += holding + backlog + ordering
 
             # Bulk discount on ordering cost
@@ -914,6 +944,12 @@ class MultiDCInventoryEnv:
                 if ss_threshold > 0:
                     shortfall = max(0.0, ss_threshold - self.inventory[retailer_id][sku])
                     ordering += self.safety_stock_penalty * shortfall
+
+                # Excess inventory penalty: discourages holding far above target level.
+                # Only kicks in when inventory > target_stock (so no impact during low-stock).
+                if self.excess_penalty_retailer > 0.0 and self._retailer_target_stock is not None:
+                    excess = max(0.0, self.inventory[retailer_id][sku] - self._retailer_target_stock[sku])
+                    ordering += self.excess_penalty_retailer * excess
 
                 total_cost += holding + backlog + ordering
 

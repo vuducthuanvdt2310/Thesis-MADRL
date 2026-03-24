@@ -85,17 +85,34 @@ rewards:
   # === SALE REVENUE BONUS (key service-level incentive) ===
   # Retailers earn this per unit of customer demand actually fulfilled each step.
   # DCs earn this per unit shipped to retailers each step.
-  # Setting revenue >> holding_cost creates a clear gradient: stock shelves and earn,
-  # empty shelves earn nothing. Agents will order proactively to maximize revenue.
+  # Reduced from 5.0 → 2.5 for retailers: previously the very high revenue signal caused
+  # agents to massively over-order just to guarantee zero missed sales, resulting in
+  # holding costs dominating (~95%) the total cost breakdown. Lower revenue still rewards
+  # service level but gives holding/backlog costs meaningful weight.
   #
   # Calibration guide:
   #   demand_mean ~ 1.41 units/step/SKU. At 100% service level a retailer earns:
-  #     3 SKUs * 1.41 * 5.0 = ~21.2 revenue/step
-  #   Holding 5 units costs: 5 * 0.12 = 0.60/step  (cheap)
-  #   Ordering 3 units costs: 0.05 fixed + 0.05*3 = 0.20 variable = 0.25/order (tiny)
-  #   => Revenue from 1 served period easily exceeds all inventory costs.
-  sale_revenue_retailer: 5.0   # per unit of customer demand fulfilled (retailer)
-  sale_revenue_dc: 2.0          # per unit shipped to retailers (DC)
+  #     3 SKUs * 1.41 * 2.5 = ~10.6 revenue/step
+  #   Holding 5 units costs: 5 * 1.5 = 7.5/step  → meaningful now
+  #   Ordering 3 units costs: 1.0 fixed + 1.2*3 = 4.6 variable = 5.6/order
+  #   => Agents must balance: order enough to serve demand but not so much they hoard.
+  sale_revenue_retailer: 2.5   # per unit of customer demand fulfilled (retailer)
+  sale_revenue_dc: 1.5          # per unit shipped to retailers (DC)
+
+  # === EXCESS INVENTORY PENALTY ===
+  # Penalizes holding inventory above a target multiple of daily demand.
+  # This creates a soft cap on stocking behavior: holding a little buffer is fine,
+  # but hoarding 10x demand is heavily penalized.
+  #
+  # target_stock_days: number of days of demand to target (e.g. 5 = 5×mean demand)
+  #   For retailers: target = 5 × 1.41 ≈ 7 units/SKU
+  #   For DCs:       target = 14 × 10.5 ≈ 147 units/SKU (1 full lead-time cycle)
+  # excess_penalty_retailer: cost per unit above target, per step
+  # excess_penalty_dc:       cost per unit above target, per step
+  target_stock_days_retailer: 5    # target = 5 × mean_daily_demand
+  target_stock_days_dc: 14         # target = 14 × dc_daily_drain
+  excess_penalty_retailer: 0.8     # per unit above target per step (< holding cost so not too harsh)
+  excess_penalty_dc: 0.03          # per unit above target per step (DC scale much larger)
 
   # Alpha-weighted local + global reward mixing.
   # Each agent's reward = (1 - alpha) * local + alpha * global_mean.
