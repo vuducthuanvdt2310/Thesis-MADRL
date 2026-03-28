@@ -166,10 +166,11 @@ if __name__ == "__main__":
         # std_x_coef: Scales the log_std input before sigmoid, effectively setting
         #   the initial action std. Higher = wider initial distribution.
         std_x_coef=2.0,
-        # std_y_coef: Maximum reachable action std = sigmoid(1) * std_y_coef ≈ 0.73 * std_y_coef.
-        #   Set explicitly so it is not silently defaulted to 0.5 in DiagGaussian.
-        #   0.5 means max std ≈ 0.37 — appropriate for our bounded action ranges.
-        std_y_coef=0.5,
+        # std_y_coef: Maximum reachable action std = softplus(...) clamped to this value.
+        #   Previously 0.5 (max std ≈ 0.5), which was too small when the mean is near 3.0
+        #   because most samples still clip to 3.0. Increasing to 1.5 gives the agent
+        #   enough noise to sample actions down to 0 even when its mean is near 3.0.
+        std_y_coef=1.5,
     )
 
     all_args = parse_args(sys.argv[1:], parser)

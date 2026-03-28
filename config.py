@@ -85,7 +85,7 @@ def get_config():
     parser.add_argument("--std_x_coef", type=float,
                         default=1.0, help="Coefficient for std in continuous action distribution")
     parser.add_argument("--std_y_coef", type=float,
-                        default=0.5, help="Coefficient for std output in continuous action distribution")
+                        default=1.5, help="Coefficient for std output in continuous action distribution (increased to 1.5 for larger exploration)")
 
     # recurrent parameters
     parser.add_argument("--use_naive_recurrent_policy", action='store_true',
