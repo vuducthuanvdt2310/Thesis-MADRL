@@ -159,14 +159,24 @@ if __name__ == "__main__":
         n_no_improvement_thres=1000,
         
         # --- EXPLORATION HYPERPARAMETERS ---
-        entropy_coef=0.05,    # Default is 0.01. Higher value encourages policy to remain Stochastic
-        std_x_coef=2.0,       # Default is 1.0. Higher initial standard deviation for continuous actions
+        # entropy_coef: Higher = more entropy regularisation = less policy collapse.
+        #   0.01 (default) caused the policy mean to converge to a constant.
+        #   0.08 keeps the policy stochastic long enough to explore order quantities.
+        entropy_coef=0.08,
+        # std_x_coef: Scales the log_std input before sigmoid, effectively setting
+        #   the initial action std. Higher = wider initial distribution.
+        std_x_coef=2.0,
+        # std_y_coef: Maximum reachable action std = sigmoid(1) * std_y_coef ≈ 0.73 * std_y_coef.
+        #   Set explicitly so it is not silently defaulted to 0.5 in DiagGaussian.
+        #   0.5 means max std ≈ 0.37 — appropriate for our bounded action ranges.
+        std_y_coef=0.5,
     )
 
     all_args = parse_args(sys.argv[1:], parser)
 
-    # CRITICAL: Force single_agent_obs_dim to 36 (max obs dim for retailers)
-    all_args.single_agent_obs_dim = 28  # DC obs=28D; retailer obs=22D padded to 28D
+    # CRITICAL: single_agent_obs_dim must equal the LARGEST obs dim across all agents.
+    # DC obs = 28D, Retailer obs = 22D → max = 28. All observations are zero-padded to this.
+    all_args.single_agent_obs_dim = 28
 
     # --- Resume Training (Optional) ---
     RESUME_MODEL_DIR = None

@@ -431,7 +431,7 @@ class GNNModelEvaluator:
                         agent_id,
                         rnn_states[:, agent_id],  # [1, recurrent_N, hidden]
                         masks[:, agent_id],        # [1, 1]
-                        deterministic=True,
+                        deterministic=False,  # Sample from distribution → step-varying actions
                     )
 
                 rnn_states[:, agent_id] = (
@@ -446,7 +446,31 @@ class GNNModelEvaluator:
                 )
                 raw_action = action_np[0]
 
-                # Pass raw policy actions to the environment (it will clip them internally).
+                # ── Heuristic disabled: let the DRL policy decide ────────────
+                # The inventory-conditioned rescaling below is commented out.
+                # With the new obs-dependent DiagGaussian (Method 2), the retrained
+                # policy learns its own mean and std per observation — no heuristic
+                # override is needed. Re-enable only for ablation comparison.
+                #
+                # RETAILER_TARGET_INV = 20.0
+                # DC_TARGET_INV       = 500.0
+                # current_obs = obs_structured[0, agent_id]
+                # if agent_id < 2:
+                #     inv_indices     = [0, 9, 18]
+                #     inv_norm_factor = 1000.0
+                #     target_inv      = DC_TARGET_INV
+                # else:
+                #     inv_indices     = [0, 7, 14]
+                #     inv_norm_factor = 150.0
+                #     target_inv      = RETAILER_TARGET_INV
+                # inventory_weight = np.zeros(self.n_skus, dtype=np.float32)
+                # for sku_idx, obs_idx in enumerate(inv_indices):
+                #     actual_inv = float(current_obs[obs_idx]) * inv_norm_factor
+                #     inventory_weight[sku_idx] = max(0.0, 1.0 - actual_inv / target_inv)
+                # raw_action = raw_action * inventory_weight
+                # ─────────────────────────────────────────────────────────────
+
+                # Pass actions to the environment (it will clip them internally too).
                 actions_env.append(raw_action)
                 raw_actions[agent_id] = raw_action.copy()
 

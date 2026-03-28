@@ -268,11 +268,11 @@ class MultiDCInventoryEnv:
         self.action_dim = 3            # One per SKU (n_skus = 3)
         
         # Action space bounds for DCs and Retailers
-        self.action_space_dc = spaces.Box(0, 5000, (self.action_dim,), dtype=np.float32)
-        self.action_space_retailer = spaces.Box(0, 4, (self.action_dim,), dtype=np.float32)
+        self.action_space_dc = spaces.Box(0, 1000, (self.action_dim,), dtype=np.float32)
+        self.action_space_retailer = spaces.Box(0, 3, (self.action_dim,), dtype=np.float32)
 
         # Uniform action space for compatibility
-        self.action_space = spaces.Box(0, 5000, (self.action_dim,), dtype=np.float32)
+        self.action_space = spaces.Box(0, 1000, (self.action_dim,), dtype=np.float32)
         
         # Combined spaces (uniform for compatibility)
         self.observation_spaces = {
@@ -297,7 +297,7 @@ class MultiDCInventoryEnv:
         # builds up given the 1-day DC→Retailer lead time).
         for agent_id in range(self.n_agents):
             if agent_id in self.dc_ids:
-                self.inventory[agent_id] = np.full(self.n_skus, 3000.0, dtype=np.float32)
+                self.inventory[agent_id] = np.full(self.n_skus, 2000.0, dtype=np.float32)
             else:
                 self.inventory[agent_id] = np.full(self.n_skus, 30.0, dtype=np.float32)
             self.backlog[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
@@ -494,7 +494,7 @@ class MultiDCInventoryEnv:
             if agent_id in self.dc_ids:
                 clipped[agent_id] = np.clip(action, 0, 5000)   # DC: 0 to 5000 units
             else:
-                clipped[agent_id] = np.clip(action, 0, 4)    # Retailer: 0 to 100 units
+                clipped[agent_id] = np.clip(action, 0, 3)    # Retailer: 0 to 100 units
         return clipped
 
 

@@ -208,17 +208,10 @@ class GNNRunner(object):
                 f.write("episode,steps,total_episode_reward\n")
 
         # Load training state if available
-        print(f"[DEBUG] self.model_dir = {self.model_dir}")
-
         if self.model_dir is not None:
             state_path = os.path.join(self.model_dir, 'models', 'training_state.pt')
-            print(f"[DEBUG] Checking path 1: {state_path}")
-            print(f"[DEBUG] Path 1 exists: {os.path.exists(state_path)}")
-
             if not os.path.exists(state_path):
                 state_path = os.path.join(self.model_dir, 'training_state.pt')
-                print(f"[DEBUG] Checking path 2: {state_path}")
-                print(f"[DEBUG] Path 2 exists: {os.path.exists(state_path)}")
 
             if os.path.exists(state_path):
                 state = torch.load(state_path, map_location='cpu', weights_only=False)
@@ -611,7 +604,7 @@ class GNNRunner(object):
                             eval_rnn_states[:, agent_id],
                             eval_masks[:, agent_id],
                             None,
-                            deterministic=True)
+                            deterministic=False)  # Stochastic: step-varying actions in eval
 
                     eval_rnn_states[:, agent_id] = _t2n(temp_rnn_state)
                     action = eval_actions.detach().cpu().numpy()

@@ -35,19 +35,13 @@ class CRunner(BaseRunner):
                 f.write("episode,steps,total_episode_reward\n")
 
         # Load training state if available and model_dir is set
-        print(f"[DEBUG] self.model_dir = {self.model_dir}")
-        
+
         if self.model_dir is not None:
             # Try loading from models/ subdirectory first (where it's actually saved)
             state_path = os.path.join(self.model_dir, 'models', 'training_state.pt')
-            print(f"[DEBUG] Checking path 1: {state_path}")
-            print(f"[DEBUG] Path 1 exists: {os.path.exists(state_path)}")
-            
             if not os.path.exists(state_path):
                 # Fallback to model_dir directly
                 state_path = os.path.join(self.model_dir, 'training_state.pt')
-                print(f"[DEBUG] Checking path 2: {state_path}")
-                print(f"[DEBUG] Path 2 exists: {os.path.exists(state_path)}")
             
             if os.path.exists(state_path):
                 # Load to CPU to avoid issues if saved on GPU
@@ -287,8 +281,8 @@ class CRunner(BaseRunner):
             if self.algorithm_name == "gnn_happo":
                 # GNN-HAPPO requires adjacency matrix and structured observations [batch, n_agents, obs_dim]
                 # Reconstruct structured observations from individual agent buffers
+                max_obs_dim = max(self.envs.observation_space[i].shape[0] for i in range(self.num_agents))
                 batch_size = self.buffer[agent_id].obs[step].shape[0]
-                max_obs_dim = 30  # Both DCs and Retailers now have 30D observations
                 obs_structured = np.zeros((batch_size, self.num_agents, max_obs_dim), dtype=np.float32)
                 
                 # Fill in observations for all agents
@@ -474,7 +468,7 @@ class CRunner(BaseRunner):
                                 eval_rnn_states[:,agent_id],
                                 eval_masks[:,agent_id],
                                 None,
-                                deterministic=True)
+                                deterministic=False)  # Stochastic: step-varying actions
                     else:
                         # Standard HAPPO
                         eval_actions, temp_rnn_state = \
@@ -483,7 +477,7 @@ class CRunner(BaseRunner):
                                 eval_rnn_states[:,agent_id],
                                 eval_masks[:,agent_id],
                                 None,
-                                deterministic=True)
+                                deterministic=False)  # Stochastic: step-varying actions
                     
                     eval_rnn_states[:,agent_id]=_t2n(temp_rnn_state)
                     action = eval_actions.detach().cpu().numpy()

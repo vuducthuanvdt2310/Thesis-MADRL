@@ -91,17 +91,32 @@ class Categorical(nn.Module):
 #         action_logstd = self.logstd(zeros)
 #         return FixedNormal(action_mean, action_logstd.exp())
 
+import torch.nn.functional as F
+
 class DiagGaussian(nn.Module):
+    """
+    Diagonal-covariance Gaussian policy head.
+
+    Method 2 — Observation-Dependent Mean + Std:
+      - fc_mean: 2-layer MLP (Linear → ReLU → Linear) so the mean can capture
+        non-linear relationships between the hidden state and the optimal action.
+        A single linear layer can only learn affine mappings; this often collapses
+        to a constant output when observations are highly correlated.
+      - fc_log_std: separate 1-layer network whose output depends on the
+        observation at EACH step. Unlike a global scalar log_std parameter that
+        the optimizer pushes to -∞ to reduce entropy, this network must learn
+        WHEN to be uncertain (high std) and when to be confident (low std).
+        Result: both mean and std genuinely vary per timestep.
+
+    Requires retraining from scratch — NOT compatible with old single-layer .pt weights.
+    """
     def __init__(self, num_inputs, num_outputs, use_orthogonal=True, gain=0.01, args=None, action_low=None, action_range=None):
         super(DiagGaussian, self).__init__()
 
         init_method = [nn.init.xavier_uniform_, nn.init.orthogonal_][use_orthogonal]
 
-        self.action_low = action_low
+        self.action_low   = action_low
         self.action_range = action_range
-
-        def init_(m):
-            return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain)
 
         if args is not None:
             self.std_x_coef = args.std_x_coef
@@ -109,20 +124,47 @@ class DiagGaussian(nn.Module):
         else:
             self.std_x_coef = 1.
             self.std_y_coef = 0.5
-        self.fc_mean = init_(nn.Linear(num_inputs, num_outputs))
-        log_std = torch.ones(num_outputs) * self.std_x_coef
-        self.log_std = torch.nn.Parameter(log_std)
+
+        def init_(m):
+            return init(m, init_method, lambda x: nn.init.constant_(x, 0), gain)
+
+        # ── Mean network: 2-layer MLP ──────────────────────────────────────────
+        # Hidden dim = num_inputs // 2 keeps parameter count low while giving
+        # the network enough capacity to learn non-linear state → action mappings.
+        hidden_dim = max(num_inputs // 2, num_outputs)
+        self.fc_mean = nn.Sequential(
+            init_(nn.Linear(num_inputs, hidden_dim)),
+            nn.ReLU(),
+            init_(nn.Linear(hidden_dim, num_outputs)),
+        )
+
+        # ── Std network: observation-dependent ────────────────────────────────
+        # A separate lightweight linear layer outputs log_std from the hidden
+        # state each step. Initialized with small weights so initial std is near
+        # softplus(0) + MIN_STD ≈ 0.69 + 0.05 = 0.74 — a reasonable starting point.
+        self.fc_log_std = nn.Linear(num_inputs, num_outputs)
+        nn.init.constant_(self.fc_log_std.weight, 0.0)
+        nn.init.constant_(self.fc_log_std.bias, 0.0)
 
     def forward(self, x, available_actions=None):
+        # ── Action mean ───────────────────────────────────────────────────────
         action_mean = self.fc_mean(x)
-        
+
         if self.action_low is not None and self.action_range is not None:
             tanh_out = torch.tanh(action_mean)
             action_mean_scaled = self.action_low + ((tanh_out + 1.0) / 2.0) * self.action_range
         else:
             action_mean_scaled = action_mean
-            
-        action_std = torch.sigmoid(self.log_std / self.std_x_coef) * self.std_y_coef
+
+        # ── Action std (observation-dependent) ───────────────────────────────
+        # softplus(x) = log(1 + e^x) > 0 always — cannot collapse to 0.
+        # MIN_STD floor ensures a minimum level of exploration at all times.
+        # MAX_STD cap prevents overly noisy actions early in training.
+        MIN_STD = 0.05
+        MAX_STD = self.std_y_coef          # max ≈ 0.5 (matches old parameterisation)
+        log_std_raw = self.fc_log_std(x)   # shape: [batch, num_outputs], varies per step
+        action_std  = torch.clamp(F.softplus(log_std_raw), min=MIN_STD, max=MAX_STD)
+
         return FixedNormal(action_mean_scaled, action_std)
 
 class Bernoulli(nn.Module):
