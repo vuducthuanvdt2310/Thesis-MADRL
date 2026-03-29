@@ -319,7 +319,14 @@ class GNNRunner(object):
             except Exception as e:
                 print(f"Error writing to CSV: {e}")
 
-            # Compute returns and update network
+            # ── Anneal heuristic shaping weight once per episode ─────────────
+            # decay_rate=0.998 → shaping_weight reaches ~0.13 after 1000 episodes
+            #                  → ~0.02 after 2000 episodes (effectively off)
+            # Adjust decay_rate in the call below to match your episode budget.
+            SHAPING_DECAY_RATE = 0.998
+            shaping_w = self.envs.decay_shaping_weight(decay_rate=SHAPING_DECAY_RATE)
+            self.writter.add_scalar("train/shaping_weight", shaping_w, total_num_steps)
+
             self.compute()
             train_infos = self.train()
 

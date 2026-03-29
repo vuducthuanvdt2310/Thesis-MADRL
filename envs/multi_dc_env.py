@@ -106,9 +106,7 @@ class MultiDCInventoryEnv:
 
         # Fulfilled demand tracking (reset each step) — used for sale revenue bonus
         # demand_fulfilled[retailer_id] = units sold this step (array over SKUs)
-        # dc_fulfilled[dc_id] = units shipped to retailers this step (array over SKUs)
         self.demand_fulfilled = {}
-        self.dc_fulfilled = {}
 
         # Per-step demand before fulfillment — used for SL calculation
         self.step_demand = {}   # {retailer_id: np.array(n_skus)}
@@ -146,6 +144,15 @@ class MultiDCInventoryEnv:
 
         # Demand tracking
         self.demand_history = None
+
+        # ── Step 3: Previous-potential tracking for Look-Back PBRS ────────────────
+        # prev_potential[agent_id][sku] = Φ(s_{t-1}, a_{t-1})  (scalar float)
+        # Initialised to 0.0 and reset every episode so that F = Φ(s_1,a_1) − 0
+        # on the very first step (a mild positive or negative nudge, then fast learning).
+        self.prev_potential: Dict[int, Dict[int, float]] = {
+            agent_id: {sku: 0.0 for sku in range(self.n_skus)}
+            for agent_id in range(self.n_agents)
+        }
         
         # Observation/Action space definitions
         self._define_spaces()
@@ -194,7 +201,6 @@ class MultiDCInventoryEnv:
         # This creates a POSITIVE gradient toward high service level, solving the
         # 'do-nothing' local optimum where agents minimize costs by not ordering.
         self.sale_revenue_retailer = float(rewards_cfg.get('sale_revenue_retailer', 5.0))
-        self.sale_revenue_dc = float(rewards_cfg.get('sale_revenue_dc', 2.0))
 
         # --- Alpha-weighted global reward mixing ---
         # Each agent's final reward = (1 - alpha) * local + alpha * global_mean.
@@ -203,21 +209,9 @@ class MultiDCInventoryEnv:
         # alpha=1.0  → purely global (all agents share the mean reward).
         self.reward_alpha = float(rewards_cfg.get('alpha', 0.0))
 
-        # --- Bulk discount tiers for DC→Supplier orders ---
-        discount_cfg = rewards_cfg.get('bulk_discount', {})
-        self.bulk_discount_tiers = discount_cfg.get('tiers', [
-            {'threshold': 30,  'discount_rate': 0.05},
-            {'threshold': 60,  'discount_rate': 0.10},
-            {'threshold': 100, 'discount_rate': 0.15},
-            {'threshold': 150, 'discount_rate': 0.20},
-        ])
-        self.bulk_discount_tiers = sorted(
-            self.bulk_discount_tiers, key=lambda t: t['threshold'], reverse=True
-        )
-
         # --- Excess inventory penalty ---
         # Applied when inventory > target_stock_days × mean_daily_demand.
-        # Discourages hoarding far beyond what demand requires.
+        # Discourages hoarding far beyond what demands requires.
         self.target_stock_days_retailer = float(rewards_cfg.get('target_stock_days_retailer', 7))
         self.target_stock_days_dc       = float(rewards_cfg.get('target_stock_days_dc', 14))
         self.excess_penalty_retailer    = float(rewards_cfg.get('excess_penalty_retailer', 0.0))
@@ -227,16 +221,22 @@ class MultiDCInventoryEnv:
         self._retailer_target_stock = None
         self._dc_target_stock       = None
 
+        # ── Step 1 & 5: Look-Back Potential-Based Reward Shaping ──────────────────
+        # k   : scaling factor; maps |heuristic - action| → potential magnitude.
+        #        Set relative to the reward normalisation (÷ max_days) so that
+        #        shaping is in the same numerical range as the base reward.
+        # window : rolling window (steps) for heuristic demand estimation.
+        # shaping_weight : annealing multiplier; starts at 1.0 and decays to 0.
+        shaping_cfg = rewards_cfg.get('heuristic_shaping', {})
+        self.shaping_k      = float(shaping_cfg.get('k', 0.5))
+        self.shaping_window = int(shaping_cfg.get('demand_window', 14))
+        self.shaping_weight = float(shaping_cfg.get('initial_weight', 1.0))
+        self.shaping_enabled = bool(shaping_cfg.get('enabled', True))
+
     def _load_constraints(self):
         """Load constraints from config."""
-        if 'constraints' in self.config:
-            self.on_shelf_quantity = np.array(self.config['constraints']['on_shelf_quantity'], dtype=np.float32)
-        else:
-            # Default to 0 if not specified
-            self.on_shelf_quantity = np.zeros((self.n_retailers, self.n_skus), dtype=np.float32)
-
         # Safety-stock threshold: continuous penalty when inventory < threshold
-        # Separate from on_shelf_quantity (termination); this is a soft incentive.
+        # This is a soft incentive.
         constraints_cfg = self.config.get('constraints', {})
         if 'safety_stock_threshold' in constraints_cfg:
             self.safety_stock_threshold = np.array(constraints_cfg['safety_stock_threshold'], dtype=np.float32)
@@ -315,7 +315,6 @@ class MultiDCInventoryEnv:
         # Initialize per-step fulfilled-demand trackers
         for agent_id in range(self.n_agents):
             self.demand_fulfilled[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
-            self.dc_fulfilled[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
             self.step_demand[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
             self.step_demand_met[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
 
@@ -340,14 +339,17 @@ class MultiDCInventoryEnv:
         self.ep_orders_placed     = 0
         self.ep_orders_from_stock = 0
 
+        # ── Reset previous-potential to zero at episode start ──────────────────
+        for agent_id in range(self.n_agents):
+            for sku in range(self.n_skus):
+                self.prev_potential[agent_id][sku] = 0.0
+
         # demand stats are pre-computed at __init__; no need to reload CSV every episode
 
         # Pre-compute excess-inventory target stock levels (per SKU).
-        # Retailer target: target_stock_days_retailer × mean daily demand per SKU.
+        # Retailer target: fixed at starting inventory (30 units/SKU).
         # DC target: target_stock_days_dc × (n_retailers_per_dc × mean daily demand per SKU).
-        self._retailer_target_stock = (
-            self.target_stock_days_retailer * self.demand_mean
-        )  # shape: (n_skus,)
+        self._retailer_target_stock = np.full(self.n_skus, 30.0, dtype=np.float32)  # = starting inventory
         # Each DC serves a different number of retailers; use the larger group as conservative bound.
         avg_retailers_per_dc = self.n_retailers / self.n_dcs
         self._dc_target_stock = (
@@ -400,8 +402,18 @@ class MultiDCInventoryEnv:
         # === PHASE 6: Update market prices ===
         self._update_market_prices()
         
-        # === PHASE 7: Calculate rewards ===
+        # === PHASE 7: Calculate rewards (includes look-back PBRS shaping) ===
         rewards = self._calculate_rewards(actions)
+
+        # === PHASE 7b: Update prev_potential AFTER reward is computed ════════════
+        # Must happen AFTER _calculate_rewards() reads self.prev_potential for F,
+        # and BEFORE the next step overwrites actions.
+        if self.shaping_enabled and self.shaping_weight > 0.0:
+            for agent_id in range(self.n_agents):
+                for sku in range(self.n_skus):
+                    rec = self._get_heuristic_recommendation(agent_id, sku)
+                    action_sku = float(actions[agent_id][sku])
+                    self.prev_potential[agent_id][sku] = self._compute_potential(rec, action_sku)
         
         # === PHASE 8: Get observations ===
         observations = self._get_observations()
@@ -410,21 +422,7 @@ class MultiDCInventoryEnv:
         # Check max days
         time_limit_reached = self.current_day >= self.max_days
         
-        # Check on-shelf quantity constraint
-        # Terminate if ANY SKU at ANY retailer drops below the threshold
-        constraint_violated = False
-        for retailer_idx, retailer_id in enumerate(self.retailer_ids):
-            for sku in range(self.n_skus):
-                if self.inventory[retailer_id][sku] < self.on_shelf_quantity[retailer_idx][sku]:
-                    constraint_violated = True
-                    break
-            if constraint_violated:
-                break
-        
-        # Apply termination penalty if violated
-        if constraint_violated:
-            for i in range(self.n_agents):
-                rewards[i] -= self.termination_penalty
+       
 
         done = time_limit_reached
         dones = {i: done for i in range(self.n_agents)}
@@ -548,10 +546,6 @@ class MultiDCInventoryEnv:
         Args:
             retailer_orders: {dc_id: {retailer_id: {sku: qty}}}
         """
-        # Reset DC fulfilled tracker for this step
-        for dc_id in self.dc_ids:
-            self.dc_fulfilled[dc_id] = np.zeros(self.n_skus, dtype=np.float32)
-
         for dc_id in self.dc_ids:
             dc_orders = retailer_orders[dc_id]
 
@@ -574,7 +568,6 @@ class MultiDCInventoryEnv:
                             self._ship_to_retailer(dc_id, retailer_id, sku, qty,
                                                    lead_time_sample=True)
                             self.inventory[dc_id][sku] -= qty
-                            self.dc_fulfilled[dc_id][sku] += qty
                             # Cycle SL: order fulfilled without any backlog
                             self.dc_cycle_sl_orders_received[dc_id]   += 1
                             self.dc_cycle_sl_orders_no_backlog[dc_id] += 1
@@ -596,7 +589,6 @@ class MultiDCInventoryEnv:
                         if fulfilled_qty > 0:
                             self._ship_to_retailer(dc_id, retailer_id, sku,
                                                    fulfilled_qty, lead_time_sample=True)
-                            self.dc_fulfilled[dc_id][sku] += fulfilled_qty
 
                         if unfulfilled_qty > 0:
                             # Add to per-retailer backlog (NOT the flat DC backlog)
@@ -696,7 +688,6 @@ class MultiDCInventoryEnv:
                         ship_qty = min(owed, avail)
                         self._ship_to_retailer(dc_id, retailer_id, sku,
                                                ship_qty, lead_time_sample=True)
-                        self.dc_fulfilled[dc_id][sku]                         += ship_qty
                         self.inventory[dc_id][sku]                            -= ship_qty
                         self.dc_retailer_backlog[dc_id][retailer_id][sku]    -= ship_qty
     
@@ -838,26 +829,6 @@ class MultiDCInventoryEnv:
             
             self.market_prices[sku] = new_price
             self.price_history[sku].append(new_price)
-    
-    def _get_bulk_discount_rate(self, total_order_qty: float) -> float:
-        """
-        Return the applicable bulk-discount rate for a DC order to the supplier.
-
-        The discount is tiered: the highest threshold that the total order quantity
-        (summed across all SKUs) exceeds determines the discount rate.
-
-        Args:
-            total_order_qty: Sum of order quantities across all SKUs.
-
-        Returns:
-            discount_rate: A value in [0, 1] representing the fraction of the
-                           variable (market-price) ordering cost that is returned
-                           as a reward bonus.
-        """
-        for tier in self.bulk_discount_tiers:  # already sorted descending by threshold
-            if total_order_qty >= tier['threshold']:
-                return float(tier['discount_rate'])
-        return 0.0  # no discount for small orders
 
     def _calculate_rewards(self, actions: Dict[int, np.ndarray]) -> Dict[int, float]:
         """Calculate rewards for all agents.
@@ -882,10 +853,6 @@ class MultiDCInventoryEnv:
         # ---- DC rewards ----
         for dc_id in self.dc_ids:
             total_cost = 0.0
-            variable_order_cost = 0.0
-
-            total_order_qty = float(np.sum(actions[dc_id][:self.n_skus]))
-            discount_rate = self._get_bulk_discount_rate(total_order_qty)
 
             for sku in range(self.n_skus):
                 holding  = self.H_dc[dc_id][sku] * self.inventory[dc_id][sku]
@@ -902,7 +869,6 @@ class MultiDCInventoryEnv:
                     market_price = self.market_prices[sku]
                     var_cost = market_price * order_qty
                     ordering = self.C_fixed_dc[dc_id][sku] + var_cost
-                    variable_order_cost += var_cost
                 else:
                     ordering = 0.0
 
@@ -914,13 +880,7 @@ class MultiDCInventoryEnv:
 
                 total_cost += holding + backlog + ordering
 
-            # Bulk discount on ordering cost
-            bulk_discount_bonus = discount_rate * variable_order_cost
-
-            # Sale revenue for units shipped to retailers this step
-            dc_sale_revenue = self.sale_revenue_dc * float(np.sum(self.dc_fulfilled[dc_id]))
-
-            rewards[dc_id] = -total_cost + bulk_discount_bonus + dc_sale_revenue
+            rewards[dc_id] = -total_cost
 
         # ---- Retailer rewards ----
         for retailer_idx, retailer_id in enumerate(self.retailer_ids):
@@ -960,6 +920,22 @@ class MultiDCInventoryEnv:
 
             rewards[retailer_id] = -total_cost + retailer_sale_revenue
 
+        # === Step 4: Look-Back Potential-Based Reward Shaping ════════════════
+        # F(s_{t-1},a_{t-1} → s_t,a_t) = Φ(s_t,a_t) − Φ(s_{t-1},a_{t-1})
+        # R'(agent) = R(agent) + shaping_weight × Σ_sku  F_sku
+        # Computed BEFORE normalisation so that k is directly comparable with
+        # unnormalised cost magnitudes; same /max_days applied to both.
+        if self.shaping_enabled and self.shaping_weight > 0.0:
+            for agent_id in range(self.n_agents):
+                shaping_bonus = 0.0
+                for sku in range(self.n_skus):
+                    rec        = self._get_heuristic_recommendation(agent_id, sku)
+                    action_sku = float(actions[agent_id][sku])
+                    phi_curr   = self._compute_potential(rec, action_sku)
+                    phi_prev   = self.prev_potential[agent_id][sku]
+                    shaping_bonus += phi_curr - phi_prev  # F for this SKU
+                rewards[agent_id] += self.shaping_weight * shaping_bonus
+
         # === Normalize all rewards by episode length ===
         # Prevents quadratic reward blow-up from cumulative backlog costs in long episodes.
         # Per-step reward stays in a stable range regardless of max_days.
@@ -983,7 +959,110 @@ class MultiDCInventoryEnv:
 
         return rewards
 
-    
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Step 1 – Teacher Heuristic: Dynamic Base-Stock recommendation
+    # ═══════════════════════════════════════════════════════════════════════════
+    def _get_heuristic_recommendation(self, agent_id: int, sku: int) -> float:
+        """
+        Dynamic Base-Stock (Order-Up-To) heuristic for a given agent and SKU.
+
+        Formula:
+            a†(s) = max(0,  μ_recent × L  +  z × σ_recent × √L  − IP)
+
+        where:
+            μ_recent  = rolling mean demand over the last `shaping_window` steps
+            σ_recent  = rolling std  demand over the last `shaping_window` steps
+            L         = lead time (max, conservative)
+            z         = safety factor (≈ 1.28 → ~90 % service target)
+            IP        = inventory position = on-hand + pipeline − backlog
+
+        For DCs the "demand" is the aggregate retailer demand observed via
+        dc_fulfilled (units shipped); for retailers it is customer demand.
+        The heuristic is purely based on already-visible state — no look-ahead.
+        """
+        z = 1.28  # safety factor (~90% cycle service level)
+
+        if agent_id in self.dc_ids:
+            # ── DC: use historical shipments to retailers as demand proxy ──────
+            # Fallback to global demand_mean × n_assigned_retailers when
+            # not enough history is available.
+            assigned_retailers = self.dc_assignments[agent_id]
+            n_assigned = max(len(assigned_retailers), 1)
+            mu   = float(self.demand_mean[sku]) * n_assigned
+            sigma = float(self.demand_std[sku])  * n_assigned
+
+            lead_time = float(self.lt_supplier_to_dc_max)  # conservative upper bound
+
+            # Inventory position = on-hand - owed to retailers + in-pipeline
+            on_hand  = float(self.inventory[agent_id][sku])
+            owed     = sum(
+                self.dc_retailer_backlog[agent_id][r_id][sku]
+                for r_id in assigned_retailers
+            )
+            pipeline = sum(
+                o['qty'] for o in self.pipeline[agent_id] if o['sku'] == sku
+            )
+            ip = on_hand - owed + pipeline
+
+        else:
+            # ── Retailer: use recent customer demand history ──────────────────
+            retailer_idx = self.retailer_ids.index(agent_id)
+            if (retailer_idx < len(self.demand_history[sku]) and
+                    len(self.demand_history[sku][retailer_idx]) >= 2):
+                hist = self.demand_history[sku][retailer_idx][-self.shaping_window:]
+                mu    = float(np.mean(hist))
+                sigma = float(np.std(hist)) if len(hist) > 1 else float(self.demand_std[sku])
+            else:
+                mu    = float(self.demand_mean[sku])
+                sigma = float(self.demand_std[sku])
+
+            lead_time = float(self.lt_dc_to_retailer)  # fixed 1-day
+
+            on_hand  = float(self.inventory[agent_id][sku])
+            backlog  = float(self.backlog[agent_id][sku])
+            pipeline = sum(
+                o['qty'] for o in self.pipeline[agent_id] if o['sku'] == sku
+            )
+            ip = on_hand - backlog + pipeline
+
+        # Order-up-to level: mean demand over lead time + safety buffer
+        out_level = mu * lead_time + z * sigma * float(np.sqrt(max(lead_time, 1)))
+        recommendation = max(0.0, out_level - ip)
+        return float(recommendation)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Step 2 – Potential Function Φ(s, a)
+    # ═══════════════════════════════════════════════════════════════════════════
+    def _compute_potential(self, recommendation: float, action: float) -> float:
+        """
+        Φ(s, a) = -k · |a†(s) - a|
+
+        The potential is maximised (least negative) when the agent's action
+        exactly matches the heuristic recommendation.  It decreases linearly
+        as the agent deviates in either direction.
+        """
+        return -self.shaping_k * abs(recommendation - action)
+
+    # ═══════════════════════════════════════════════════════════════════════════
+    # Step 5 – Annealing helper (called by the external training loop)
+    # ═══════════════════════════════════════════════════════════════════════════
+    def decay_shaping_weight(self, decay_rate: float = 0.995) -> float:
+        """
+        Multiply the shaping weight by `decay_rate` (clamped to [0, 1]).
+
+        Call once per episode from the training loop:
+            env.decay_shaping_weight(decay_rate=0.998)
+
+        Args:
+            decay_rate: Multiplicative factor in (0, 1].  Default 0.995
+                        anneals from 1.0 → ~0.007 over 1,000 episodes.
+
+        Returns:
+            Updated shaping_weight (for logging).
+        """
+        self.shaping_weight = max(0.0, self.shaping_weight * decay_rate)
+        return self.shaping_weight
+
     def _get_observations(self) -> Dict[int, np.ndarray]:
         """Build observations for all agents."""
         observations = {}

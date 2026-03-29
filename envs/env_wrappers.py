@@ -385,6 +385,17 @@ class SubprocVecEnvMultiDC(object):
         # Return empty list for compatibility
         return []
 
+    def decay_shaping_weight(self, decay_rate: float = 0.995) -> float:
+        """Anneal the heuristic shaping weight across all parallel envs.
+
+        Calls decay_shaping_weight(decay_rate) on every environment in the
+        pool and returns the weight from the first env (they stay in sync).
+        """
+        w = 1.0
+        for env in self.env_list:
+            w = env.decay_shaping_weight(decay_rate)
+        return w
+
 
 class DummyVecEnvMultiDC(object):
     """Single (non-parallel) environment wrapper for Multi-DC."""
@@ -487,4 +498,8 @@ class DummyVecEnvMultiDC(object):
     def get_eval_bw_res(self):
         """Return evaluation bullwhip results (for compatibility)."""
         return []
+
+    def decay_shaping_weight(self, decay_rate: float = 0.995) -> float:
+        """Anneal the heuristic shaping weight for the single eval env."""
+        return self.env_list[0].decay_shaping_weight(decay_rate)
 

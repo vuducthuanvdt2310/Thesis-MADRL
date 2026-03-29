@@ -146,26 +146,65 @@ class DiagGaussian(nn.Module):
         nn.init.constant_(self.fc_log_std.weight, 0.0)
         nn.init.constant_(self.fc_log_std.bias, 0.0)
 
-    def forward(self, x, available_actions=None):
-        # ── Action mean ───────────────────────────────────────────────────────
-        action_mean = self.fc_mean(x)
+    def forward(self, x, available_actions=None, reference_demand=None):
+        """
+        Args:
+            x: hidden state [batch, num_inputs]
+            available_actions: not used for continuous
+            reference_demand: demand at current step [batch, num_outputs] or None.
+                              When provided, uses Approach A: Demand + Residual.
+                              When None, falls back to standard tanh squashing.
+        """
+        # ── Action mean ─────────────────────────────────────────────────────────
+        # `action_mean` is the raw MLP output — completely unbounded (-inf, +inf).
+        raw_mean = self.fc_mean(x)  # shape: [batch, num_skus]
 
-        if self.action_low is not None and self.action_range is not None:
-            tanh_out = torch.tanh(action_mean)
+        if reference_demand is not None:
+            # ── Approach A: Demand + Residual ──────────────────────────────────
+            # Instead of mapping raw_mean to [0, MAX_ORDER] with tanh (which saturates
+            # at the boundary and kills gradients), we compute a SMALL ADJUSTMENT
+            # relative to the actual observation demand.
+            #
+            # max_residual = 1/3 of action range:
+            #   Retailer range = 3  → max_residual = 1.0  (order demand ± 1 unit)
+            #   DC range = 5000     → max_residual = 1666 (order demand ± 1666 units)
+            #
+            # Even if raw_mean → +∞, tanh saturates at +1.0, so scaled_mean can
+            # rise at MOST by max_residual above demand — never touches the ceiling.
+            # Gradient of tanh is healthy because raw_mean stays in a small range.
+            #
+            #   adjustment   = tanh(raw_mean) × max_residual   ∈ (-max_r, +max_r)
+            #   target_mean  = reference_demand + adjustment
+            #   scaled_mean  = clamp(target_mean, action_low, action_low + action_range)
+
+            action_low   = self.action_low   if self.action_low   is not None else 0.0
+            action_range = self.action_range if self.action_range is not None else 3.0
+            max_residual = action_range / 3.0
+
+            adjustment        = torch.tanh(raw_mean) * max_residual
+            target_mean       = reference_demand + adjustment
+            action_mean_scaled = torch.clamp(target_mean,
+                                             min=action_low,
+                                             max=action_low + action_range)
+
+        elif self.action_low is not None and self.action_range is not None:
+            # ── Fallback: standard tanh squashing ──────────────────────────────
+            # Used for agents without explicit demand obs (e.g. DCs).
+            tanh_out           = torch.tanh(raw_mean)
             action_mean_scaled = self.action_low + ((tanh_out + 1.0) / 2.0) * self.action_range
         else:
-            action_mean_scaled = action_mean
+            action_mean_scaled = raw_mean
 
-        # ── Action std (observation-dependent) ───────────────────────────────
-        # softplus(x) = log(1 + e^x) > 0 always — cannot collapse to 0.
-        # MIN_STD floor ensures a minimum level of exploration at all times.
-        # MAX_STD cap prevents overly noisy actions early in training.
-        MIN_STD = 0.05
-        MAX_STD = self.std_y_coef          # max ≈ 0.5 (matches old parameterisation)
-        log_std_raw = self.fc_log_std(x)   # shape: [batch, num_outputs], varies per step
+        # ── Action std (observation-dependent) ──────────────────────────────────
+        # softplus(x) = log(1 + exp(x)) > 0 always → std never collapses to 0.
+        # Clamped to [MIN_STD, MAX_STD] to guarantee healthy exploration every step.
+        MIN_STD     = 0.05
+        MAX_STD     = self.std_y_coef                   # = 1.5 (set in train script)
+        log_std_raw = self.fc_log_std(x)                # [batch, num_skus], varies per step
         action_std  = torch.clamp(F.softplus(log_std_raw), min=MIN_STD, max=MAX_STD)
 
         return FixedNormal(action_mean_scaled, action_std)
+
 
 class Bernoulli(nn.Module):
     def __init__(self, num_inputs, num_outputs, use_orthogonal=True, gain=0.01):
