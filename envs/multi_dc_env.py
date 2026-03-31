@@ -269,7 +269,7 @@ class MultiDCInventoryEnv:
         
         # Action space bounds for DCs and Retailers
         self.action_space_dc = spaces.Box(0, 1000, (self.action_dim,), dtype=np.float32)
-        self.action_space_retailer = spaces.Box(0, 3, (self.action_dim,), dtype=np.float32)
+        self.action_space_retailer = spaces.Box(0, 10, (self.action_dim,), dtype=np.float32)
 
         # Uniform action space for compatibility
         self.action_space = spaces.Box(0, 1000, (self.action_dim,), dtype=np.float32)
@@ -492,7 +492,7 @@ class MultiDCInventoryEnv:
             if agent_id in self.dc_ids:
                 clipped[agent_id] = np.clip(action, 0, 5000)   # DC: 0 to 5000 units
             else:
-                clipped[agent_id] = np.clip(action, 0, 3)    # Retailer: 0 to 100 units
+                clipped[agent_id] = np.clip(action, 0, 10)    # Retailer: 0 to 100 units
         return clipped
 
 
@@ -980,7 +980,7 @@ class MultiDCInventoryEnv:
         dc_fulfilled (units shipped); for retailers it is customer demand.
         The heuristic is purely based on already-visible state — no look-ahead.
         """
-        z = 1.28  # safety factor (~90% cycle service level)
+        z = 1.95  # safety factor (~90% cycle service level)
 
         if agent_id in self.dc_ids:
             # ── DC: use historical shipments to retailers as demand proxy ──────
@@ -1016,7 +1016,7 @@ class MultiDCInventoryEnv:
                 mu    = float(self.demand_mean[sku])
                 sigma = float(self.demand_std[sku])
 
-            lead_time = float(self.lt_dc_to_retailer)  # fixed 1-day
+            lead_time = 7  # fixed 1-day
 
             on_hand  = float(self.inventory[agent_id][sku])
             backlog  = float(self.backlog[agent_id][sku])
