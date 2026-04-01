@@ -74,20 +74,28 @@ class NumpyEncoder(json.JSONEncoder):
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description='Evaluate Base-Stock Policy on Multi-DC Inventory Environment'
+        description='Evaluate (s,S) Heuristic Policy on Multi-DC Inventory Environment'
     )
 
-    # Base-stock levels (configurable, one per agent type)
-    parser.add_argument('--basestock_dc', type=float, default=100.0,
-                        help='Base-stock level for each DC (units per SKU; default 500)')
-    parser.add_argument('--basestock_retailer', type=float, default=5.0,
-                        help='Base-stock level for each retailer (units per SKU; default 8)')
+    # (s,S) policy levels — separate for DCs and Retailers
+    # DC: reorder when IP ≤ s_dc, order up to S_dc (per SKU)
+    parser.add_argument('--s_dc', type=float, default=50.0,
+                        help='Reorder point for DCs (units per SKU; default 50)')
+    parser.add_argument('--S_dc', type=float, default=300.0,
+                        help='Order-up-to level for DCs (units per SKU; default 300)')
+    # Retailer: reorder when IP ≤ s_retailer, order up to S_retailer (per SKU)
+    parser.add_argument('--s_retailer', type=float, default=3.0,
+                        help='Reorder point for Retailers (units per SKU; default 3)')
+    parser.add_argument('--S_retailer', type=float, default=12.0,
+                        help='Order-up-to level for Retailers (units per SKU; default 12)')
 
     # Episode settings
-    parser.add_argument('--num_episodes', type=int, default=1,
-                        help='Number of evaluation episodes (default: 1)')
+    parser.add_argument('--num_episodes', type=int, default=100,
+                        help='Number of evaluation episodes (default: 100 for validation)')
     parser.add_argument('--episode_length', type=int, default=365,
-                        help='Length of each episode in days (default: 90)')
+                        help='Length of each episode in days (default: 365)')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='Random seed for reproducibility (default: 42)')
 
     # Environment config
     parser.add_argument('--config_path', type=str,
@@ -108,33 +116,37 @@ def parse_args():
 # Base-Stock Policy
 # ---------------------------------------------------------------------------
 
-class BaseStockPolicy:
+class SsPolicy:
     """
-    Fixed base-stock (order-up-to) policy.
+    (s, S) Inventory Policy — reorder only when Inventory Position drops at or
+    below the reorder point `s`; then order up to the order-up-to level `S`.
 
     At each step, for each agent and SKU:
-        order_qty = max(0,  S  -  IP)
+        IP = on-hand + in-pipeline - backlog (retailers) / owed-to-retailers (DCs)
+        if IP <= s:
+            order_qty = S - IP   (always positive since S > s)
+        else:
+            order_qty = 0
 
-    where IP = on-hand inventory + in-pipeline - backlog (for retailers).
-    For DCs, backlog is replaced by the aggregate owed-to-retailers quantity.
+    Separate (s, S) parameters for DC agents and Retailer agents.
 
     Parameters
     ----------
-    S_dc : float
-        Per-SKU base-stock level for DC agents.
-    S_retailer : float
-        Per-SKU base-stock level for retailer agents.
-    n_dcs : int
-        Number of DC agents.
-    n_agents : int
-        Total number of agents.
-    n_skus : int
-        Number of SKUs per agent.
+    s_dc, S_dc : float
+        Reorder point and order-up-to level for DCs (per SKU).
+    s_retailer, S_retailer : float
+        Reorder point and order-up-to level for Retailers (per SKU).
+    n_dcs, n_agents, n_skus : int
     """
 
-    def __init__(self, S_dc: float, S_retailer: float,
+    def __init__(self, s_dc: float, S_dc: float,
+                 s_retailer: float, S_retailer: float,
                  n_dcs: int, n_agents: int, n_skus: int):
+        assert S_dc > s_dc,       f'S_dc ({S_dc}) must be > s_dc ({s_dc})'
+        assert S_retailer > s_retailer, f'S_retailer ({S_retailer}) must be > s_retailer ({s_retailer})'
+        self.s_dc = s_dc
         self.S_dc = S_dc
+        self.s_retailer = s_retailer
         self.S_retailer = S_retailer
         self.n_dcs = n_dcs
         self.n_agents = n_agents
@@ -142,7 +154,7 @@ class BaseStockPolicy:
 
     def get_actions(self, env: MultiDCInventoryEnv) -> dict:
         """
-        Compute base-stock actions for all agents given the current env state.
+        Compute (s,S) actions for all agents given the current env state.
 
         Returns
         -------
@@ -162,24 +174,30 @@ class BaseStockPolicy:
                 )
 
                 if agent_id < self.n_dcs:
-                    # DC: inventory position = on-hand - owed_to_retailers + pipeline
+                    # DC: IP = on-hand - owed_to_retailers + pipeline
                     owed = sum(
                         env.dc_retailer_backlog[agent_id][r_id][sku]
                         for r_id in env.dc_assignments[agent_id]
                     )
                     ip = on_hand - owed + pipeline_qty
-                    S = self.S_dc
+                    s, S = self.s_dc, self.S_dc
                 else:
-                    # Retailer: inventory position = on-hand - backlog + pipeline
+                    # Retailer: IP = on-hand - backlog + pipeline
                     backlog = float(env.backlog[agent_id][sku])
                     ip = on_hand - backlog + pipeline_qty
-                    S = self.S_retailer
+                    s, S = self.s_retailer, self.S_retailer
 
-                order[sku] = max(0.0, S - ip)
+                # (s,S) trigger: only order when IP reaches or drops below s
+                if ip <= s:
+                    order[sku] = max(0.0, S - ip)
+                # else: order[sku] stays 0
 
             actions[agent_id] = order
 
         return actions
+
+# Keep old name as alias for backward compatibility
+BaseStockPolicy = SsPolicy
 
 
 # ---------------------------------------------------------------------------
@@ -214,10 +232,12 @@ class BaseStockEvaluator:
         self.n_dcs    = self.env.n_dcs
         self.n_skus   = self.env.n_skus
 
-        # Instantiate the base-stock policy
-        self.policy = BaseStockPolicy(
-            S_dc=args.basestock_dc,
-            S_retailer=args.basestock_retailer,
+        # Instantiate the (s,S) policy
+        self.policy = SsPolicy(
+            s_dc=args.s_dc,
+            S_dc=args.S_dc,
+            s_retailer=args.s_retailer,
+            S_retailer=args.S_retailer,
             n_dcs=self.n_dcs,
             n_agents=self.n_agents,
             n_skus=self.n_skus,
@@ -233,14 +253,15 @@ class BaseStockEvaluator:
 
     def _print_header(self):
         print('=' * 70)
-        print('Base-Stock Policy Evaluation (Baseline)')
+        print('(s,S) Heuristic Policy Evaluation')
         print('=' * 70)
-        print(f'Config          : {self.args.config_path}')
-        print(f'Num episodes    : {self.args.num_episodes}')
-        print(f'Episode length  : {self.args.episode_length} days')
-        print(f'S_dc (per SKU)  : {self.args.basestock_dc}')
-        print(f'S_retailer      : {self.args.basestock_retailer}')
-        print(f'Results dir     : {str(Path(self.args.save_dir) / (self.args.experiment_name or "basestock_...") )}')
+        print(f'Config           : {self.args.config_path}')
+        print(f'Num episodes     : {self.args.num_episodes}')
+        print(f'Episode length   : {self.args.episode_length} days')
+        print(f'Seed             : {getattr(self.args, "seed", 42)}')
+        print(f'DC  (s, S)       : ({self.args.s_dc}, {self.args.S_dc}) per SKU')
+        print(f'Retailer (s, S)  : ({self.args.s_retailer}, {self.args.S_retailer}) per SKU')
+        print(f'Results dir      : {str(Path(self.args.save_dir) / (self.args.experiment_name or "ss_heuristic_..."))}')
         print('=' * 70 + '\n')
 
     def _create_env(self) -> MultiDCInventoryEnv:
@@ -261,8 +282,13 @@ class BaseStockEvaluator:
     # ------------------------------------------------------------------
 
     def evaluate(self):
+        # ── Reproducibility ────────────────────────────────────────────────
+        seed = getattr(self.args, 'seed', 42)
+        np.random.seed(seed)
+        # ───────────────────────────────────────────────────────────────────
+
         print('=' * 70)
-        print(f'Starting Base-Stock Evaluation: {self.args.num_episodes} episode(s)')
+        print(f'Starting (s,S) Heuristic Evaluation: {self.args.num_episodes} episode(s)  [seed={seed}]')
         print('=' * 70 + '\n')
 
         for ep in range(self.args.num_episodes):
@@ -642,29 +668,29 @@ class BaseStockEvaluator:
         print(f'[OK] Saved metrics JSON : {path.name}')
 
     def _save_metrics_csv(self):
-        path = self.save_dir / 'episode_metrics.csv'
-        with open(path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            header = ['episode', 'total_reward', 'total_cost']
-            for aid in range(self.n_agents):
-                prefix = f'{"DC" if aid < self.n_dcs else "R"}{aid}'
-                header += [f'{prefix}_reward', f'{prefix}_cost',
-                           f'{prefix}_avg_inv', f'{prefix}_avg_bl',
-                           f'{prefix}_svc_lvl']
-            writer.writerow(header)
-
-            for ep_num, m in enumerate(self.episode_metrics):
-                row = [ep_num + 1, m['total_reward'], m['total_cost']]
-                for aid in range(self.n_agents):
-                    row += [
-                        m['agent_rewards'][aid],
-                        m['agent_costs'][aid],
-                        m['avg_inventory'][aid],
-                        m['avg_backlog'][aid],
-                        m['service_level'][aid],
-                    ]
-                writer.writerow(row)
-        print(f'[OK] Saved metrics CSV  : {path.name}')
+        # Primary output: standardised validation file
+        results_path = self.save_dir / 'results_ss_heuristic.csv'
+        compat_path  = self.save_dir / 'episode_metrics.csv'
+        for path in (results_path, compat_path):
+            with open(path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Episode_Index', 'Total_Cost', 'Fill_Rate', 'Lost_Sales', 'Avg_Inventory'])
+                for ep_num, m in enumerate(self.episode_metrics):
+                    # Fill_Rate: average of per-agent service_level (original method)
+                    fill_rate = float(np.mean(m['service_level']))
+                    # Lost_Sales: total unfulfilled demand units pooled across all retailer agents
+                    total_placed     = sum(m['_orders_placed'][aid]     for aid in range(self.n_dcs, self.n_agents))
+                    total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(self.n_dcs, self.n_agents))
+                    lost_sales = total_placed - total_from_stock
+                    avg_inventory = float(np.mean(m['avg_inventory']))
+                    writer.writerow([
+                        ep_num + 1,
+                        round(m['total_cost'], 4),
+                        round(fill_rate, 4),
+                        round(lost_sales, 4),
+                        round(avg_inventory, 4),
+                    ])
+        print(f'[OK] Saved metrics CSV  : {results_path.name}  (also {compat_path.name})')
 
     # ------------------------------------------------------------------
     # Step-trajectory Excel (mirrors _save_step_trajectory_excel)

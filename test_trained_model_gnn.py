@@ -61,10 +61,12 @@ def parse_args():
                         help='Path to environment config file (unused but kept for compatibility)')
 
     # Episode settings
-    parser.add_argument('--num_episodes', type=int, default=5,
-                        help='Number of evaluation episodes')
+    parser.add_argument('--num_episodes', type=int, default=100,
+                        help='Number of evaluation episodes (default: 100 for validation)')
     parser.add_argument('--episode_length', type=int, default=365,
                         help='Length of each episode in days')
+    parser.add_argument('--seed', type=int, default=42,
+                        help='Random seed for reproducibility (default: 42)')
 
     # Output
     parser.add_argument('--save_dir', type=str, default='evaluation_results',
@@ -339,8 +341,17 @@ class GNNModelEvaluator:
     # ------------------------------------------------------------------
 
     def evaluate(self):
+        # ── Reproducibility ────────────────────────────────────────────────
+        import torch as _torch
+        seed = getattr(self.args, 'seed', 42)
+        np.random.seed(seed)
+        _torch.manual_seed(seed)
+        if _torch.cuda.is_available():
+            _torch.cuda.manual_seed_all(seed)
+        # ───────────────────────────────────────────────────────────────────
+
         print('=' * 70)
-        print(f'Starting GNN Evaluation: {self.args.num_episodes} episode(s)')
+        print(f'Starting GNN Evaluation: {self.args.num_episodes} episode(s)  [seed={seed}]')
         print('=' * 70 + '\n')
 
         for ep in range(self.args.num_episodes):
@@ -623,8 +634,8 @@ class GNNModelEvaluator:
                                 'demand_cap_2': float(dm[2] + 3 * ds[2]) if len(dm) > 2 else 0,
                                 'inv_scale_retailer': 150.0,
                                 'backlog_scale_retailer': 100.0,
-                                'order_min_retailer': 20.0,
-                                'order_max_retailer': 70.0,
+                                'order_min_retailer': 0,
+                                'order_max_retailer': 10.0,
                             }
 
                 if step == self.args.episode_length - 1:
@@ -858,24 +869,30 @@ class GNNModelEvaluator:
 
     def _save_metrics_csv(self):
         import csv
-        path = self.save_dir / 'episode_metrics.csv'
-        with open(path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            header = ['episode', 'total_reward', 'total_cost']
-            for aid in range(self.n_agents):
-                prefix = f'{"DC" if aid < 2 else "R"}{aid}'
-                header += [f'{prefix}_reward', f'{prefix}_cost',
-                           f'{prefix}_avg_inv', f'{prefix}_avg_bl',
-                           f'{prefix}_svc_lvl']
-            writer.writerow(header)
-            for ep_num, m in enumerate(self.episode_metrics):
-                row = [ep_num + 1, m['total_reward'], m['total_cost']]
-                for aid in range(self.n_agents):
-                    row += [m['agent_rewards'][aid], m['agent_costs'][aid],
-                            m['avg_inventory'][aid], m['avg_backlog'][aid],
-                            m['service_level'][aid]]
-                writer.writerow(row)
-        print(f'[OK] Saved metrics CSV : {path.name}')
+        # Primary output: standardised validation file
+        results_path = self.save_dir / 'results_gnn_happo.csv'
+        # Also keep the generic name for backward compat
+        compat_path  = self.save_dir / 'episode_metrics.csv'
+        for path in (results_path, compat_path):
+            with open(path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Episode_Index', 'Total_Cost', 'Fill_Rate', 'Lost_Sales', 'Avg_Inventory'])
+                for ep_num, m in enumerate(self.episode_metrics):
+                    # Fill_Rate: average of per-agent service_level (original method)
+                    fill_rate = float(np.mean(m['service_level']))
+                    # Lost_Sales: total unfulfilled demand units pooled across all retailer agents
+                    total_placed     = sum(m['_orders_placed'][aid]     for aid in range(2, self.n_agents))
+                    total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(2, self.n_agents))
+                    lost_sales = total_placed - total_from_stock
+                    avg_inventory = float(np.mean(m['avg_inventory']))
+                    writer.writerow([
+                        ep_num + 1,
+                        round(m['total_cost'], 4),
+                        round(fill_rate, 4),
+                        round(lost_sales, 4),
+                        round(avg_inventory, 4),
+                    ])
+        print(f'[OK] Saved metrics CSV : {results_path.name}  (also {compat_path.name})')
 
     def _create_visualizations(self, stats):
         print('Creating visualizations...')

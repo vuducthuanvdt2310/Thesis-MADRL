@@ -54,10 +54,12 @@ def parse_test_args():
                        help='Path to environment config file')
     
     # Testing parameters
-    parser.add_argument('--num_episodes', type=int, default=50,
-                       help='Number of evaluation episodes to run')
+    parser.add_argument('--num_episodes', type=int, default=100,
+                       help='Number of evaluation episodes to run (default: 100 for validation)')
     parser.add_argument('--episode_length', type=int, default=90,
                        help='Length of each episode (days)')
+    parser.add_argument('--seed', type=int, default=42,
+                       help='Random seed for reproducibility (default: 42)')
     
     # Output settings
     parser.add_argument('--save_dir', type=str, default='evaluation_results',
@@ -296,8 +298,17 @@ class ModelEvaluator:
     
     def evaluate(self):
         """Run evaluation episodes and collect metrics."""
+        # ── Reproducibility ────────────────────────────────────────────────
+        seed = getattr(self.args, 'seed', 42)
+        np.random.seed(seed)
+        import torch as _torch
+        _torch.manual_seed(seed)
+        if _torch.cuda.is_available():
+            _torch.cuda.manual_seed_all(seed)
+        # ───────────────────────────────────────────────────────────────────
+
         print(f"{'='*70}")
-        print(f"Starting Evaluation: {self.args.num_episodes} episodes")
+        print(f"Starting Evaluation: {self.args.num_episodes} episodes  [seed={seed}]")
         print(f"{'='*70}\n")
         
         for episode in range(self.args.num_episodes):
@@ -351,10 +362,13 @@ class ModelEvaluator:
             'final_backlog': None,
             'avg_inventory': [0] * self.args.num_agents,
             'avg_backlog': [0] * self.args.num_agents,
-            # Service level: true demand fill-rate = demand_met / total_demand
+            # Service level: order-count fill-rate (retailers): orders_from_stock / orders_placed
             'service_level': [0] * self.args.num_agents,
             '_demand_total': [0.0] * self.args.num_agents,   # cumulative demand (retailers only)
             '_demand_met':   [0.0] * self.args.num_agents,   # cumulative demand fulfilled
+            # Order-count fill-rate accumulators (mirrors test_trained_model_gnn.py)
+            '_orders_placed':     [0] * self.args.num_agents,
+            '_orders_from_stock': [0] * self.args.num_agents,
         }
 
         # Trajectory data (only for first episode)
@@ -483,21 +497,20 @@ class ModelEvaluator:
                                 var_cost = env_state.C_var_retailer[retailer_idx][assigned_dc][sku]
                                 ordering_cost_step += env_state.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_qty)
 
-                        # --- True service level: use exact demand_fulfilled tracked by env ---
-                        # demand_fulfilled[retailer_id][sku] is set precisely inside
-                        # _process_customer_demand() each step.
+                        # --- Order-count fill rate (same as test_trained_model_gnn.py) ---
                         for sku in range(3):
+                            placed = env_state.step_orders_placed.get(agent_id, {}).get(sku, 0)
+                            from_stock = env_state.step_orders_from_stock.get(agent_id, {}).get(sku, 0)
+                            episode_data['_orders_placed'][agent_id]     += placed
+                            episode_data['_orders_from_stock'][agent_id] += from_stock
+                            # Also keep legacy demand tracking for service_level field
                             actual_demand = 0.0
                             if (sku < len(env_state.demand_history) and
                                     retailer_idx < len(env_state.demand_history[sku]) and
                                     len(env_state.demand_history[sku][retailer_idx]) > 0):
                                 actual_demand = float(env_state.demand_history[sku][retailer_idx][-1])
                             episode_data['_demand_total'][agent_id] += actual_demand
-                            # demand_fulfilled is now exact (partial fulfillment tracked)
-                            if retailer_id in env_state.demand_fulfilled:
-                                episode_data['_demand_met'][agent_id] += float(
-                                    env_state.demand_fulfilled[retailer_id][sku]
-                                )
+                            episode_data['_demand_met'][agent_id] += float(from_stock)
                     
                     # Accumulate cost components
                     episode_data['holding_costs'][agent_id] += holding_cost_step
@@ -630,40 +643,32 @@ class ModelEvaluator:
         print(f"✓ Saved metrics JSON: {json_path.name}")
     
     def _save_metrics_csv(self):
-        """Save episode metrics to CSV file."""
+        """Save episode metrics to CSV file (one row per episode, system-wide metrics only)."""
         import csv
-        
-        csv_path = self.save_dir / "episode_metrics.csv"
-        
-        with open(csv_path, 'w', newline='') as f:
-            writer = csv.writer(f)
-            
-            # Header
-            header = ['episode', 'total_reward', 'total_cost']
-            for agent_id in range(self.args.num_agents):
-                agent_type = "DC" if agent_id < 2 else "Retailer"
-                prefix = f"{agent_type}{agent_id}"
-                header.extend([
-                    f'{prefix}_reward', f'{prefix}_cost',
-                    f'{prefix}_avg_inv', f'{prefix}_avg_backlog',
-                    f'{prefix}_service_level'
-                ])
-            writer.writerow(header)
-            
-            # Data rows
-            for ep_num, metrics in enumerate(self.episode_metrics):
-                row = [ep_num + 1, metrics['total_reward'], metrics['total_cost']]
-                for agent_id in range(self.args.num_agents):
-                    row.extend([
-                        metrics['agent_rewards'][agent_id],
-                        metrics['agent_costs'][agent_id],
-                        metrics['avg_inventory'][agent_id],
-                        metrics['avg_backlog'][agent_id],
-                        metrics['service_level'][agent_id]
+
+        results_path = self.save_dir / 'results_standard_happo.csv'
+        compat_path  = self.save_dir / 'episode_metrics.csv'
+
+        for csv_path in (results_path, compat_path):
+            with open(csv_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['Episode_Index', 'Total_Cost', 'Fill_Rate', 'Lost_Sales', 'Avg_Inventory'])
+
+                for ep_num, metrics in enumerate(self.episode_metrics):
+                    fill_rate = float(np.mean(metrics['service_level']))
+                    total_placed     = sum(metrics['_orders_placed'][aid]     for aid in range(2, self.args.num_agents))
+                    total_from_stock = sum(metrics['_orders_from_stock'][aid] for aid in range(2, self.args.num_agents))
+                    lost_sales = total_placed - total_from_stock
+                    avg_inventory = float(np.mean(metrics['avg_inventory']))
+                    writer.writerow([
+                        ep_num + 1,
+                        round(metrics['total_cost'], 4),
+                        round(fill_rate, 4),
+                        round(lost_sales, 4),
+                        round(avg_inventory, 4),
                     ])
-                writer.writerow(row)
-        
-        print(f"✓ Saved metrics CSV: {csv_path.name}")
+
+        print(f"✓ Saved metrics CSV: {results_path.name}  (also {compat_path.name})")
     
     def _create_visualizations(self, stats):
         """Create comprehensive visualizations."""
