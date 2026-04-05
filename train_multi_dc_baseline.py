@@ -123,7 +123,13 @@ if __name__ == "__main__":
         eval_episodes=5,
         log_interval=1,
         n_warmup_evaluations=3,  # Minimum evaluations before early stopping kicks in
-        n_no_improvement_thres=1000  # Allow 20 evaluations without improvement before stopping
+        n_no_improvement_thres=1000,  # Allow 20 evaluations without improvement before stopping
+        
+        # --- EXPLORATION HYPERPARAMETERS ---
+        # Prevents the pure HAPPO policy from prematurely saturating at the maximum action (10)
+        entropy_coef=0.08,   # Penalizes deterministic actions to encourage exploration
+        std_x_coef=2.0,      # Increases initial action standard deviation
+        std_y_coef=1.5       # Allows the standard deviation to reach higher maximum bounds
     )
     
     all_args = parse_args(sys.argv[1:], parser)

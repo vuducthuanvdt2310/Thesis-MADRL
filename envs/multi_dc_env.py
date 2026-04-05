@@ -36,12 +36,6 @@ class MultiDCInventoryEnv:
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
         
-        # Load demand data from CSV
-        import pandas as pd
-        demand_path = 'data/demand_history.csv'
-        self.demand_df = pd.read_csv(demand_path)
-        print(f"[MultiDCEnv] Loaded demand data: {len(self.demand_df)} days")
-        
         # Network topology
         self.n_dcs = 2  # Distribution Centers
         self.n_retailers = self.config['environment'].get('n_retailers', 3)  # Retail locations
@@ -783,15 +777,13 @@ class MultiDCInventoryEnv:
     
     def _compute_retailer_demand_stats(self):
         """
-        Compute a single shared demand distribution (mean, std per SKU)
-        from the demand history CSV. All retailers sample from this same
-        Normal distribution, so demand is stochastic but identically
-        distributed across retailers.
+        Load shared demand distribution (mean, std per SKU) from configuration.
+        All retailers sample from this same Normal distribution, so demand
+        is stochastic but identically distributed across retailers.
         """
-        sku_cols = ['sku_0_demand', 'sku_1_demand', 'sku_2_demand']
-        self.demand_mean = np.array([self.demand_df[c].mean() for c in sku_cols], dtype=np.float32)
+        self.demand_mean = np.array(self.config['demand']['mean'], dtype=np.float32)
         self.demand_std  = np.maximum(
-            np.array([self.demand_df[c].std() for c in sku_cols], dtype=np.float32),
+            np.array(self.config['demand']['std'], dtype=np.float32),
             0.1  # ensure std > 0
         )
         print(f"[MultiDCEnv] Demand distribution (shared across all retailers):")

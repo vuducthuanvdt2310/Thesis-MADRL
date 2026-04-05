@@ -193,7 +193,8 @@ def collect_rollout(env: LiteEnvWrapper, policies, trainers, buffers, args):
                 rnn_states[:, agent_id],         # (1, recN, hidden)
                 rnn_states_critic[:, agent_id],
                 masks[:, agent_id],
-                None                             # no available_actions
+                None,                            # no available_actions
+                agent_id=agent_id
             )
             values.append(_t2n(value))
             actions_list.append(_t2n(action))

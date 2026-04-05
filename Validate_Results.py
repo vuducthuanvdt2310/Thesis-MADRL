@@ -11,8 +11,9 @@ Input:  Three results_*.csv files, each with 100 rows (one per episode).
         Columns: Episode_Index, Total_Cost, Fill_Rate, Lost_Sales, Avg_Inventory
 
 Output:
-  • final_validation_report.csv      – summary table (Mean ± 95% CI)
-  • comparison_boxplots.png          – side-by-side box plots
+  • final_validation_report.csv          – summary table (Mean ± 95% CI)
+  • comparison_boxplot_cost.png          – Total Cost box plot
+  • comparison_boxplot_fill_rate.png     – Fill Rate box plot
   • Printed summary + t-test results to console
 
 Usage:
@@ -45,7 +46,7 @@ from scipy import stats
 PATHS: dict[str, str] = {
     "GNN-HAPPO":      "evaluation_results/eval_gnn1/results_gnn_happo.csv",
     "Standard-HAPPO": "evaluation_results/eval_base/results_standard_happo.csv",
-    "S-s-Heuristic":  "evaluation_results/basestock_20260331_203010/results_ss_heuristic.csv",
+    "S-s-Heuristic":  "evaluation_results/basestock/results_ss_heuristic.csv",
 }
 
 # Metrics to analyse (must match CSV column names exactly)
@@ -153,18 +154,14 @@ PALETTE = {
 }
 
 
-def plot_boxplots(data: dict[str, pd.DataFrame], out_path: Path) -> None:
+def plot_boxplots(data: dict[str, pd.DataFrame], out_dir: Path) -> None:
     """
-    1×2 figure:
-      left  – Total Cost box plot
-      right – Fill Rate box plot
+    Generate two separate files:
+      - comparison_boxplot_cost.png
+      - comparison_boxplot_fill_rate.png
     Professional styling (seaborn whitegrid).
     """
     sns.set_theme(style="whitegrid", font_scale=1.15)
-
-    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
-    fig.suptitle("Policy Comparison: 100-Episode Evaluation (seed=42)",
-                 fontsize=15, fontweight="bold", y=1.01)
 
     model_names = list(PATHS.keys())
     colors      = [PALETTE.get(m, "#888888") for m in model_names]
@@ -173,9 +170,17 @@ def plot_boxplots(data: dict[str, pd.DataFrame], out_path: Path) -> None:
     def ordered_lists(metric: str):
         return [data[m][metric].values for m in model_names]
 
-    # ----- Subplot 1: Total Cost -----
-    ax = axes[0]
-    bp = ax.boxplot(
+    # Legend patches
+    legend_patches = [
+        mpatches.Patch(color=PALETTE.get(m, "#888"), label=m)
+        for m in model_names
+    ]
+
+    # ----- Figure 1: Total Cost -----
+    fig1, ax1 = plt.subplots(figsize=(8, 6))
+    fig1.suptitle("Policy Comparison: 100-Episode Evaluation (seed=42)",
+                  fontsize=14, fontweight="bold", y=1.02)
+    bp1 = ax1.boxplot(
         ordered_lists("Total_Cost"),
         patch_artist=True,
         widths=0.5,
@@ -184,18 +189,29 @@ def plot_boxplots(data: dict[str, pd.DataFrame], out_path: Path) -> None:
         capprops=dict(linewidth=1.4),
         flierprops=dict(marker="o", markersize=4, alpha=0.5),
     )
-    for patch, color in zip(bp["boxes"], colors):
+    for patch, color in zip(bp1["boxes"], colors):
         patch.set_facecolor(color)
         patch.set_alpha(0.78)
-    ax.set_title("Total Cost Comparison", fontweight="bold")
-    ax.set_ylabel("Total Cost (per episode)")
-    ax.set_xticks(range(1, len(model_names) + 1))
-    ax.set_xticklabels(model_names, rotation=12)
-    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+    ax1.set_title("Total Cost Comparison", fontweight="bold")
+    ax1.set_ylabel("Total Cost (per episode)")
+    ax1.set_xticks(range(1, len(model_names) + 1))
+    ax1.set_xticklabels(model_names, rotation=12)
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:,.0f}"))
 
-    # ----- Subplot 2: Fill Rate -----
-    ax = axes[1]
-    bp = ax.boxplot(
+    fig1.legend(handles=legend_patches, loc="lower center",
+                ncol=len(model_names), bbox_to_anchor=(0.5, -0.05),
+                frameon=False, fontsize=11)
+    fig1.tight_layout()
+    cost_path = out_dir / "comparison_boxplot_cost.png"
+    fig1.savefig(cost_path, dpi=300, bbox_inches="tight")
+    plt.close(fig1)
+    print(f"[OK]  Saved Total Cost box plot → {cost_path}")
+
+    # ----- Figure 2: Fill Rate -----
+    fig2, ax2 = plt.subplots(figsize=(8, 6))
+    fig2.suptitle("Policy Comparison: 100-Episode Evaluation (seed=42)",
+                  fontsize=14, fontweight="bold", y=1.02)
+    bp2 = ax2.boxplot(
         ordered_lists("Fill_Rate"),
         patch_artist=True,
         widths=0.5,
@@ -204,30 +220,25 @@ def plot_boxplots(data: dict[str, pd.DataFrame], out_path: Path) -> None:
         capprops=dict(linewidth=1.4),
         flierprops=dict(marker="o", markersize=4, alpha=0.5),
     )
-    for patch, color in zip(bp["boxes"], colors):
+    for patch, color in zip(bp2["boxes"], colors):
         patch.set_facecolor(color)
         patch.set_alpha(0.78)
-    ax.set_title("Fill Rate Comparison", fontweight="bold")
-    ax.set_ylabel("Fill Rate (% service level)")
-    ax.set_xticks(range(1, len(model_names) + 1))
-    ax.set_xticklabels(model_names, rotation=12)
-    ax.axhline(y=95, color="red", linestyle="--", linewidth=1.3,
-               label="Target 95 %", alpha=0.7)
-    ax.legend(loc="lower right", fontsize=10)
+    ax2.set_title("Fill Rate Comparison", fontweight="bold")
+    ax2.set_ylabel("Fill Rate (% service level)")
+    ax2.set_xticks(range(1, len(model_names) + 1))
+    ax2.set_xticklabels(model_names, rotation=12)
+    ax2.axhline(y=95, color="red", linestyle="--", linewidth=1.3,
+                label="Target 95 %", alpha=0.7)
+    ax2.legend(loc="lower right", fontsize=10)
 
-    # Legend patches
-    legend_patches = [
-        mpatches.Patch(color=PALETTE.get(m, "#888"), label=m)
-        for m in model_names
-    ]
-    fig.legend(handles=legend_patches, loc="lower center",
-               ncol=len(model_names), bbox_to_anchor=(0.5, -0.04),
-               frameon=False, fontsize=11)
-
-    plt.tight_layout()
-    fig.savefig(out_path, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    print(f"[OK]  Saved box plots  → {out_path}")
+    fig2.legend(handles=legend_patches, loc="lower center",
+                ncol=len(model_names), bbox_to_anchor=(0.5, -0.05),
+                frameon=False, fontsize=11)
+    fig2.tight_layout()
+    fill_rate_path = out_dir / "comparison_boxplot_fill_rate.png"
+    fig2.savefig(fill_rate_path, dpi=300, bbox_inches="tight")
+    plt.close(fig2)
+    print(f"[OK]  Saved Fill Rate box plot  → {fill_rate_path}")
 
 
 # ===========================================================================
@@ -316,7 +327,7 @@ def main():
 
     # ── 5. Box plots ────────────────────────────────────────────────────────
     print("── Generating visualisations ─────────────────────────────────────")
-    plot_boxplots(data, out_dir / "comparison_boxplots.png")
+    plot_boxplots(data, out_dir)
 
     print("\n" + "=" * 70)
     print(f"  All outputs saved to: {out_dir.resolve()}")

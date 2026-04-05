@@ -46,15 +46,34 @@ class Actor(nn.Module):
 
         self.to(device)
 
-    def forward(self, obs, rnn_states, masks, available_actions=None, deterministic=False):
+    def _get_reference_demand(self, obs, agent_id=None):
+        """Compute retailer reference demand for Approach A (Demand + Residual)."""
+        if agent_id is None:
+            return None
+        # Only retailers have explicit demand features in the observation vector.
+        if agent_id < 2:
+            return None
+
+        # obs: [batch, obs_dim]
+        if obs is None or obs.dim() != 2 or obs.size(-1) <= 20:
+            return None
+
+        RETAILER_DEMAND_INDICES = [6, 13, 20]
+        RETAILER_DEMAND_NORM = 3.8
+
+        demand_norm = obs[:, RETAILER_DEMAND_INDICES]  # [batch,3]
+        return demand_norm * RETAILER_DEMAND_NORM
+
+    def forward(self, obs, rnn_states, masks, available_actions=None, deterministic=False, agent_id=None):
         """
         Compute actions from the given inputs.
         :param obs: (np.ndarray / torch.Tensor) observation inputs into network.
         :param rnn_states: (np.ndarray / torch.Tensor) if RNN network, hidden states for RNN.
-        :param masks: (np.ndarray / torch.Tensor) mask tensor denoting if hidden states should be reinitialized to zeros.
+        :param masks: (np.ndarray / torch.Tensor) mask tensor denoting if RNN states should be reinitialized to zeros.
         :param available_actions: (np.ndarray / torch.Tensor) denotes which actions are available to agent
                                                               (if None, all actions available)
         :param deterministic: (bool) whether to sample from action distribution or return the mode.
+        :param agent_id: (int or None) agent id for demand-based anchoring.
 
         :return actions: (torch.Tensor) actions to take.
         :return action_log_probs: (torch.Tensor) log probabilities of taken actions.
@@ -71,11 +90,13 @@ class Actor(nn.Module):
         if self._use_naive_recurrent_policy or self._use_recurrent_policy:
             actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
 
-        actions, action_log_probs = self.act(actor_features, available_actions, deterministic)
+        reference_demand = self._get_reference_demand(obs, agent_id)
+
+        actions, action_log_probs = self.act(actor_features, available_actions, deterministic, reference_demand=reference_demand)
 
         return actions, action_log_probs, rnn_states
 
-    def evaluate_actions(self, obs, rnn_states, action, masks, available_actions=None, active_masks=None):
+    def evaluate_actions(self, obs, rnn_states, action, masks, available_actions=None, active_masks=None, agent_id=None):
         """
         Compute log probability and entropy of given actions.
         :param obs: (torch.Tensor) observation inputs into network.
@@ -104,6 +125,8 @@ class Actor(nn.Module):
         if self._use_naive_recurrent_policy or self._use_recurrent_policy:
             actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
 
+        reference_demand = self._get_reference_demand(obs, agent_id)
+
         if self.args.algorithm_name=="hatrpo":
             action_log_probs, dist_entropy ,action_mu, action_std, all_probs= self.act.evaluate_actions_trpo(actor_features,
                                                                     action, available_actions,
@@ -117,7 +140,8 @@ class Actor(nn.Module):
                                                                     action, available_actions,
                                                                     active_masks=
                                                                     active_masks if self._use_policy_active_masks
-                                                                    else None)
+                                                                    else None,
+                                                                    reference_demand=reference_demand)
 
             return action_log_probs, dist_entropy
 

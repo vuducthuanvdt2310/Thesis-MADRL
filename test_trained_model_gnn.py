@@ -876,7 +876,8 @@ class GNNModelEvaluator:
         for path in (results_path, compat_path):
             with open(path, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['Episode_Index', 'Total_Cost', 'Fill_Rate', 'Lost_Sales', 'Avg_Inventory'])
+                writer.writerow(['Episode_Index', 'Total_Cost', 'Fill_Rate', 'Lost_Sales', 'Avg_Inventory',
+                                 'Total_Holding_Cost', 'Total_Backlog_Cost', 'Total_Ordering_Cost'])
                 for ep_num, m in enumerate(self.episode_metrics):
                     # Fill_Rate: average of per-agent service_level (original method)
                     fill_rate = float(np.mean(m['service_level']))
@@ -885,12 +886,18 @@ class GNNModelEvaluator:
                     total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(2, self.n_agents))
                     lost_sales = total_placed - total_from_stock
                     avg_inventory = float(np.mean(m['avg_inventory']))
+                    total_holding = float(np.sum(m['holding_costs']))
+                    total_backlog = float(np.sum(m['backlog_costs']))
+                    total_ordering = float(np.sum(m['ordering_costs']))
                     writer.writerow([
                         ep_num + 1,
                         round(m['total_cost'], 4),
                         round(fill_rate, 4),
                         round(lost_sales, 4),
                         round(avg_inventory, 4),
+                        round(total_holding, 4),
+                        round(total_backlog, 4),
+                        round(total_ordering, 4),
                     ])
         print(f'[OK] Saved metrics CSV : {results_path.name}  (also {compat_path.name})')
 

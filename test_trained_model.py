@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import json
+import pandas as pd
 from itertools import chain
 
 from config import get_config
@@ -371,13 +372,25 @@ class ModelEvaluator:
             '_orders_from_stock': [0] * self.args.num_agents,
         }
 
+        # Detect n_skus from env
+        _base_list = getattr(self.env, 'env_list', getattr(self.env, 'envs', None))
+        n_skus = getattr(_base_list[0], 'n_skus', 3) if _base_list else 3
+
         # Trajectory data (only for first episode)
         if save_trajectory:
             trajectory = {
                 'inventory': [[] for _ in range(self.args.num_agents)],
+                'inventory_skus': [[] for _ in range(self.args.num_agents)],   # per-SKU
                 'backlog': [[] for _ in range(self.args.num_agents)],
                 'actions': [[] for _ in range(self.args.num_agents)],
                 'rewards': [[] for _ in range(self.args.num_agents)],
+                'demand': [[] for _ in range(self.args.num_agents)],
+                'norm_demand': [[] for _ in range(self.args.num_agents)],
+                'norm_inventory': [[] for _ in range(self.args.num_agents)],
+                'norm_order': [[] for _ in range(self.args.num_agents)],
+                'orders_placed': [[] for _ in range(self.args.num_agents)],
+                'orders_from_stock': [[] for _ in range(self.args.num_agents)],
+                'norm_scales': None,
             }
 
         # Run episode
@@ -391,6 +404,7 @@ class ModelEvaluator:
 
             # Get actions from all agents
             actions_env = []
+            raw_actions = {}  # {agent_id: raw_action_array} for clip-correction after step
 
             if is_gnn:
                 # Build structured observations once per step for all agents
@@ -427,83 +441,90 @@ class ModelEvaluator:
                             obs_agent,
                             rnn_states[:, agent_id],
                             masks[:, agent_id],
-                            deterministic=True
+                            deterministic=True,
+                            agent_id=agent_id
                         )
 
                 # Update RNN states
                 rnn_states[:, agent_id] = rnn_state.cpu().numpy() if isinstance(rnn_state, torch.Tensor) else rnn_state
                 action_np = action.cpu().numpy() if isinstance(action, torch.Tensor) else action
-                actions_env.append(action_np[0])
-
-                if save_trajectory:
-                    trajectory['actions'][agent_id].append(action_np[0].copy())
+                raw_action = action_np[0]
+                actions_env.append(raw_action)
+                raw_actions[agent_id] = raw_action.copy()
             
             # Step environment
             obs, rewards, dones, infos = self.env.step([actions_env])
-            
-            # Extract environment state for metrics
-            # Support both 'env_list' (from our wrapper) and 'envs' (standard vec env)
+
+            # Retrieve the EXACT (clipped) actions the env executed.
+            # Raw NN outputs may exceed env bounds (e.g. retailer max=10, DC max=5000).
+            # env._clip_actions() is the same function called inside env.step().
             env_list = getattr(self.env, 'env_list', getattr(self.env, 'envs', None))
-            
             if env_list and len(env_list) > 0:
                 env_state = env_list[0]
-                
+                executed_actions = env_state._clip_actions(raw_actions)
+            else:
+                # Fallback: use raw actions (no clipping info available)
+                executed_actions = {aid: raw_actions[aid] for aid in range(self.args.num_agents)}
+
+            # Also store clipped actions for trajectory before the agent loop
+            if save_trajectory:
+                for agent_id in range(self.args.num_agents):
+                    trajectory['actions'][agent_id].append(
+                        np.array(executed_actions[agent_id], dtype=float).copy()
+                    )
+
+            if env_list and len(env_list) > 0:
                 # Calculate costs from rewards (rewards are negative costs)
                 for agent_id in range(self.args.num_agents):
                     # Extract scalar reward (handle (1,) shape from env wrapper)
                     reward = float(np.array(rewards[0][agent_id]).item())
                     cost = -reward
-                    
+
                     episode_data['agent_rewards'][agent_id] += reward
                     episode_data['agent_costs'][agent_id] += cost
                     episode_data['total_reward'] += reward
                     episode_data['total_cost'] += cost
-                    
+
                     # === COST BREAKDOWN CALCULATION ===
-                    # Calculate individual cost components for detailed analysis
                     holding_cost_step = 0
                     backlog_cost_step = 0
                     ordering_cost_step = 0
-                    
-                    # Get agent type (DC or Retailer)
+
                     is_dc = agent_id < 2  # First 2 agents are DCs
-                    
+
                     if is_dc:
-                        # DC costs
                         dc_idx = agent_id
-                        for sku in range(3):  # n_skus = 3
-                            # Holding cost = inventory * holding_cost_param
+                        for sku in range(n_skus):
                             holding_cost_step += env_state.inventory[agent_id][sku] * env_state.H_dc[dc_idx][sku]
-                            # Backlog cost = backlog * backlog_cost_param
-                            backlog_cost_step += env_state.backlog[agent_id][sku] * env_state.B_dc[dc_idx][sku]
-                            # Ordering cost: use PRE-STEP price (same as _calculate_rewards inside step())
-                            order_qty = actions_env[agent_id][sku]
+                            # DC backlog: flat backlog[dc_id] is always 0 — sum dc_retailer_backlog instead
+                            dc_owed_sku = sum(
+                                env_state.dc_retailer_backlog[agent_id][r_id][sku]
+                                for r_id in env_state.dc_assignments[agent_id]
+                            )
+                            backlog_cost_step += dc_owed_sku * env_state.B_dc[dc_idx][sku]
+                            # Use CLIPPED executed action for ordering cost (matches env's _calculate_rewards)
+                            order_qty = executed_actions[agent_id][sku]
                             if order_qty > 0:
                                 price = pre_step_prices[sku] if pre_step_prices is not None else env_state.market_prices[sku]
                                 ordering_cost_step += env_state.C_fixed_dc[dc_idx][sku] + (price * order_qty)
                     else:
-                        # Retailer costs
-                        retailer_idx = agent_id - 2  # Offset by number of DCs
+                        retailer_idx = agent_id - 2
                         assigned_dc = env_state.retailer_to_dc[agent_id]
-                        for sku in range(3):
-                            # Holding cost
+                        for sku in range(n_skus):
                             holding_cost_step += env_state.inventory[agent_id][sku] * env_state.H_retailer[retailer_idx][sku]
-                            # Backlog cost
                             backlog_cost_step += env_state.backlog[agent_id][sku] * env_state.B_retailer[retailer_idx][sku]
-                            # Ordering cost: retailers use action[0:3] from their ASSIGNED DC only.
-                            # action[3:6] is UNUSED (kept for uniform 6D action space, always zero).
-                            order_qty = actions_env[agent_id][sku]
+                            # Use CLIPPED executed action for ordering cost
+                            order_qty = executed_actions[agent_id][sku]
                             if order_qty > 0:
                                 var_cost = env_state.C_var_retailer[retailer_idx][assigned_dc][sku]
                                 ordering_cost_step += env_state.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_qty)
 
-                        # --- Order-count fill rate (same as test_trained_model_gnn.py) ---
-                        for sku in range(3):
+                        # --- Order-count fill rate (mirrors GNN script) ---
+                        for sku in range(n_skus):
                             placed = env_state.step_orders_placed.get(agent_id, {}).get(sku, 0)
                             from_stock = env_state.step_orders_from_stock.get(agent_id, {}).get(sku, 0)
                             episode_data['_orders_placed'][agent_id]     += placed
                             episode_data['_orders_from_stock'][agent_id] += from_stock
-                            # Also keep legacy demand tracking for service_level field
                             actual_demand = 0.0
                             if (sku < len(env_state.demand_history) and
                                     retailer_idx < len(env_state.demand_history[sku]) and
@@ -511,24 +532,88 @@ class ModelEvaluator:
                                 actual_demand = float(env_state.demand_history[sku][retailer_idx][-1])
                             episode_data['_demand_total'][agent_id] += actual_demand
                             episode_data['_demand_met'][agent_id] += float(from_stock)
-                    
+
                     # Accumulate cost components
                     episode_data['holding_costs'][agent_id] += holding_cost_step
                     episode_data['backlog_costs'][agent_id] += backlog_cost_step
                     episode_data['ordering_costs'][agent_id] += ordering_cost_step
-                    
+
                     # Track inventory and backlog
                     inv = env_state.inventory[agent_id].sum()
                     bl = env_state.backlog[agent_id].sum()
-
                     episode_data['avg_inventory'][agent_id] += inv
                     episode_data['avg_backlog'][agent_id] += bl
-                    
+
                     if save_trajectory:
-                        trajectory['inventory'][agent_id].append(inv)
-                        trajectory['backlog'][agent_id].append(bl)
+                        inv_vec = env_state.inventory[agent_id]
+                        trajectory['inventory'][agent_id].append(float(inv))
+                        trajectory['inventory_skus'][agent_id].append(
+                            np.array(inv_vec, dtype=float).copy()
+                        )
+                        trajectory['backlog'][agent_id].append(float(bl))
                         trajectory['rewards'][agent_id].append(reward)
-                
+                        # NOTE: trajectory['actions'] already appended above (clipped)
+
+                        # -- Demand logging --
+                        if agent_id < 2:  # DC: aggregate orders-placed from assigned retailers
+                            demand_vec = np.zeros(n_skus, dtype=float)
+                            for r_id in env_state.dc_assignments[agent_id]:
+                                op = env_state.step_orders_placed.get(r_id, {})
+                                for s in range(n_skus):
+                                    demand_vec[s] += op.get(s, 0.0)
+                        else:  # Retailer: real customer demand from env
+                            demand_vec = np.array(
+                                env_state.step_demand.get(agent_id, np.zeros(n_skus, dtype=float)),
+                                dtype=float,
+                            )
+                        trajectory['demand'][agent_id].append(demand_vec.copy())
+
+                        # -- Normalized demand / inventory / order (retailers only) --
+                        if agent_id < 2:
+                            trajectory['norm_demand'][agent_id].append(np.zeros(n_skus, dtype=float))
+                            trajectory['norm_inventory'][agent_id].append(np.zeros(n_skus, dtype=float))
+                            trajectory['norm_order'][agent_id].append(np.zeros(n_skus, dtype=float))
+                        else:
+                            dm = getattr(env_state, 'demand_mean', np.ones(n_skus) * 1.5)
+                            ds = getattr(env_state, 'demand_std', np.ones(n_skus) * 1.0)
+                            demand_cap = np.maximum(dm + 3.0 * ds, 1e-6)
+                            norm_d = (demand_vec / demand_cap).astype(float)
+                            norm_inv = (np.array(inv_vec, dtype=float) / 150.0)
+                            # Use clipped executed action for normalisation
+                            act_clip = np.array(executed_actions[agent_id], dtype=float)
+                            norm_ord = np.clip(act_clip / 10.0, 0.0, 1.0)  # retailer max=10
+                            trajectory['norm_demand'][agent_id].append(norm_d)
+                            trajectory['norm_inventory'][agent_id].append(norm_inv)
+                            trajectory['norm_order'][agent_id].append(norm_ord)
+
+                        # -- Order-count fill-rate per step --
+                        op_vec = np.array([env_state.step_orders_placed.get(agent_id, {}).get(s, 0)
+                                           for s in range(n_skus)], dtype=float)
+                        ofs_vec = np.array([env_state.step_orders_from_stock.get(agent_id, {}).get(s, 0)
+                                            for s in range(n_skus)], dtype=float)
+                        trajectory['orders_placed'][agent_id].append(op_vec)
+                        trajectory['orders_from_stock'][agent_id].append(ofs_vec)
+
+                        # Store normalization scales once
+                        if trajectory['norm_scales'] is None and hasattr(env_state, 'demand_mean'):
+                            dm2 = np.array(env_state.demand_mean, dtype=float).flatten()
+                            ds2 = np.array(env_state.demand_std, dtype=float).flatten()
+                            trajectory['norm_scales'] = {
+                                'demand_mean_0': float(dm2[0]) if len(dm2) > 0 else 0,
+                                'demand_mean_1': float(dm2[1]) if len(dm2) > 1 else 0,
+                                'demand_mean_2': float(dm2[2]) if len(dm2) > 2 else 0,
+                                'demand_std_0': float(ds2[0]) if len(ds2) > 0 else 0,
+                                'demand_std_1': float(ds2[1]) if len(ds2) > 1 else 0,
+                                'demand_std_2': float(ds2[2]) if len(ds2) > 2 else 0,
+                                'demand_cap_0': float(dm2[0] + 3 * ds2[0]) if len(dm2) > 0 else 0,
+                                'demand_cap_1': float(dm2[1] + 3 * ds2[1]) if len(dm2) > 1 else 0,
+                                'demand_cap_2': float(dm2[2] + 3 * ds2[2]) if len(dm2) > 2 else 0,
+                                'inv_scale_retailer': 150.0,
+                                'backlog_scale_retailer': 100.0,
+                                'order_min_retailer': 0,
+                                'order_max_retailer': 10.0,
+                            }
+
                 # Store final state
                 if step == self.args.episode_length - 1:
                     episode_data['final_inventory'] = [
@@ -539,48 +624,53 @@ class ModelEvaluator:
                     ]
         
         # Calculate averages and percentages
+        T = self.args.episode_length
         for agent_id in range(self.args.num_agents):
-            episode_data['avg_inventory'][agent_id] /= self.args.episode_length
-            episode_data['avg_backlog'][agent_id] /= self.args.episode_length
-            # True demand fill-rate service level (retailers); DCs use inv>0 heuristic
-            if agent_id >= 2:  # retailer
-                total_d = episode_data['_demand_total'][agent_id]
+            episode_data['avg_inventory'][agent_id] /= T
+            episode_data['avg_backlog'][agent_id] /= T
+            # Retailer: order-count fill rate (mirrors GNN script)
+            if agent_id >= 2:
+                placed     = episode_data['_orders_placed'][agent_id]
+                from_stock = episode_data['_orders_from_stock'][agent_id]
                 episode_data['service_level'][agent_id] = (
-                    (episode_data['_demand_met'][agent_id] / total_d * 100.0) if total_d > 0 else 100.0
+                    (from_stock / placed * 100.0) if placed > 0 else 100.0
                 )
-            else:  # DC: fraction of steps where DC had positive inventory
+            else:  # DC: fraction of steps with positive inventory
                 episode_data['service_level'][agent_id] = (
                     sum(1 for v in episode_data.get('_dc_inv_positive', {}).get(agent_id, [])
-                        if v) / self.args.episode_length * 100
+                        if v) / T * 100
                     if episode_data.get('_dc_inv_positive') else
-                    100.0  # DCs almost always have positive inventory
+                    100.0
                 )
         
         # Save trajectory for first episode
         if save_trajectory:
             self.detailed_trajectory = trajectory
-        
+
         return episode_data
     
     def generate_report(self):
         """Generate comprehensive evaluation report with metrics and visualizations."""
         print("Generating evaluation report...")
-        
+
         # Calculate aggregate statistics
         stats = self._calculate_statistics()
-        
+
         # Save metrics to JSON
         self._save_metrics_json(stats)
-        
+
         # Save metrics to CSV
         self._save_metrics_csv()
-        
+
         # Generate visualizations
         self._create_visualizations(stats)
-        
+
+        # Save step trajectory Excel (mirrors GNN script)
+        self._save_step_trajectory_excel()
+
         # Print summary
         self._print_summary(stats)
-        
+
         print(f"\n✓ Evaluation report saved to: {self.save_dir}\n")
     
     def _calculate_statistics(self):
@@ -652,7 +742,8 @@ class ModelEvaluator:
         for csv_path in (results_path, compat_path):
             with open(csv_path, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['Episode_Index', 'Total_Cost', 'Fill_Rate', 'Lost_Sales', 'Avg_Inventory'])
+                writer.writerow(['Episode_Index', 'Total_Cost', 'Fill_Rate', 'Lost_Sales', 'Avg_Inventory',
+                                 'Total_Holding_Cost', 'Total_Backlog_Cost', 'Total_Ordering_Cost'])
 
                 for ep_num, metrics in enumerate(self.episode_metrics):
                     fill_rate = float(np.mean(metrics['service_level']))
@@ -660,12 +751,18 @@ class ModelEvaluator:
                     total_from_stock = sum(metrics['_orders_from_stock'][aid] for aid in range(2, self.args.num_agents))
                     lost_sales = total_placed - total_from_stock
                     avg_inventory = float(np.mean(metrics['avg_inventory']))
+                    total_holding = float(np.sum(metrics['holding_costs']))
+                    total_backlog = float(np.sum(metrics['backlog_costs']))
+                    total_ordering = float(np.sum(metrics['ordering_costs']))
                     writer.writerow([
                         ep_num + 1,
                         round(metrics['total_cost'], 4),
                         round(fill_rate, 4),
                         round(lost_sales, 4),
                         round(avg_inventory, 4),
+                        round(total_holding, 4),
+                        round(total_backlog, 4),
+                        round(total_ordering, 4),
                     ])
 
         print(f"✓ Saved metrics CSV: {results_path.name}  (also {compat_path.name})")
@@ -673,23 +770,25 @@ class ModelEvaluator:
     def _create_visualizations(self, stats):
         """Create comprehensive visualizations."""
         print("Creating visualizations...")
-        
+
         # 1. Episode rewards over time
         self._plot_episode_rewards()
-        
+
         # 2. Cost breakdown by agent
         self._plot_cost_breakdown(stats)
-        
+
         # 3. Service level comparison
         self._plot_service_levels(stats)
-        
+
         # 4. Inventory trajectory (first episode)
         if self.detailed_trajectory:
             self._plot_trajectory()
-        
+            self._plot_dc_inventory_fluctuation()
+            self._plot_retailer_inventory_fluctuation()
+
         # 5. Performance distribution
         self._plot_performance_distribution()
-        
+
         print("✓ All visualizations created")
     
     def _plot_episode_rewards(self):
@@ -730,13 +829,13 @@ class ModelEvaluator:
         x = np.arange(len(agents))
         width = 0.6
         
-        # Create stacked bars
-        bars1 = ax.bar(x, holding_costs, width, label='Holding Cost', color='#4ECDC4', edgecolor='black')
-        bars2 = ax.bar(x, backlog_costs, width, bottom=holding_costs, 
-                       label='Backlog Cost', color='#FF6B6B', edgecolor='black')
-        bars3 = ax.bar(x, ordering_costs, width, 
+        # Create stacked bars (colors match test_trained_model_gnn.py)
+        bars1 = ax.bar(x, holding_costs, width, label='Holding', color='#4ECDC4', edgecolor='black')
+        bars2 = ax.bar(x, backlog_costs, width, bottom=holding_costs,
+                       label='Backlog', color='#FF6B6B', edgecolor='black')
+        bars3 = ax.bar(x, ordering_costs, width,
                        bottom=np.array(holding_costs) + np.array(backlog_costs),
-                       label='Ordering Cost', color='#95E1D3', edgecolor='black')
+                       label='Ordering', color='#FFD700', edgecolor='black')
         
         # Add total cost labels on top of each bar
         for i, agent in enumerate(agents):
@@ -864,7 +963,195 @@ class ModelEvaluator:
         plt.tight_layout()
         plt.savefig(self.save_dir / 'performance_distribution.png', dpi=300)
         plt.close()
-    
+
+    def _save_step_trajectory_excel(self):
+        """
+        Save step-level trajectory to Excel for Episode 1 (mirrors test_trained_model_gnn.py).
+        Two sheets:
+          - Data:   step, agent, inv, backlog, demand, action, norm values, SL (step + cumulative).
+          - Scales: normalization constants used for demand/inv/order.
+        """
+        if not self.detailed_trajectory:
+            return
+
+        traj = self.detailed_trajectory
+        n_agents = self.args.num_agents
+        num_steps = len(traj['inventory'][0])
+
+        # Detect n_skus
+        _base_list = getattr(self.env, 'env_list', getattr(self.env, 'envs', None))
+        n_skus = getattr(_base_list[0], 'n_skus', 3) if _base_list else 3
+
+        cum_orders_placed = {aid: 0 for aid in range(n_agents)}
+        cum_orders_from_stock = {aid: 0 for aid in range(n_agents)}
+
+        rows = []
+        for step in range(num_steps):
+            for aid in range(n_agents):
+                inv = traj['inventory'][aid][step]
+                bl = traj['backlog'][aid][step]
+                action_vec = np.array(traj['actions'][aid][step], dtype=float).flatten()
+                demand_vec = np.array(traj['demand'][aid][step], dtype=float).flatten()
+                norm_d = np.array(traj['norm_demand'][aid][step], dtype=float).flatten()
+                norm_inv = np.array(traj['norm_inventory'][aid][step], dtype=float).flatten()
+                norm_ord = np.array(traj['norm_order'][aid][step], dtype=float).flatten()
+                op_vec = np.array(traj['orders_placed'][aid][step], dtype=float).flatten()
+                ofs_vec = np.array(traj['orders_from_stock'][aid][step], dtype=float).flatten()
+
+                step_placed = int(np.sum(op_vec))
+                step_from_stock = int(np.sum(ofs_vec))
+                cum_orders_placed[aid] += step_placed
+                cum_orders_from_stock[aid] += step_from_stock
+                cum_placed = cum_orders_placed[aid]
+                cum_from_stock = cum_orders_from_stock[aid]
+
+                row = {
+                    'step': step + 1,
+                    'agent_id': aid,
+                    'agent': f'{"DC" if aid < 2 else "R"}_{aid}',
+                    'inv': inv,
+                    'backlog': bl,
+                    'reward': traj['rewards'][aid][step],
+                }
+                for i in range(n_skus):
+                    row[f'demand_{i}'] = demand_vec[i] if i < len(demand_vec) else 0
+                    row[f'order_{i}'] = action_vec[i] if i < len(action_vec) else 0
+                    row[f'norm_d_{i}'] = round(norm_d[i], 4) if i < len(norm_d) else 0
+                    row[f'norm_inv_{i}'] = round(norm_inv[i], 4) if i < len(norm_inv) else 0
+                    row[f'norm_ord_{i}'] = round(norm_ord[i], 4) if i < len(norm_ord) else 0
+                row['orders_placed'] = step_placed
+                row['orders_from_stock'] = step_from_stock
+                row['step_sl_pct'] = round(step_from_stock / step_placed * 100, 1) if step_placed > 0 else 100
+                row['cum_placed'] = cum_placed
+                row['cum_from_stock'] = cum_from_stock
+                row['cum_sl_pct'] = round(cum_from_stock / cum_placed * 100, 1) if cum_placed > 0 else 100
+                rows.append(row)
+
+        df = pd.DataFrame(rows)
+        out_path = self.save_dir / 'step_trajectory_ep1.xlsx'
+        with pd.ExcelWriter(out_path, engine='openpyxl') as writer:
+            df.to_excel(writer, sheet_name='Data', index=False)
+            scales = traj.get('norm_scales')
+            if scales:
+                df_scales = pd.DataFrame([{
+                    'demand_cap_0': scales.get('demand_cap_0'),
+                    'demand_cap_1': scales.get('demand_cap_1'),
+                    'demand_cap_2': scales.get('demand_cap_2'),
+                    'inv_scale': scales.get('inv_scale_retailer'),
+                    'backlog_scale': scales.get('backlog_scale_retailer'),
+                    'order_min': scales.get('order_min_retailer'),
+                    'order_max': scales.get('order_max_retailer'),
+                }])
+                df_scales.to_excel(writer, sheet_name='Scales', index=False)
+            else:
+                pd.DataFrame([{'note': 'Scales not captured'}]).to_excel(
+                    writer, sheet_name='Scales', index=False)
+        print(f'✓ Saved step_trajectory_ep1.xlsx (Data + Scales)')
+
+    def _plot_dc_inventory_fluctuation(self):
+        """Plot per-SKU and total inventory fluctuation for each DC (Episode 1)."""
+        traj = self.detailed_trajectory
+        if not traj or 'inventory_skus' not in traj:
+            return
+
+        _base_list = getattr(self.env, 'env_list', getattr(self.env, 'envs', None))
+        n_skus = getattr(_base_list[0], 'n_skus', 3) if _base_list else 3
+
+        days = np.arange(1, self.args.episode_length + 1)
+        dc_ids = [i for i in range(self.args.num_agents) if i < 2]
+        n_dcs = len(dc_ids)
+        n_cols = n_skus + 1  # per-SKU cols + total
+
+        fig, axes = plt.subplots(n_dcs, n_cols,
+                                 figsize=(5 * n_cols, 4 * n_dcs),
+                                 squeeze=False)
+        fig.suptitle('DC Inventory Fluctuation Over Steps (Episode 1)',
+                     fontsize=15, fontweight='bold', y=1.01)
+
+        sku_colors = ['#2196F3', '#4CAF50', '#FF9800']
+        total_color = '#9C27B0'
+
+        for row, dc_id in enumerate(dc_ids):
+            dc_label = f'DC_{dc_id}'
+            inv_skus = np.array(traj['inventory_skus'][dc_id], dtype=float)  # [T, n_skus]
+            inv_total = np.array(traj['inventory'][dc_id], dtype=float)       # [T]
+
+            for sku in range(n_skus):
+                ax = axes[row][sku]
+                ax.plot(days, inv_skus[:, sku],
+                        color=sku_colors[sku % len(sku_colors)],
+                        linewidth=1.5, alpha=0.85)
+                ax.fill_between(days, inv_skus[:, sku], alpha=0.15,
+                                color=sku_colors[sku % len(sku_colors)])
+                ax.set_title(f'{dc_label} — SKU {sku}', fontsize=11, fontweight='bold')
+                ax.set_ylabel('Inventory', fontsize=10)
+                ax.set_xlabel('Step (day)', fontsize=10)
+                ax.grid(True, alpha=0.3)
+                ax.set_xlim(days[0], days[-1])
+
+            ax_total = axes[row][n_cols - 1]
+            ax_total.plot(days, inv_total, color=total_color, linewidth=2.0, alpha=0.9, label='Total')
+            ax_total.fill_between(days, inv_total, alpha=0.12, color=total_color)
+            ax_total.axhline(np.mean(inv_total), color='red', linestyle='--',
+                             linewidth=1.2, label=f'Mean: {np.mean(inv_total):.0f}')
+            ax_total.set_title(f'{dc_label} — Total Inventory', fontsize=11, fontweight='bold')
+            ax_total.set_ylabel('Total Inventory', fontsize=10)
+            ax_total.set_xlabel('Step (day)', fontsize=10)
+            ax_total.legend(fontsize=9)
+            ax_total.grid(True, alpha=0.3)
+            ax_total.set_xlim(days[0], days[-1])
+
+        plt.tight_layout()
+        out = self.save_dir / 'dc_inventory_fluctuation.png'
+        plt.savefig(out, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f'✓ Saved DC inventory fluctuation plot: {out.name}')
+
+    def _plot_retailer_inventory_fluctuation(self):
+        """Plot inventory fluctuation for all retailers (Episode 1): individual lines + mean±std."""
+        traj = self.detailed_trajectory
+        if not traj:
+            return
+
+        days = np.arange(1, self.args.episode_length + 1)
+        retailer_ids = [i for i in range(self.args.num_agents) if i >= 2]
+        n_retailers = len(retailer_ids)
+
+        inv_matrix = np.array([traj['inventory'][rid] for rid in retailer_ids], dtype=float)  # [n_r, T]
+
+        fig, axes = plt.subplots(2, 1, figsize=(14, 9), sharex=True)
+        fig.suptitle('Retailer Inventory Fluctuation Over Steps (Episode 1)',
+                     fontsize=15, fontweight='bold')
+
+        cmap = plt.cm.get_cmap('tab20', n_retailers)
+        for i, rid in enumerate(retailer_ids):
+            axes[0].plot(days, inv_matrix[i], color=cmap(i), linewidth=1.2, alpha=0.75,
+                         label=f'R_{rid}')
+        axes[0].set_title('Individual Retailer Inventory', fontsize=12, fontweight='bold')
+        axes[0].set_ylabel('Total Inventory', fontsize=11)
+        axes[0].legend(loc='upper right', ncol=max(1, n_retailers // 5), fontsize=7, framealpha=0.7)
+        axes[0].grid(True, alpha=0.3)
+
+        mean_inv = inv_matrix.mean(axis=0)
+        std_inv = inv_matrix.std(axis=0)
+        axes[1].plot(days, mean_inv, color='#1565C0', linewidth=2.0, label='Mean (all retailers)')
+        axes[1].fill_between(days, np.maximum(mean_inv - std_inv, 0), mean_inv + std_inv,
+                             alpha=0.2, color='#1565C0', label='±1 std')
+        axes[1].axhline(mean_inv.mean(), color='red', linestyle='--', linewidth=1.2,
+                        label=f'Time-avg: {mean_inv.mean():.0f}')
+        axes[1].set_title('System-Wide Avg Retailer Inventory', fontsize=12, fontweight='bold')
+        axes[1].set_ylabel('Avg Total Inventory', fontsize=11)
+        axes[1].set_xlabel('Step (day)', fontsize=11)
+        axes[1].legend(fontsize=9)
+        axes[1].grid(True, alpha=0.3)
+        axes[1].set_xlim(days[0], days[-1])
+
+        plt.tight_layout()
+        out = self.save_dir / 'retailer_inventory_fluctuation.png'
+        plt.savefig(out, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f'✓ Saved retailer inventory fluctuation plot: {out.name}')
+
     def _print_summary(self, stats):
         """Print evaluation summary to console."""
         print(f"\n{'='*70}")

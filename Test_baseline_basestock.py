@@ -79,12 +79,12 @@ def parse_args():
 
     # (s,S) policy levels — separate for DCs and Retailers
     # DC: reorder when IP ≤ s_dc, order up to S_dc (per SKU)
-    parser.add_argument('--s_dc', type=float, default=50.0,
+    parser.add_argument('--s_dc', type=float, default=200.0,
                         help='Reorder point for DCs (units per SKU; default 50)')
-    parser.add_argument('--S_dc', type=float, default=300.0,
+    parser.add_argument('--S_dc', type=float, default=2000.0,
                         help='Order-up-to level for DCs (units per SKU; default 300)')
     # Retailer: reorder when IP ≤ s_retailer, order up to S_retailer (per SKU)
-    parser.add_argument('--s_retailer', type=float, default=3.0,
+    parser.add_argument('--s_retailer', type=float, default=5.0,
                         help='Reorder point for Retailers (units per SKU; default 3)')
     parser.add_argument('--S_retailer', type=float, default=12.0,
                         help='Order-up-to level for Retailers (units per SKU; default 12)')
@@ -580,9 +580,11 @@ class BaseStockEvaluator:
         stats = {
             'num_episodes':   len(self.episode_metrics),
             'episode_length': self.args.episode_length,
-            'policy': 'Base-Stock',
-            'basestock_dc':       self.args.basestock_dc,
-            'basestock_retailer': self.args.basestock_retailer,
+            'policy': '(s,S) Heuristic',
+            's_dc':       self.args.s_dc,
+            'S_dc':       self.args.S_dc,
+            's_retailer': self.args.s_retailer,
+            'S_retailer': self.args.S_retailer,
             'total_reward': {
                 'mean': float(np.mean(arr('total_reward'))),
                 'std':  float(np.std(arr('total_reward'))),
@@ -652,12 +654,14 @@ class BaseStockEvaluator:
         path = self.save_dir / 'evaluation_metrics.json'
         output = {
             'metadata': {
-                'algorithm':      'Base-Stock (Baseline)',
+                'algorithm':      '(s,S) Heuristic (Baseline)',
                 'config_path':    str(self.args.config_path),
                 'num_episodes':   self.args.num_episodes,
                 'episode_length': self.args.episode_length,
-                'basestock_dc':   self.args.basestock_dc,
-                'basestock_retailer': self.args.basestock_retailer,
+                's_dc':           self.args.s_dc,
+                'S_dc':           self.args.S_dc,
+                's_retailer':     self.args.s_retailer,
+                'S_retailer':     self.args.S_retailer,
                 'evaluation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             },
             'statistics':   stats,
@@ -674,7 +678,8 @@ class BaseStockEvaluator:
         for path in (results_path, compat_path):
             with open(path, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['Episode_Index', 'Total_Cost', 'Fill_Rate', 'Lost_Sales', 'Avg_Inventory'])
+                writer.writerow(['Episode_Index', 'Total_Cost', 'Fill_Rate', 'Lost_Sales', 'Avg_Inventory',
+                                 'Total_Holding_Cost', 'Total_Backlog_Cost', 'Total_Ordering_Cost'])
                 for ep_num, m in enumerate(self.episode_metrics):
                     # Fill_Rate: average of per-agent service_level (original method)
                     fill_rate = float(np.mean(m['service_level']))
@@ -683,12 +688,18 @@ class BaseStockEvaluator:
                     total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(self.n_dcs, self.n_agents))
                     lost_sales = total_placed - total_from_stock
                     avg_inventory = float(np.mean(m['avg_inventory']))
+                    total_holding = float(np.sum(m['holding_costs']))
+                    total_backlog = float(np.sum(m['backlog_costs']))
+                    total_ordering = float(np.sum(m['ordering_costs']))
                     writer.writerow([
                         ep_num + 1,
                         round(m['total_cost'], 4),
                         round(fill_rate, 4),
                         round(lost_sales, 4),
                         round(avg_inventory, 4),
+                        round(total_holding, 4),
+                        round(total_backlog, 4),
+                        round(total_ordering, 4),
                     ])
         print(f'[OK] Saved metrics CSV  : {results_path.name}  (also {compat_path.name})')
 
@@ -1055,12 +1066,12 @@ class BaseStockEvaluator:
 
     def _print_summary(self, stats):
         print('\n' + '=' * 70)
-        print('Base-Stock Policy Evaluation Summary')
+        print('(s,S) Heuristic Policy Evaluation Summary')
         print('=' * 70)
         print(f"Episodes        : {stats['num_episodes']}")
         print(f"Episode length  : {stats['episode_length']} days")
-        print(f"S_dc  (per SKU) : {self.args.basestock_dc}")
-        print(f"S_ret (per SKU) : {self.args.basestock_retailer}")
+        print(f"DC  (s, S)      : ({self.args.s_dc}, {self.args.S_dc}) per SKU")
+        print(f"Ret (s, S)      : ({self.args.s_retailer}, {self.args.S_retailer}) per SKU")
         print(f"Avg reward      : {stats['total_reward']['mean']:>14.2f} "
               f"(+/-{stats['total_reward']['std']:.2f})")
         print(f"Avg cost        : {stats['total_cost']['mean']:>14.2f} "
@@ -1092,11 +1103,11 @@ class BaseStockEvaluator:
 def main():
     args = parse_args()
 
-    # Print a quick recap of the base-stock configuration
-    print('\n=== Base-Stock Level Configuration ===')
-    print(f'  DC  base-stock level (per SKU) : {args.basestock_dc}')
-    print(f'  Retailer base-stock level (per SKU): {args.basestock_retailer}')
-    print('=======================================\n')
+    # Print a quick recap of the (s,S) configuration
+    print('\n=== (s,S) Heuristic Configuration ===')
+    print(f'  DC       (s, S) per SKU : ({args.s_dc}, {args.S_dc})')
+    print(f'  Retailer (s, S) per SKU : ({args.s_retailer}, {args.S_retailer})')
+    print('======================================\n')
 
     evaluator = BaseStockEvaluator(args)
     evaluator.evaluate()

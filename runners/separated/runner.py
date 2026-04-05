@@ -156,6 +156,15 @@ class CRunner(BaseRunner):
                 print(f"Error writing to CSV: {e}")
             # -------------------------------------------------------
 
+            # ── Anneal heuristic shaping weight once per episode ─────────────
+            # Mirrors gnn_base_runner.py exactly so baseline and GNN are comparable.
+            # decay_rate=0.998 → shaping_weight reaches ~0.13 after 1000 episodes
+            #                  → ~0.02 after 2000 episodes (effectively off)
+            SHAPING_DECAY_RATE = 0.998
+            shaping_w = self.envs.decay_shaping_weight(decay_rate=SHAPING_DECAY_RATE)
+            self.writter.add_scalar("train/shaping_weight", shaping_w, total_num_steps)
+            # ─────────────────────────────────────────────────────────────────
+
             # compute return and update network
             self.compute()
             train_infos = self.train()
@@ -310,7 +319,8 @@ class CRunner(BaseRunner):
                         self.buffer[agent_id].rnn_states[step],
                         self.buffer[agent_id].rnn_states_critic[step],
                         self.buffer[agent_id].masks[step],
-                        avail_actions)
+                        avail_actions,
+                        agent_id=agent_id)
 
             value_collector.append(_t2n(value))
             action_numpy = _t2n(action)
@@ -477,7 +487,8 @@ class CRunner(BaseRunner):
                                 eval_rnn_states[:,agent_id],
                                 eval_masks[:,agent_id],
                                 None,
-                                deterministic=False)  # Stochastic: step-varying actions
+                                deterministic=False,
+                                agent_id=agent_id)  # Stochastic: step-varying actions
                     
                     eval_rnn_states[:,agent_id]=_t2n(temp_rnn_state)
                     action = eval_actions.detach().cpu().numpy()
