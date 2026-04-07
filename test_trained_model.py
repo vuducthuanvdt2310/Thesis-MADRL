@@ -754,9 +754,10 @@ class ModelEvaluator:
                     total_holding = float(np.sum(metrics['holding_costs']))
                     total_backlog = float(np.sum(metrics['backlog_costs']))
                     total_ordering = float(np.sum(metrics['ordering_costs']))
+                    true_total_cost = total_holding + total_backlog + total_ordering
                     writer.writerow([
                         ep_num + 1,
-                        round(metrics['total_cost'], 4),
+                        round(true_total_cost, 4),
                         round(fill_rate, 4),
                         round(lost_sales, 4),
                         round(avg_inventory, 4),

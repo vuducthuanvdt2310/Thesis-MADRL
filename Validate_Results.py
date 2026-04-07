@@ -44,9 +44,9 @@ from scipy import stats
 # ① CONFIGURABLE FILE PATHS  ← edit these if you change filenames / locations
 # ===========================================================================
 PATHS: dict[str, str] = {
-    "GNN-HAPPO":      "evaluation_results/eval_gnn1/results_gnn_happo.csv",
+    "GNN-HAPPO":      "evaluation_results/eval_gnn/results_gnn_happo.csv",
     "Standard-HAPPO": "evaluation_results/eval_base/results_standard_happo.csv",
-    "S-s-Heuristic":  "evaluation_results/basestock/results_ss_heuristic.csv",
+    "S-s-Heuristic":  "evaluation_results/basestock_v1/results_ss_heuristic.csv",
 }
 
 # Metrics to analyse (must match CSV column names exactly)

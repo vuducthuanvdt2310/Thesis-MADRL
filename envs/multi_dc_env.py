@@ -215,6 +215,11 @@ class MultiDCInventoryEnv:
         self._retailer_target_stock = None
         self._dc_target_stock       = None
 
+        # --- Cost component multipliers ---
+        self.holding_weight = float(rewards_cfg.get('holding_weight', 1.0))
+        self.backlog_weight = float(rewards_cfg.get('backlog_weight', 1.0))
+        self.ordering_weight = float(rewards_cfg.get('ordering_weight', 1.0))
+
         # ── Step 1 & 5: Look-Back Potential-Based Reward Shaping ──────────────────
         # k   : scaling factor; maps |heuristic - action| → potential magnitude.
         #        Set relative to the reward normalisation (÷ max_days) so that
@@ -847,20 +852,20 @@ class MultiDCInventoryEnv:
             total_cost = 0.0
 
             for sku in range(self.n_skus):
-                holding  = self.H_dc[dc_id][sku] * self.inventory[dc_id][sku]
+                holding  = self.H_dc[dc_id][sku] * self.inventory[dc_id][sku] * self.holding_weight
                 # DC backlog cost: penalise the total quantity still owed to retailers
                 # (dc_retailer_backlog replaced the old flat backlog[dc_id] which is now 0)
                 total_owed_sku = sum(
                     self.dc_retailer_backlog[dc_id][r_id][sku]
                     for r_id in self.dc_assignments[dc_id]
                 )
-                backlog  = self.B_dc[dc_id][sku] * total_owed_sku
+                backlog  = self.B_dc[dc_id][sku] * total_owed_sku * self.backlog_weight
 
                 order_qty = actions[dc_id][sku]
                 if order_qty > 0:
                     market_price = self.market_prices[sku]
                     var_cost = market_price * order_qty
-                    ordering = self.C_fixed_dc[dc_id][sku] + var_cost
+                    ordering = (self.C_fixed_dc[dc_id][sku] + var_cost) * self.ordering_weight
                 else:
                     ordering = 0.0
 
@@ -880,8 +885,8 @@ class MultiDCInventoryEnv:
             assigned_dc = self.retailer_to_dc[retailer_id]
 
             for sku in range(self.n_skus):
-                holding = self.H_retailer[retailer_idx][sku] * self.inventory[retailer_id][sku]
-                backlog = self.B_retailer[retailer_idx][sku] * self.backlog[retailer_id][sku]
+                holding = self.H_retailer[retailer_idx][sku] * self.inventory[retailer_id][sku] * self.holding_weight
+                backlog = self.B_retailer[retailer_idx][sku] * self.backlog[retailer_id][sku] * self.backlog_weight
 
                 action = actions[retailer_id]
                 order_qty = float(action[sku])
@@ -889,7 +894,7 @@ class MultiDCInventoryEnv:
                 ordering = 0.0
                 if order_qty > 0:
                     var_cost = self.C_var_retailer[retailer_idx][assigned_dc][sku]
-                    ordering = self.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_qty)
+                    ordering = (self.C_fixed_retailer[retailer_idx][sku] + (var_cost * order_qty)) * self.ordering_weight
 
                 # Safety-stock penalty: smooth gradient to maintain buffer stock
                 ss_threshold = self.safety_stock_threshold[retailer_idx][sku]

@@ -76,6 +76,14 @@ rewards:
   #   => Agents must balance: order enough to serve demand but not so much they hoard.
   sale_revenue_retailer: 2.5   # per unit of customer demand fulfilled (retailer)
 
+  # === COST WEIGHTS ===
+  # Multipliers applied to individual cost components to prioritize specific behaviors.
+  # For example, setting backlog_weight: 2.0 and holding_weight: 0.5 will strongly
+  # prioritize high service levels even if it means holding more inventory.
+  holding_weight: 1.0
+  backlog_weight: 1.5
+  ordering_weight: 1.0
+
   # === EXCESS INVENTORY PENALTY ===
   # Penalizes holding inventory above a target multiple of daily demand.
   # This creates a soft cap on stocking behavior: holding a little buffer is fine,

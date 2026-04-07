@@ -84,9 +84,9 @@ def parse_args():
     parser.add_argument('--S_dc', type=float, default=2000.0,
                         help='Order-up-to level for DCs (units per SKU; default 300)')
     # Retailer: reorder when IP ≤ s_retailer, order up to S_retailer (per SKU)
-    parser.add_argument('--s_retailer', type=float, default=5.0,
+    parser.add_argument('--s_retailer', type=float, default=2.0,
                         help='Reorder point for Retailers (units per SKU; default 3)')
-    parser.add_argument('--S_retailer', type=float, default=12.0,
+    parser.add_argument('--S_retailer', type=float, default=8.0,
                         help='Order-up-to level for Retailers (units per SKU; default 12)')
 
     # Episode settings
@@ -505,8 +505,8 @@ class BaseStockEvaluator:
                             'demand_cap_2':  float(dm2[2] + 3 * ds2[2]) if len(dm2) > 2 else 0,
                             'inv_scale_retailer':  150.0,
                             'backlog_scale_retailer': 100.0,
-                            'order_min_retailer':  20.0,
-                            'order_max_retailer':  70.0,
+                            'order_min_retailer':  0,
+                            'order_max_retailer':  50.0,
                         }
 
             # Final-step state snapshot
@@ -691,9 +691,10 @@ class BaseStockEvaluator:
                     total_holding = float(np.sum(m['holding_costs']))
                     total_backlog = float(np.sum(m['backlog_costs']))
                     total_ordering = float(np.sum(m['ordering_costs']))
+                    true_total_cost = total_holding + total_backlog + total_ordering
                     writer.writerow([
                         ep_num + 1,
-                        round(m['total_cost'], 4),
+                        round(true_total_cost, 4),
                         round(fill_rate, 4),
                         round(lost_sales, 4),
                         round(avg_inventory, 4),

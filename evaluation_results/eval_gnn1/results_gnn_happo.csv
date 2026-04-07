@@ -1,2 +1,2 @@
-Episode_Index,Total_Cost,Fill_Rate,Lost_Sales,Avg_Inventory
-1,415.8772,92.7651,257,1071.043
+Episode_Index,Total_Cost,Fill_Rate,Lost_Sales,Avg_Inventory,Total_Holding_Cost,Total_Backlog_Cost,Total_Ordering_Cost
+1,109608.1511,92.7651,257,1071.043,75571.7373,5358.7798,28677.6341
