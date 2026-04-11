@@ -79,20 +79,20 @@ def parse_args():
 
     # (s,S) policy levels — separate for DCs and Retailers
     # DC: reorder when IP ≤ s_dc, order up to S_dc (per SKU)
-    parser.add_argument('--s_dc', type=float, default=200.0,
+    parser.add_argument('--s_dc', type=float, default=1000.0,
                         help='Reorder point for DCs (units per SKU; default 50)')
-    parser.add_argument('--S_dc', type=float, default=2000.0,
+    parser.add_argument('--S_dc', type=float, default=2000.0, 
                         help='Order-up-to level for DCs (units per SKU; default 300)')
     # Retailer: reorder when IP ≤ s_retailer, order up to S_retailer (per SKU)
-    parser.add_argument('--s_retailer', type=float, default=2.0,
+    parser.add_argument('--s_retailer', type=float, default=16,
                         help='Reorder point for Retailers (units per SKU; default 3)')
-    parser.add_argument('--S_retailer', type=float, default=8.0,
+    parser.add_argument('--S_retailer', type=float, default=20,
                         help='Order-up-to level for Retailers (units per SKU; default 12)')
-
+    
     # Episode settings
     parser.add_argument('--num_episodes', type=int, default=100,
                         help='Number of evaluation episodes (default: 100 for validation)')
-    parser.add_argument('--episode_length', type=int, default=365,
+    parser.add_argument('--episode_length', type=int, default=90,
                         help='Length of each episode in days (default: 365)')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for reproducibility (default: 42)')
@@ -287,6 +287,24 @@ class BaseStockEvaluator:
         np.random.seed(seed)
         # ───────────────────────────────────────────────────────────────────
 
+        # ── Patch env clip so retailer actions are NOT capped at 10 ────────
+        # The default env._clip_actions() enforces clip(0, 10) for retailers,
+        # which would truncate the (s,S) order-up-to quantities.  We replace
+        # it with a version that only ensures non-negativity for retailers.
+        _original_clip = self.env._clip_actions
+
+        def _ss_clip_actions(acts):
+            clipped = {}
+            for aid, act in acts.items():
+                if aid in self.env.dc_ids:
+                    clipped[aid] = np.clip(act, 0, 5000)   # DC: unchanged
+                else:
+                    clipped[aid] = np.maximum(0.0, np.array(act, dtype=np.float32))  # Retailer: only non-neg
+            return clipped
+
+        self.env._clip_actions = _ss_clip_actions
+        # ────────────────────────────────────────────────────────────────────
+
         print('=' * 70)
         print(f'Starting (s,S) Heuristic Evaluation: {self.args.num_episodes} episode(s)  [seed={seed}]')
         print('=' * 70 + '\n')
@@ -300,6 +318,9 @@ class BaseStockEvaluator:
             print(f'Episode {ep + 1}/{self.args.num_episodes} '
                   f'| Total reward: {metrics["total_reward"]:>14.2f} '
                   f'| Running avg: {avg_r:>14.2f}')
+
+        # Restore original clip so env remains unmodified after evaluation
+        self.env._clip_actions = _original_clip
 
         print('\n[OK] Evaluation complete!\n')
 
@@ -363,8 +384,14 @@ class BaseStockEvaluator:
                 print(f'[WARNING] env.step() raised an exception at step {step}: {exc}')
                 break
 
-            # Recompute clipped actions (the env clips internally; use same method)
-            executed_actions = self.env._clip_actions(actions)
+            # For (s,S) policy the actions are already non-negative by construction
+            # (order_qty = max(0, S - IP) or 0).  We do NOT apply the env's hard
+            # clip(0,10) so that retailers can order the full S-IP quantity.
+            # We just ensure non-negativity here for consistent cost accounting.
+            executed_actions = {
+                aid: np.maximum(0.0, np.array(a, dtype=np.float32))
+                for aid, a in actions.items()
+            }
 
             # ── per-agent metric accumulation ─────────────────────────────────
             for agent_id in range(self.n_agents):

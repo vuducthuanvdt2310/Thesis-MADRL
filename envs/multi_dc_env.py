@@ -296,7 +296,7 @@ class MultiDCInventoryEnv:
         # builds up given the 1-day DC→Retailer lead time).
         for agent_id in range(self.n_agents):
             if agent_id in self.dc_ids:
-                self.inventory[agent_id] = np.full(self.n_skus, 2000.0, dtype=np.float32)
+                self.inventory[agent_id] = np.full(self.n_skus, 1500.0, dtype=np.float32)
             else:
                 self.inventory[agent_id] = np.full(self.n_skus, 30.0, dtype=np.float32)
             self.backlog[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
@@ -489,7 +489,7 @@ class MultiDCInventoryEnv:
         clipped = {}
         for agent_id, action in actions.items():
             if agent_id in self.dc_ids:
-                clipped[agent_id] = np.clip(action, 0, 5000)   # DC: 0 to 5000 units
+                clipped[agent_id] = np.clip(action, 0, 1000)   # DC: 0 to 5000 units
             else:
                 clipped[agent_id] = np.clip(action, 0, 10)    # Retailer: 0 to 100 units
         return clipped
@@ -1000,6 +1000,14 @@ class MultiDCInventoryEnv:
                 o['qty'] for o in self.pipeline[agent_id] if o['sku'] == sku
             )
             ip = on_hand - owed + pipeline
+
+            # ── IP-sufficiency guard (DC only) ────────────────────────────────
+            # If the DC's current IP already covers the heuristic order-up-to
+            # level, return 0 so the PBRS shaping is neutral — the agent is free
+            # to skip ordering without any shaping penalty.
+            out_level_dc = mu * lead_time + z * sigma * float(np.sqrt(max(lead_time, 1)))
+            if ip >= out_level_dc:
+                return 0.0
 
         else:
             # ── Retailer: use recent customer demand history ──────────────────

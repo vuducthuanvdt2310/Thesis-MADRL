@@ -80,10 +80,9 @@ rewards:
   # Multipliers applied to individual cost components to prioritize specific behaviors.
   # For example, setting backlog_weight: 2.0 and holding_weight: 0.5 will strongly
   # prioritize high service levels even if it means holding more inventory.
-  holding_weight: 1.0
-  backlog_weight: 1.5
-  ordering_weight: 1.0
-
+  holding_weight: 0.3
+  backlog_weight: 0.6
+  ordering_weight: 0.1
   # === EXCESS INVENTORY PENALTY ===
   # Penalizes holding inventory above a target multiple of daily demand.
   # This creates a soft cap on stocking behavior: holding a little buffer is fine,
