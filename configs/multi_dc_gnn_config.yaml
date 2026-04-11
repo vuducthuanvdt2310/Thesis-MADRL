@@ -41,8 +41,8 @@ critic:
 # (You may want to tune these differently for GNN vs baseline)
 training:
   # Learning rates (may need adjustment for GNN)
-  lr: 0.0003  # Actor learning rate
-  critic_lr: 0.0003  # Critic learning rate
+  lr: 0.0004  # Actor learning rate
+  critic_lr: 0.0004  # Critic learning rate
   
   # PPO clipping parameter
   clip_param: 0.2

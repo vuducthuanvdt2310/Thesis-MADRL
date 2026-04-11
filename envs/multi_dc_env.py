@@ -869,11 +869,18 @@ class MultiDCInventoryEnv:
                 else:
                     ordering = 0.0
 
-                # Excess inventory penalty for DCs: discourages stocking far beyond
-                # what's needed to cover one lead-time cycle of retailer demand.
+                # Excess inventory penalty for DCs: two-tier escalating penalty.
+                #   Tier 1 (excess up to target level):  linear at excess_penalty_dc rate.
+                #   Tier 2 (excess beyond 2× target):    3× rate, strongly discourages
+                #     the "always order" behaviour that accumulates 10× necessary stock.
                 if self.excess_penalty_dc > 0.0 and self._dc_target_stock is not None:
-                    excess = max(0.0, self.inventory[dc_id][sku] - self._dc_target_stock[sku])
-                    ordering += self.excess_penalty_dc * excess
+                    target = self._dc_target_stock[sku]
+                    excess = max(0.0, self.inventory[dc_id][sku] - target)
+                    if excess > 0:
+                        tier1 = min(excess, target)        # up to 2× target
+                        tier2 = max(0.0, excess - target)  # beyond 2× target
+                        ordering += self.excess_penalty_dc * tier1
+                        ordering += self.excess_penalty_dc * 3.0 * tier2
 
                 total_cost += holding + backlog + ordering
 
@@ -977,7 +984,7 @@ class MultiDCInventoryEnv:
         dc_fulfilled (units shipped); for retailers it is customer demand.
         The heuristic is purely based on already-visible state — no look-ahead.
         """
-        z = 1.95  # safety factor (~90% cycle service level)
+        z = 1.28  # safety factor (~90% cycle service level; reduced from 1.95 to cut bloat)
 
         if agent_id in self.dc_ids:
             # ── DC: use historical shipments to retailers as demand proxy ──────
