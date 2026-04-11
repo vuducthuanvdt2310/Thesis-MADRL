@@ -51,7 +51,7 @@ training:
   ppo_epoch: 5
   
   # Minibatch size for updates
-  num_mini_batch: 1
+  num_mini_batch: 2
   
   # Value function loss coefficient
   value_loss_coef: 1.0
