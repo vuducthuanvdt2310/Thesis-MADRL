@@ -76,17 +76,16 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description='Evaluate (s,S) Heuristic Policy on Multi-DC Inventory Environment'
     )
-
     # (s,S) policy levels — separate for DCs and Retailers
     # DC: reorder when IP ≤ s_dc, order up to S_dc (per SKU)
-    parser.add_argument('--s_dc', type=float, default=1000.0,
+    parser.add_argument('--s_dc', type=float, default=500.0,
                         help='Reorder point for DCs (units per SKU; default 50)')
-    parser.add_argument('--S_dc', type=float, default=2000.0, 
+    parser.add_argument('--S_dc', type=float, default=800.0, 
                         help='Order-up-to level for DCs (units per SKU; default 300)')
     # Retailer: reorder when IP ≤ s_retailer, order up to S_retailer (per SKU)
-    parser.add_argument('--s_retailer', type=float, default=16,
+    parser.add_argument('--s_retailer', type=float, default=5,
                         help='Reorder point for Retailers (units per SKU; default 3)')
-    parser.add_argument('--S_retailer', type=float, default=20,
+    parser.add_argument('--S_retailer', type=float, default=10,
                         help='Order-up-to level for Retailers (units per SKU; default 12)')
     
     # Episode settings

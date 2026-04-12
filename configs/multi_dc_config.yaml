@@ -127,8 +127,8 @@ costs:
   # DC Costs (2 DCs x 3 SKUs)
   # Holding cost kept low: DCs should hold MORE not less (they serve downstream retailers).
   holding_cost_dc:
-    - [0.5, 0.5, 0.5]  # DC_0 (slightly reduced to encourage higher DC safety stock)
-    - [0.5, 0.5, 0.5]  # DC_1
+    - [0.1, 0.1, 0.1]  # DC_0 (slightly reduced to encourage higher DC safety stock)
+    - [0.1, 0.1, 0.1]  # DC_1
 
   backlog_cost_dc:
     # HIGH penalty: DC stockout cascades to ALL its assigned retailers.
