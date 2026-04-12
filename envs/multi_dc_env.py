@@ -984,7 +984,7 @@ class MultiDCInventoryEnv:
         dc_fulfilled (units shipped); for retailers it is customer demand.
         The heuristic is purely based on already-visible state — no look-ahead.
         """
-        z = 1.28  # safety factor (~90% cycle service level; reduced from 1.95 to cut bloat)
+        z_base = 1.28  # baseline safety factor (~90th pct); boosted per-SKU when backlog exists
 
         if agent_id in self.dc_ids:
             # ── DC: use historical shipments to retailers as demand proxy ──────
@@ -1012,9 +1012,24 @@ class MultiDCInventoryEnv:
             # If the DC's current IP already covers the heuristic order-up-to
             # level, return 0 so the PBRS shaping is neutral — the agent is free
             # to skip ordering without any shaping penalty.
-            out_level_dc = mu * lead_time + z * sigma * float(np.sqrt(max(lead_time, 1)))
+            out_level_dc = mu * lead_time + z_base * sigma * float(np.sqrt(max(lead_time, 1)))
             if ip >= out_level_dc:
                 return 0.0
+
+            # ── Per-SKU backlog urgency boost (DC) ───────────────────────────
+            # When THIS specific SKU has outstanding debt to retailers, raise z
+            # so the PBRS recommendation is larger for this SKU than for
+            # well-stocked SKUs.  This creates a stronger per-SKU gradient
+            # differential, guiding the policy to direct orders toward the
+            # distressed SKU and resolving the SKU-imbalance problem where
+            # some SKUs are in backlog while total DC inventory looks "good".
+            #   boost = 0.5 × log(1 + owed/μ)  — log-scale so it saturates;
+            #   capped at 1.5 so z never exceeds 3.0 (z_base + 1.5 = 2.78).
+            if owed > 0:
+                z_boost = min(0.5 * float(np.log1p(owed / max(mu, 1.0))), 1.5)
+                z = min(z_base + z_boost, 3.0)
+            else:
+                z = z_base
 
         else:
             # ── Retailer: use recent customer demand history ──────────────────
@@ -1028,7 +1043,7 @@ class MultiDCInventoryEnv:
                 mu    = float(self.demand_mean[sku])
                 sigma = float(self.demand_std[sku])
 
-            lead_time = 7  # fixed 1-day
+            lead_time = 3  # fixed 1-day
 
             on_hand  = float(self.inventory[agent_id][sku])
             backlog  = float(self.backlog[agent_id][sku])
@@ -1036,6 +1051,18 @@ class MultiDCInventoryEnv:
                 o['qty'] for o in self.pipeline[agent_id] if o['sku'] == sku
             )
             ip = on_hand - backlog + pipeline
+
+            # ── Per-SKU backlog urgency boost (Retailer) ─────────────────────
+            # Same mechanism as DC: when this specific SKU has customer backlog,
+            # amplify z so the PBRS gradient strongly differentiates between
+            # distressed and over-stocked SKUs — directly teaching the agent to
+            # rebalance orders (order more of the backlogged SKU, less of the
+            # overstocked one) to eliminate simultaneous holding + backlog cost.
+            if backlog > 0:
+                z_boost = min(0.5 * float(np.log1p(backlog / max(mu, 1.0))), 1.5)
+                z = min(z_base + z_boost, 3.0)
+            else:
+                z = z_base
 
         # Order-up-to level: mean demand over lead time + safety buffer
         out_level = mu * lead_time + z * sigma * float(np.sqrt(max(lead_time, 1)))
