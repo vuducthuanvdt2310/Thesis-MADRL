@@ -188,7 +188,7 @@ class SsPolicy:
 
                 # (s,S) trigger: only order when IP reaches or drops below s
                 if ip <= s:
-                    order[sku] = max(0.0, S )
+                    order[sku] = max(0.0, S)
                 # else: order[sku] stays 0
 
             actions[agent_id] = order

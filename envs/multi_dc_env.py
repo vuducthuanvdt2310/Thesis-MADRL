@@ -22,6 +22,9 @@ from gymnasium import spaces
 import os
 
 
+
+
+
 class MultiDCInventoryEnv:
     """
     Multi-Agent 2-Echelon Inventory Environment with Multiple Distribution Centers
@@ -268,7 +271,7 @@ class MultiDCInventoryEnv:
         
         # Action space bounds for DCs and Retailers
         self.action_space_dc = spaces.Box(0, 100, (self.action_dim,), dtype=np.float32)
-        self.action_space_retailer = spaces.Box(0, 10, (self.action_dim,), dtype=np.float32)
+        self.action_space_retailer = spaces.Box(0, 15, (self.action_dim,), dtype=np.float32)
 
         # Uniform action space for compatibility
         self.action_space = spaces.Box(0, 100, (self.action_dim,), dtype=np.float32)
@@ -491,7 +494,7 @@ class MultiDCInventoryEnv:
             if agent_id in self.dc_ids:
                 clipped[agent_id] = np.clip(action, 0, 100)   # DC: 0 to 5000 units
             else:
-                clipped[agent_id] = np.clip(action, 0, 10)    # Retailer: 0 to 100 units
+                clipped[agent_id] = np.clip(action, 0, 15)    # Retailer: 0 to 100 units
         return clipped
 
 

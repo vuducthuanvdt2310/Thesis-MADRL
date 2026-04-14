@@ -1,0 +1,252 @@
+{
+  "metadata": {
+    "model_dir": "results/13Apr_gnn/run_seed_1/models",
+    "algorithm": "GNN-HAPPO",
+    "num_episodes": 1,
+    "episode_length": 10,
+    "gnn_type": "GAT",
+    "gnn_hidden_dim": 128,
+    "gnn_num_layers": 2,
+    "single_agent_obs_dim": 28,
+    "evaluation_date": "2026-04-14 20:57:47"
+  },
+  "statistics": {
+    "num_episodes": 1,
+    "episode_length": 10,
+    "total_reward": {
+      "mean": -7.774574411145295,
+      "std": 0.0,
+      "min": -7.774574411145295,
+      "max": -7.774574411145295
+    },
+    "total_cost": {
+      "mean": 7.774574411145295,
+      "std": 0.0,
+      "min": 7.774574411145295,
+      "max": 7.774574411145295
+    },
+    "per_agent": {
+      "DC_0": {
+        "avg_reward": -2.5888144224882126,
+        "avg_cost": 2.5888144224882126,
+        "avg_holding_cost": 1374.7628326416016,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 0.0,
+        "avg_inventory": 1374.7628295898437,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "DC_1": {
+        "avg_reward": -2.549775168299675,
+        "avg_cost": 2.549775168299675,
+        "avg_holding_cost": 1359.9198112487793,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 0.0,
+        "avg_inventory": 1359.9197998046875,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_2": {
+        "avg_reward": -0.2089999383315444,
+        "avg_cost": 0.2089999383315444,
+        "avg_holding_cost": 427.5454740524292,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 38.65387123823166,
+        "avg_inventory": 85.28699569702148,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_3": {
+        "avg_reward": -0.19857676280662417,
+        "avg_cost": 0.19857676280662417,
+        "avg_holding_cost": 428.1121778488159,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 30.355361759662628,
+        "avg_inventory": 85.85206832885743,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_4": {
+        "avg_reward": -0.2266637240536511,
+        "avg_cost": 0.2266637240536511,
+        "avg_holding_cost": 443.6699695587158,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 37.36428314447403,
+        "avg_inventory": 88.39439544677734,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_5": {
+        "avg_reward": -0.12352376742637716,
+        "avg_cost": 0.12352376742637716,
+        "avg_holding_cost": 405.13125944137573,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 34.1905061006546,
+        "avg_inventory": 80.45181427001953,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_6": {
+        "avg_reward": -0.2030944739235565,
+        "avg_cost": 0.2030944739235565,
+        "avg_holding_cost": 409.4689302444458,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 26.5366330742836,
+        "avg_inventory": 80.17824783325196,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_7": {
+        "avg_reward": -0.13196105207316577,
+        "avg_cost": 0.13196105207316577,
+        "avg_holding_cost": 400.17798233032227,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 43.9944052696228,
+        "avg_inventory": 81.04127807617188,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_8": {
+        "avg_reward": -0.14318916657066438,
+        "avg_cost": 0.14318916657066438,
+        "avg_holding_cost": 407.32223987579346,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 35.5627344250679,
+        "avg_inventory": 81.27238082885742,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_9": {
+        "avg_reward": -0.18052358692511916,
+        "avg_cost": 0.18052358692511916,
+        "avg_holding_cost": 410.9242181777954,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 34.09472131729126,
+        "avg_inventory": 82.55426940917968,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_10": {
+        "avg_reward": -0.20369507977738976,
+        "avg_cost": 0.20369507977738976,
+        "avg_holding_cost": 432.12925243377686,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 38.30016177892685,
+        "avg_inventory": 85.31184692382813,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_11": {
+        "avg_reward": -0.20475084334611893,
+        "avg_cost": 0.20475084334611893,
+        "avg_holding_cost": 416.28284645080566,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 32.78080016374588,
+        "avg_inventory": 84.86618728637696,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_12": {
+        "avg_reward": -0.1774511315743439,
+        "avg_cost": 0.1774511315743439,
+        "avg_holding_cost": 416.8233633041382,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 27.083583772182465,
+        "avg_inventory": 83.61744842529296,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_13": {
+        "avg_reward": -0.15514563652686775,
+        "avg_cost": 0.15514563652686775,
+        "avg_holding_cost": 418.1418228149414,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 38.31612956523895,
+        "avg_inventory": 84.42132797241212,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_14": {
+        "avg_reward": -0.19874328561127186,
+        "avg_cost": 0.19874328561127186,
+        "avg_holding_cost": 434.2918224334717,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 26.137129306793213,
+        "avg_inventory": 86.80248565673828,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_15": {
+        "avg_reward": -0.1430412675254047,
+        "avg_cost": 0.1430412675254047,
+        "avg_holding_cost": 412.91749382019043,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 34.48512268066406,
+        "avg_inventory": 81.22702407836914,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      },
+      "Retailer_16": {
+        "avg_reward": -0.1366251038853079,
+        "avg_cost": 0.1366251038853079,
+        "avg_holding_cost": 411.4279923439026,
+        "avg_backlog_cost": 0.0,
+        "avg_ordering_cost": 37.10287922620773,
+        "avg_inventory": 80.99497985839844,
+        "avg_backlog": 0.0,
+        "service_level": 100.0
+      }
+    },
+    "dc_cycle_service_level": {
+      "0": 100.0,
+      "1": 100.0
+    },
+    "system_retailer_fill_rate": 100.0
+  },
+  "episode_data": [
+    {
+      "total_reward": -7.774574411145295,
+      "total_cost": 7.774574411145295,
+      "agent_rewards": [
+        -2.5888144224882126,
+        -2.549775168299675,
+        -0.2089999383315444,
+        -0.19857676280662417,
+        -0.2266637240536511,
+        -0.12352376742637716,
+        -0.2030944739235565,
+        -0.13196105207316577,
+        -0.14318916657066438,
+        -0.18052358692511916,
+        -0.20369507977738976,
+        -0.20475084334611893,
+        -0.1774511315743439,
+        -0.15514563652686775,
+        -0.19874328561127186,
+        -0.1430412675254047,
+        -0.1366251038853079
+      ],
+      "agent_costs": [
+        2.5888144224882126,
+        2.549775168299675,
+        0.2089999383315444,
+        0.19857676280662417,
+        0.2266637240536511,
+        0.12352376742637716,
+        0.2030944739235565,
+        0.13196105207316577,
+        0.14318916657066438,
+        0.18052358692511916,
+        0.20369507977738976,
+        0.20475084334611893,
+        0.1774511315743439,
+        0.15514563652686775,
+        0.19874328561127186,
+        0.1430412675254047,
+        0.1366251038853079
+      ],
+      "holding_costs": [
+        1374.7628326416016,
+        1359.9198112487793,
+        427.5454740524292,
+        428.1121778488159

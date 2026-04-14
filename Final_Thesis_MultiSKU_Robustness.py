@@ -108,14 +108,14 @@ def parse_args():
     p = argparse.ArgumentParser(
         description="Robustness Validation: 3 Scenarios × 3 Models"
     )
-    p.add_argument("--gnn_model_dir",   type=str, default="results/03Apr_gnn1/run_seed_1/models",
+    p.add_argument("--gnn_model_dir",   type=str, default="results/13Apr_gnn/run_seed_1/models",
                    help="Path to saved GNN-HAPPO model directory")
     p.add_argument("--happo_model_dir", type=str, default="results/01Apr_base1/run_seed_1/models",
                    help="Path to saved Standard-HAPPO model directory")
     p.add_argument("--config_path",     type=str,
                    default="configs/multi_dc_config.yaml")
 
-    p.add_argument("--num_episodes",    type=int, default=1)
+    p.add_argument("--num_episodes",    type=int, default=10)
     p.add_argument("--episode_length",  type=int, default=90)
     p.add_argument("--seed",            type=int, default=42)
 
@@ -129,8 +129,8 @@ def parse_args():
 
     # (s,S) policy levels
     p.add_argument("--s_dc",        type=float, default=200.0)
-    p.add_argument("--S_dc",        type=float, default=2000.0)
-    p.add_argument("--s_retailer",  type=float, default=5.0)
+    p.add_argument("--S_dc",        type=float, default=500.0)
+    p.add_argument("--s_retailer",  type=float, default=2.0)
     p.add_argument("--S_retailer",  type=float, default=12.0)
 
     # GNN architecture (auto-detected from checkpoint; override if needed)
@@ -198,7 +198,7 @@ class SsPolicy:
                     ip = on_hand - backlog + pipeline_qty
                     s, S = self.s_retailer, self.S_retailer
                 if ip <= s:
-                    order[sku] = max(0.0, S - ip)
+                    order[sku] = max(0.0, S )
             actions[agent_id] = order
         return actions
 
@@ -552,6 +552,33 @@ def run_episode_gnn(env, policies, adj_tensor, obs_dim_padded,
                 action.cpu().numpy()[0]
                 if isinstance(action, torch.Tensor) else action[0]
             )
+
+            # ── DC IP-sufficiency guard (inference-time) ──────────────────
+            if agent_id < n_dcs:
+                _z     = 1.95   # same safety factor as heuristic
+                _lt    = float(env.lt_supplier_to_dc_max)  # conservative bound
+                _n_ret = len(env.dc_assignments[agent_id])
+                _zero_action = True
+                for _sku in range(n_skus):
+                    _mu    = float(env.demand_mean[_sku]) * _n_ret
+                    _sigma = float(env.demand_std[_sku])  * _n_ret
+                    _out_level = _mu * _lt + _z * _sigma * float(np.sqrt(_lt))
+                    _on_hand   = float(env.inventory[agent_id][_sku])
+                    _owed      = sum(
+                        env.dc_retailer_backlog[agent_id][r_id][_sku]
+                        for r_id in env.dc_assignments[agent_id]
+                    )
+                    _pipeline  = sum(
+                        o['qty'] for o in env.pipeline[agent_id] if o['sku'] == _sku
+                    )
+                    _ip = _on_hand - _owed + _pipeline
+                    if _ip < _out_level:          # at least one SKU needs restocking
+                        _zero_action = False
+                        break
+                if _zero_action:
+                    raw_act = np.zeros_like(raw_act)
+            # ─────────────────────────────────────────────────────────────
+
             actions_list.append(raw_act)
             raw_actions_dict[agent_id] = raw_act.copy()
 
