@@ -53,7 +53,7 @@ PATHS: dict[str, str] = {
 METRICS = ["Total_Cost", "Fill_Rate", "Lost_Sales", "Avg_Inventory"]
 
 # Number of episodes (used in CI formula)
-N_EPISODES = 100
+N_EPISODES = 20
 
 # ===========================================================================
 # Helpers

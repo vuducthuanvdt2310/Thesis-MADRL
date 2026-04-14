@@ -984,7 +984,7 @@ class MultiDCInventoryEnv:
         dc_fulfilled (units shipped); for retailers it is customer demand.
         The heuristic is purely based on already-visible state — no look-ahead.
         """
-        z_base = 1.28  # baseline safety factor (~90th pct); boosted per-SKU when backlog exists
+        z_base = 1.65  # baseline safety factor (~90th pct); boosted per-SKU when backlog exists
 
         if agent_id in self.dc_ids:
             # ── DC: use historical shipments to retailers as demand proxy ──────
@@ -1043,7 +1043,7 @@ class MultiDCInventoryEnv:
                 mu    = float(self.demand_mean[sku])
                 sigma = float(self.demand_std[sku])
 
-            lead_time = 3  # fixed 1-day
+            lead_time = 7  # fixed 1-day
 
             on_hand  = float(self.inventory[agent_id][sku])
             backlog  = float(self.backlog[agent_id][sku])

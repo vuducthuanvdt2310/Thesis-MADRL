@@ -83,9 +83,9 @@ def parse_args():
     parser.add_argument('--S_dc', type=float, default=500.0, 
                         help='Order-up-to level for DCs (units per SKU; default 300)')
     # Retailer: reorder when IP ≤ s_retailer, order up to S_retailer (per SKU)
-    parser.add_argument('--s_retailer', type=float, default=16,
+    parser.add_argument('--s_retailer', type=float, default=3,
                         help='Reorder point for Retailers (units per SKU; default 3)')
-    parser.add_argument('--S_retailer', type=float, default=20,
+    parser.add_argument('--S_retailer', type=float, default=12,
                         help='Order-up-to level for Retailers (units per SKU; default 12)')
     
     # Episode settings
@@ -188,7 +188,7 @@ class SsPolicy:
 
                 # (s,S) trigger: only order when IP reaches or drops below s
                 if ip <= s:
-                    order[sku] = max(0.0, S - ip)
+                    order[sku] = max(0.0, S )
                 # else: order[sku] stays 0
 
             actions[agent_id] = order

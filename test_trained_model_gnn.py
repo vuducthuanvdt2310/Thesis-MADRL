@@ -710,7 +710,7 @@ class GNNModelEvaluator:
             self.detailed_trajectory = traj
 
         return ep_data
-
+                
     # ------------------------------------------------------------------
     # Report generation
     # ------------------------------------------------------------------

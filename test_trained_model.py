@@ -449,6 +449,39 @@ class ModelEvaluator:
                 rnn_states[:, agent_id] = rnn_state.cpu().numpy() if isinstance(rnn_state, torch.Tensor) else rnn_state
                 action_np = action.cpu().numpy() if isinstance(action, torch.Tensor) else action
                 raw_action = action_np[0]
+                # ── DC IP-sufficiency guard (inference-time) ──────────────────
+                # The trained policy learned to order every step because the old
+                # PBRS heuristic always recommended a large qty (using max lead
+                # time, no sufficiency check).  At inference we override the
+                # policy for DC agents when inventory position already covers the
+                # heuristic order-up-to level — the DC simply does not need to
+                # order and ordering only adds holding cost.
+                if agent_id < 2 and env_list_pre:
+                    _env = env_list_pre[0]
+                    _z     = 1.95   # same safety factor as heuristic
+                    _lt    = float(_env.lt_supplier_to_dc_max)  # conservative bound
+                    _n_ret = len(_env.dc_assignments[agent_id])
+                    _zero_action = True
+                    for _sku in range(n_skus):
+                        _mu    = float(_env.demand_mean[_sku]) * _n_ret
+                        _sigma = float(_env.demand_std[_sku])  * _n_ret
+                        _out_level = _mu * _lt + _z * _sigma * float(np.sqrt(_lt))
+                        _on_hand   = float(_env.inventory[agent_id][_sku])
+                        _owed      = sum(
+                            _env.dc_retailer_backlog[agent_id][r_id][_sku]
+                            for r_id in _env.dc_assignments[agent_id]
+                        )
+                        _pipeline  = sum(
+                            o['qty'] for o in _env.pipeline[agent_id] if o['sku'] == _sku
+                        )
+                        _ip = _on_hand - _owed + _pipeline
+                        if _ip < _out_level:          # at least one SKU needs restocking
+                            _zero_action = False
+                            break
+                    if _zero_action:
+                        raw_action = np.zeros_like(raw_action)
+                # ─────────────────────────────────────────────────────────────
+
                 actions_env.append(raw_action)
                 raw_actions[agent_id] = raw_action.copy()
             

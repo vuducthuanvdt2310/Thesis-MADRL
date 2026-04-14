@@ -74,16 +74,16 @@ SCENARIOS = {
         "short":  "S1-Balanced",
     },
     "Scenario_2_HighDemand": {
-        "SKU_0": {"mean": 2.41, "std": 1.99},
-        "SKU_1": {"mean": 2.06, "std": 1.28},
+        "SKU_0": {"mean": 1.81, "std": 1.99},
+        "SKU_1": {"mean": 1.96, "std": 1.28},
         "SKU_2": {"mean": 1.77,  "std": 1.06},   # Low Volume, High Volatility
         "label": "High Demand \n(Mixed Stress)",
         "short":  "S2-High",
     },
     "Scenario_3_Extreme_Stress": {
-        "SKU_0": {"mean": 1.41, "std": 2.99},
-        "SKU_1": {"mean": 1.06, "std": 2.28},
-        "SKU_2": {"mean": 0.77,  "std": 1.06},
+        "SKU_0": {"mean": 1.41, "std": 2.0},
+        "SKU_1": {"mean": 1.06, "std": 2.1},
+        "SKU_2": {"mean": 0.77,  "std": 1.36},
         "label": "Extreme Stress\n(High Demand)",
         "short":  "S3-Extreme",
     },
