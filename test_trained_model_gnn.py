@@ -490,8 +490,8 @@ class GNNModelEvaluator:
                 # order and ordering only adds holding cost.
                 if agent_id < 2 and _pre_env_list:
                     _env = _pre_env_list[0]
-                    _z     = 1.95   # same safety factor as heuristic
-                    _lt    = float(_env.lt_supplier_to_dc_max)  # conservative bound
+                    _z     = 1.4   # same safety factor as heuristic
+                    _lt    = 7  # conservative bound
                     _n_ret = len(_env.dc_assignments[agent_id])
                     _zero_action = True
                     for _sku in range(self.n_skus):

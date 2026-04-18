@@ -274,7 +274,7 @@ pricing:
 demand:
   # Base mean and std for each SKU
   mean: [1.41, 1.06, 0.77]
-  std:  [2, 2.1, 1.56]
+  std:  [2, 1.4, 1.2]
 
 
 # mean: [1.41, 1.06, 0.77]

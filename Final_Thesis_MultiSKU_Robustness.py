@@ -75,15 +75,15 @@ SCENARIOS = {
     },
     "Scenario_2_HighDemand": {
         "SKU_0": {"mean": 1.81, "std": 1.99},
-        "SKU_1": {"mean": 1.96, "std": 1.28},
-        "SKU_2": {"mean": 1.77,  "std": 1.06},   # Low Volume, High Volatility
+        "SKU_1": {"mean": 1.378, "std": 1.28},
+        "SKU_2": {"mean": 1.001,  "std": 1.06},   # Low Volume, High Volatility
         "label": "High Demand \n(Mixed Stress)",
         "short":  "S2-High",
     },
     "Scenario_3_Extreme_Stress": {
         "SKU_0": {"mean": 1.41, "std": 2.0},
-        "SKU_1": {"mean": 1.06, "std": 2.1},
-        "SKU_2": {"mean": 0.77,  "std": 1.36},
+        "SKU_1": {"mean": 1.06, "std": 1.4},
+        "SKU_2": {"mean": 0.77,  "std": 1.2},
         "label": "Extreme Stress\n(High Demand)",
         "short":  "S3-Extreme",
     },
@@ -108,16 +108,19 @@ def parse_args():
     p = argparse.ArgumentParser(
         description="Robustness Validation: 3 Scenarios × 3 Models"
     )
-    p.add_argument("--gnn_model_dir",   type=str, default="results/13Apr_gnn/run_seed_1/models",
+    p.add_argument("--gnn_model_dir",   type=str, default="results/14Apr_gnn_kaggle_vari2/run_seed_1/models",
                    help="Path to saved GNN-HAPPO model directory")
     p.add_argument("--happo_model_dir", type=str, default="results/01Apr_base1/run_seed_1/models",
                    help="Path to saved Standard-HAPPO model directory")
     p.add_argument("--config_path",     type=str,
                    default="configs/multi_dc_config.yaml")
 
-    p.add_argument("--num_episodes",    type=int, default=10)
-    p.add_argument("--episode_length",  type=int, default=90)
-    p.add_argument("--seed",            type=int, default=42)
+    p.add_argument("--num_episodes",             type=int, default=1)
+    p.add_argument("--episode_length",           type=int, default=90,
+                   help="Episode length for HAPPO and GNN-HAPPO")
+    p.add_argument("--basestock_episode_length", type=int, default=250,
+                   help="Episode length used exclusively for the (s,S) BaseStock heuristic")
+    p.add_argument("--seed",                     type=int, default=42)
 
     p.add_argument("--save_dir",        type=str,
                    default="robustness_results")
@@ -128,10 +131,10 @@ def parse_args():
     p.add_argument("--cuda",            action="store_true", default=False)
 
     # (s,S) policy levels
-    p.add_argument("--s_dc",        type=float, default=200.0)
-    p.add_argument("--S_dc",        type=float, default=500.0)
+    p.add_argument("--s_dc",        type=float, default=100.0)
+    p.add_argument("--S_dc",        type=float, default=150.0)
     p.add_argument("--s_retailer",  type=float, default=2.0)
-    p.add_argument("--S_retailer",  type=float, default=12.0)
+    p.add_argument("--S_retailer",  type=float, default=8.0)
 
     # GNN architecture (auto-detected from checkpoint; override if needed)
     p.add_argument("--gnn_type",            type=str,   default="GAT")
@@ -555,7 +558,7 @@ def run_episode_gnn(env, policies, adj_tensor, obs_dim_padded,
 
             # ── DC IP-sufficiency guard (inference-time) ──────────────────
             if agent_id < n_dcs:
-                _z     = 1.95   # same safety factor as heuristic
+                _z     = 1.29   # same safety factor as heuristic
                 _lt    = float(env.lt_supplier_to_dc_max)  # conservative bound
                 _n_ret = len(env.dc_assignments[agent_id])
                 _zero_action = True
@@ -615,11 +618,19 @@ def _init_accumulators(n_agents, n_skus):
         "osa_steps":       [0]   * n_agents,   # steps with inv > 0 (OSA)
         "_orders_placed":     [0] * n_agents,
         "_orders_from_stock": [0] * n_agents,
+        # Per-step time series for demand-vs-order plots
+        # Each entry is the sum across ALL retailer agents + SKUs for that step
+        "step_demand_ts":  [],   # total customer demand per step
+        "step_order_ts":   [],   # total retailer orders placed per step
     }
 
 
 def _accumulate_step(acc, env, rewards, executed, pre_prices,
                      n_agents, n_dcs, n_skus, step, episode_length):
+    # Per-step demand & order totals (aggregated across all retailer agents + SKUs)
+    step_total_demand = 0.0
+    step_total_order  = 0.0
+
     for agent_id in range(n_agents):
         # Note: reward from env includes PBRS shaping + /max_days normalisation.
         # We track it separately for reference but DO NOT derive cost from it.
@@ -667,6 +678,15 @@ def _accumulate_step(acc, env, rewards, executed, pre_prices,
                                                  np.zeros(n_skus, dtype=np.float32))
             acc["total_sales"][agent_id] += float(np.sum(fulfilled))
 
+            # ── Demand-to-Order time series ──────────────────────────────────
+            # step_demand[retailer_id] captures fresh customer demand this step
+            step_demand_arr = env.step_demand.get(
+                agent_id, np.zeros(n_skus, dtype=np.float32)
+            )
+            step_total_demand += float(np.sum(step_demand_arr))
+            # Retailer orders = executed order quantities this step (all SKUs)
+            step_total_order  += float(np.sum(executed[agent_id]))
+
         acc["holding_costs"][agent_id]  += h
         acc["backlog_costs"][agent_id]  += b
         acc["ordering_costs"][agent_id] += o
@@ -679,6 +699,10 @@ def _accumulate_step(acc, env, rewards, executed, pre_prices,
             osa_ok = int(any(env.inventory[agent_id][s] > 0
                              for s in range(n_skus)))
             acc["osa_steps"][agent_id] += osa_ok
+
+    # Append aggregate demand & order for this step
+    acc["step_demand_ts"].append(step_total_demand)
+    acc["step_order_ts"].append(step_total_order)
 
 
 def _finalize_episode(acc, env, episode_length, n_agents, n_dcs, n_skus):
@@ -725,6 +749,10 @@ def _finalize_episode(acc, env, episode_length, n_agents, n_dcs, n_skus):
     ]
     m["osa"] = float(np.mean(retailer_osa)) if retailer_osa else 100.0
 
+    # Demand-to-Order time series (averaged element-wise across all episodes later)
+    m["step_demand_ts"] = acc["step_demand_ts"][:]
+    m["step_order_ts"]  = acc["step_order_ts"][:]
+
     return m
 
 
@@ -751,16 +779,13 @@ class RobustnessEvaluator:
         print(f"  Results dir: {self.save_dir}\n")
 
         # Detect torch device
+        import torch
         if args.cuda:
-            try:
-                import torch
-                self.device = torch.device(
-                    "cuda:0" if torch.cuda.is_available() else "cpu"
-                )
-            except ImportError:
-                self.device = None
+            self.device = torch.device(
+                "cuda:0" if torch.cuda.is_available() else "cpu"
+            )
         else:
-            self.device = None
+            self.device = torch.device("cpu")
 
         # Will hold loaded DRL policies (loaded once per model)
         self._happo_policies  = None
@@ -852,7 +877,7 @@ class RobustnessEvaluator:
                     if model_name == "BaseStock":
                         m = run_episode_heuristic(
                             env, ss_policy,
-                            self.args.episode_length, self.n_skus
+                            self.args.basestock_episode_length, self.n_skus
                         )
                     elif model_name == "HAPPO":
                         self._ensure_happo(env)
@@ -957,6 +982,7 @@ class RobustnessEvaluator:
         self._plot_service_level_stability()
         self._plot_pareto_frontier()
         self._plot_radar_chart()
+        self._plot_demand_vs_order()
         print(f"[OK] All plots saved to: {self.save_dir}\n")
 
     # ── Plot 1: Cost Robustness (Grouped Bar Chart) ────────────────────
@@ -1226,6 +1252,117 @@ class RobustnessEvaluator:
                     dpi=200, facecolor="#0F1923", bbox_inches="tight")
         plt.close()
         print("  [OK] Plot 4: radar_chart.png")
+
+    # ── Plot 5: Demand-to-Order Charts — one figure per model ────────────
+
+    def _plot_demand_vs_order(self):
+        """Generate one separate figure per model showing demand vs. orders
+        over time for all 3 scenarios (one subplot per scenario).
+
+        For each episode the per-step demand and order time-series are
+        averaged element-wise across all episodes to produce a single
+        representative curve per scenario × model combination.
+        """
+        sc_names = list(self.results.keys())
+        models   = list(next(iter(self.results.values())).keys())
+
+        # Scenario colour palette (one colour per scenario line)
+        sc_colors = [
+            "#00D4FF",   # S1 — cyan
+            "#FF9F43",   # S2 — amber
+            "#EE5A24",   # S3 — coral-red
+        ]
+
+        for model in models:
+            n_sc = len(sc_names)
+            fig, axes = plt.subplots(1, n_sc,
+                                     figsize=(6.5 * n_sc, 5.5),
+                                     sharey=False)
+            fig.patch.set_facecolor("#0F1923")
+            if n_sc == 1:
+                axes = [axes]
+
+            fig.suptitle(
+                f"Plot 5 — Demand vs. Orders Over Time  [{model}]",
+                fontsize=14, fontweight="bold", color="white", y=1.02
+            )
+
+            for ax, sc_name, sc_color in zip(axes, sc_names, sc_colors):
+                ax.set_facecolor("#0F1923")
+
+                eps = self.results[sc_name].get(model, [])
+                if not eps:
+                    ax.set_visible(False)
+                    continue
+
+                # Average per-step demand and orders element-wise across episodes
+                max_len = max(len(m["step_demand_ts"]) for m in eps)
+
+                def _mean_ts(key):
+                    """Return element-wise mean across episodes (padded with NaN)."""
+                    mat = np.full((len(eps), max_len), np.nan)
+                    for i, m in enumerate(eps):
+                        ts = m[key]
+                        mat[i, :len(ts)] = ts
+                    return np.nanmean(mat, axis=0)
+
+                demand_ts = _mean_ts("step_demand_ts")
+                order_ts  = _mean_ts("step_order_ts")
+                steps     = np.arange(1, max_len + 1)
+
+                # Smooth with a 7-step rolling average for readability
+                def _smooth(arr, w=7):
+                    kernel = np.ones(w) / w
+                    return np.convolve(arr, kernel, mode="same")
+
+                demand_smooth = _smooth(demand_ts)
+                order_smooth  = _smooth(order_ts)
+
+                ax.fill_between(steps, demand_smooth, alpha=0.18,
+                                color=sc_color, label="_nolegend_")
+                ax.fill_between(steps, order_smooth,  alpha=0.13,
+                                color="#27AE60", label="_nolegend_")
+
+                ax.plot(steps, demand_smooth,
+                        color=sc_color, linewidth=2.0,
+                        label="Demand")
+                ax.plot(steps, order_smooth,
+                        color="#27AE60", linewidth=2.0,
+                        linestyle="--",
+                        label="Orders")
+
+                # Ratio annotation (mean orders / mean demand)
+                mean_ratio = (float(np.nanmean(order_ts)) /
+                              float(np.nanmean(demand_ts))
+                              if np.nanmean(demand_ts) > 1e-9 else 0.0)
+                ax.text(0.97, 0.96,
+                        f"Order/Demand = {mean_ratio:.2f}×",
+                        transform=ax.transAxes,
+                        ha="right", va="top",
+                        fontsize=9, color="white",
+                        bbox=dict(boxstyle="round,pad=0.3",
+                                  facecolor="#1A2A3A",
+                                  edgecolor="#3A4A5A",
+                                  alpha=0.85))
+
+                ax.set_title(SCENARIOS[sc_name]["label"].replace("\n", " "),
+                             fontsize=11, fontweight="bold", color="white")
+                ax.set_xlabel("Step (day)", fontsize=10, color="white")
+                ax.set_ylabel("Units (avg. across retailers & SKUs)",
+                              fontsize=9.5, color="white")
+                ax.tick_params(colors="white")
+                ax.spines[:].set_color("#3A4A5A")
+                ax.grid(color="#3A4A5A", linewidth=0.6, alpha=0.5)
+                ax.legend(fontsize=9, facecolor="#1A2A3A",
+                          edgecolor="#3A4A5A", labelcolor="white")
+
+            plt.tight_layout()
+            safe_model = model.replace("-", "_").replace(" ", "_")
+            out_path = self.save_dir / f"plot5_demand_vs_order_{safe_model}.png"
+            plt.savefig(out_path, dpi=200,
+                        facecolor="#0F1923", bbox_inches="tight")
+            plt.close()
+            print(f"  [OK] Plot 5 ({model}): {out_path.name}")
 
 
 # ---------------------------------------------------------------------------
