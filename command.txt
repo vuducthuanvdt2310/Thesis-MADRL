@@ -1,17 +1,19 @@
-tensorboard --logdir "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\07Apr_gnn_kaggle\run_seed_1\logs"
+tensorboard --logdir "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\13Apr_gnn\run_seed_1\logs"
 
 python train_multi_dc_baseline.py --experiment_name "01Apr_base" --model_dir "results/05Mar_2base/run_seed_1"
-python train_multi_dc_gnn.py --experiment_name "08Apr_gnn1"
-python test_trained_model.py --model_dir "results\01Apr_base1\run_seed_1\models" --episode_length 90 --num_episodes 1  --experiment_name "eval_base"
+python train_multi_dc_gnn.py --experiment_name "14Apr_gnn_kaggle_vari2" --model_dir "results/14Apr_gnn_kaggle_vari2/run_seed_1"
+python test_trained_model.py --model_dir "results\01Apr_base\run_seed_1\models" --episode_length 90 --num_episodes 20  --experiment_name "eval_base"
 
-python test_trained_model_gnn.py --model_dir "results/12Apr_gnn_colab/run_seed_1/models" --episode_length 90 --num_episodes 10 --experiment_name "eval_gnn"
+python test_trained_model_gnn.py --model_dir "results/14Apr_gnn_kaggle_vari/run_seed_1/models" --episode_length 90 --num_episodes 10 --experiment_name "eval_gnn"
 
 python Test_baseline_basestock.py --experiment_name "basestock_v1" --episode_length 150 --num_episodes 1
 
 
-gnn= 07Apr_gnn_kaggle
+gnn= 13Apr_gnn
 base= 01Apr
 
 git add .
 git commit -m "update"
 git push
+
+14Apr_gnn_kaggle_vari

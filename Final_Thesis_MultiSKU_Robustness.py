@@ -108,9 +108,9 @@ def parse_args():
     p = argparse.ArgumentParser(
         description="Robustness Validation: 3 Scenarios × 3 Models"
     )
-    p.add_argument("--gnn_model_dir",   type=str, default="results/14Apr_gnn_kaggle_vari2/run_seed_1/models",
+    p.add_argument("--gnn_model_dir",   type=str, default="results/14Apr_gnn_kaggle_vari/run_seed_1/models",
                    help="Path to saved GNN-HAPPO model directory")
-    p.add_argument("--happo_model_dir", type=str, default="results/01Apr_base1/run_seed_1/models",
+    p.add_argument("--happo_model_dir", type=str, default="results/01Apr_base/run_seed_1/models",
                    help="Path to saved Standard-HAPPO model directory")
     p.add_argument("--config_path",     type=str,
                    default="configs/multi_dc_config.yaml")
@@ -118,7 +118,7 @@ def parse_args():
     p.add_argument("--num_episodes",             type=int, default=1)
     p.add_argument("--episode_length",           type=int, default=90,
                    help="Episode length for HAPPO and GNN-HAPPO")
-    p.add_argument("--basestock_episode_length", type=int, default=250,
+    p.add_argument("--basestock_episode_length", type=int, default=160,
                    help="Episode length used exclusively for the (s,S) BaseStock heuristic")
     p.add_argument("--seed",                     type=int, default=42)
 
@@ -131,10 +131,10 @@ def parse_args():
     p.add_argument("--cuda",            action="store_true", default=False)
 
     # (s,S) policy levels
-    p.add_argument("--s_dc",        type=float, default=100.0)
+    p.add_argument("--s_dc",        type=float, default=60.0)
     p.add_argument("--S_dc",        type=float, default=150.0)
-    p.add_argument("--s_retailer",  type=float, default=2.0)
-    p.add_argument("--S_retailer",  type=float, default=8.0)
+    p.add_argument("--s_retailer",  type=float, default=3.0)
+    p.add_argument("--S_retailer",  type=float, default=10.0)
 
     # GNN architecture (auto-detected from checkpoint; override if needed)
     p.add_argument("--gnn_type",            type=str,   default="GAT")
@@ -411,7 +411,29 @@ def _load_gnn_policies(model_dir: str, env, device, args):
 # ---------------------------------------------------------------------------
 
 def run_episode_heuristic(env, policy, episode_length, n_skus):
-    """Run one episode with (s,S) heuristic. Returns metrics dict."""
+    """Run one episode with (s,S) heuristic. Returns metrics dict.
+
+    Mirrors Test_baseline_basestock.py exactly:
+      - Monkey-patches env._clip_actions so retailer orders are NOT capped at 15
+        and DC orders are NOT capped at 100. Without this patch, S_dc=150 is
+        silently truncated to 100 and changing s,S has no visible effect.
+      - Restores the original clip after the episode.
+    """
+    # ── Patch env clip so (s,S) quantities pass through untruncated ──────────
+    _original_clip = env._clip_actions
+
+    def _ss_clip_actions(acts):
+        clipped = {}
+        for aid, act in acts.items():
+            if aid in env.dc_ids:
+                clipped[aid] = np.clip(act, 0, 5000)                        # DC: allow large orders
+            else:
+                clipped[aid] = np.maximum(0.0, np.array(act, dtype=np.float32))  # Retailer: only non-neg
+        return clipped
+
+    env._clip_actions = _ss_clip_actions
+    # ─────────────────────────────────────────────────────────────────────────
+
     env.reset()
     n_agents = env.n_agents
     n_dcs    = env.n_dcs
@@ -428,11 +450,22 @@ def run_episode_heuristic(env, policy, episode_length, n_skus):
             print(f"[WARN] env.step raised: {e} at step {step}")
             break
 
-        executed = env._clip_actions(actions)
+        # Cost accounting: use non-negative actions (same as Test_baseline_basestock.py).
+        # Do NOT call env._clip_actions here — we already patched it above and
+        # env.step() applied it internally. Using np.maximum avoids double-clipping.
+        executed = {
+            aid: np.maximum(0.0, np.array(a, dtype=np.float32))
+            for aid, a in actions.items()
+        }
         _accumulate_step(acc, env, rewards, executed, pre_prices,
                          n_agents, n_dcs, n_skus, step, episode_length)
 
+    # ── Restore original clip so subsequent models are unaffected ─────────
+    env._clip_actions = _original_clip
+    # ─────────────────────────────────────────────────────────────────────
+
     return _finalize_episode(acc, env, episode_length, n_agents, n_dcs, n_skus)
+
 
 
 def run_episode_happo(env, policies, episode_length, n_skus, device):
@@ -544,7 +577,7 @@ def run_episode_gnn(env, policies, adj_tensor, obs_dim_padded,
                     agent_id,
                     rnn_states[:, agent_id],   # (1, 2, 128) — matches training shape
                     masks[:, agent_id],         # (1, 1)
-                    deterministic=False,
+                    deterministic=False,  # match test_trained_model_gnn.py — policy trained stochastically
                 )
             # Update carried RNN state at the correct slice
             rnn_states[:, agent_id] = (
@@ -558,8 +591,8 @@ def run_episode_gnn(env, policies, adj_tensor, obs_dim_padded,
 
             # ── DC IP-sufficiency guard (inference-time) ──────────────────
             if agent_id < n_dcs:
-                _z     = 1.29   # same safety factor as heuristic
-                _lt    = float(env.lt_supplier_to_dc_max)  # conservative bound
+                _z     = 1.4   # same safety factor as heuristic
+                _lt    = 7  # conservative bound
                 _n_ret = len(env.dc_assignments[agent_id])
                 _zero_action = True
                 for _sku in range(n_skus):
@@ -850,7 +883,8 @@ class RobustnessEvaluator:
             n_dcs=env.n_dcs, n_agents=env.n_agents, n_skus=env.n_skus,
         )
 
-        for sc_name, sc_cfg in SCENARIOS.items():
+        sc_names = list(SCENARIOS.keys())
+        for sc_idx, (sc_name, sc_cfg) in enumerate(SCENARIOS.items()):
             print(f"\n{'='*70}")
             print(f"SCENARIO: {sc_name}")
             print(f"  SKU demand means : "
@@ -867,10 +901,14 @@ class RobustnessEvaluator:
                 ep_metrics = []
 
                 for ep in range(self.args.num_episodes):
-                    np.random.seed(self.args.seed + ep)
+                    # Use an isolated seed per (scenario, episode) so every model
+                    # sees the SAME demand sequence for episode N.
+                    # sc_idx * 10000 ensures scenario seeds never overlap across 100 eps.
+                    ep_seed = self.args.seed + sc_idx * 10000 + ep * 100
+                    np.random.seed(ep_seed)
                     try:
                         import torch
-                        torch.manual_seed(self.args.seed + ep)
+                        torch.manual_seed(ep_seed)
                     except ImportError:
                         pass
 

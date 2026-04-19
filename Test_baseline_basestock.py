@@ -78,9 +78,9 @@ def parse_args():
     )
     # (s,S) policy levels — separate for DCs and Retailers
     # DC: reorder when IP ≤ s_dc, order up to S_dc (per SKU)
-    parser.add_argument('--s_dc', type=float, default=120.0,
+    parser.add_argument('--s_dc', type=float, default=100.0,
                         help='Reorder point for DCs (units per SKU; default 50)')
-    parser.add_argument('--S_dc', type=float, default=150.0, 
+    parser.add_argument('--S_dc', type=float, default=170.0, 
                         help='Order-up-to level for DCs (units per SKU; default 300)')
     # Retailer: reorder when IP ≤ s_retailer, order up to S_retailer (per SKU)
     parser.add_argument('--s_retailer', type=float, default=3,
