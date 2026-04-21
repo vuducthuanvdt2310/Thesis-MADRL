@@ -265,11 +265,14 @@ pricing:
   # At price=10, ordering 30 units cost 303 immediately vs backlog at 2.5/unit/step →
   # agents rationally avoided ordering. At price=1.0, ordering 30 units = 33 cost,
   # which breaks even against just ~1 unit of backlog for ~1 day → ordering is rational.
-  base_price: [1.0, 0.8, 1.5]  # Base prices per SKU (reduced from [10, 8, 15])
-  min_price: [0.6, 0.4, 1.0]   # Price floor  (reduced from [6, 4, 10])
-  max_price: [1.8, 1.4, 2.5]   # Price ceiling (reduced from [18, 14, 25])
+  base_price: [50, 40, 45]  # Base prices per SKU (reduced from [10, 8, 15])
+  min_price: [40, 30, 35]   # Price floor  (reduced from [6, 4, 10])
+  max_price: [60, 50, 55]   # Price ceiling (reduced from [18, 14, 25])
   volatility: 0.15  # ±15% typical variation
 
+# base_price: [1.0, 0.8, 1.5]  # Base prices per SKU (reduced from [10, 8, 15])
+#   min_price: [0.6, 0.4, 1.0]   # Price floor  (reduced from [6, 4, 10])
+#   max_price: [1.8, 1.4, 2.5]   # Price ceiling (reduced from [18, 14, 25])
 # Customer Demand Configuration
 demand:
   # Base mean and std for each SKU
