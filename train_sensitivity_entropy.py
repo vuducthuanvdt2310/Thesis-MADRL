@@ -10,7 +10,7 @@ def main():
     n_rollout_threads = 4  # Default in train_multi_dc_gnn.py
     
     # Calculate the required num_env_steps to achieve exactly the requested number of episodes
-    num_env_steps = num_episodes * episode_length * n_rollout_threads
+    num_env_steps = num_episodes * episode_length 
     
     print("=" * 80)
     print(f"Starting Sensitivity Analysis for entropy_coef")
