@@ -10,7 +10,7 @@ def parse_args():
     # Episode settings
     parser.add_argument('--num_episodes', type=int, default=50,
                         help='Number of training episodes per configuration (default: 50)')
-    parser.add_argument('--episode_length', type=int, default=90,
+    parser.add_argument('--episode_length', type=int, default=365,
                         help='Length of each episode in days (default: 90)')
     parser.add_argument('--seed', type=int, default=1,
                         help='Random seed for reproducibility (default: 1)')
