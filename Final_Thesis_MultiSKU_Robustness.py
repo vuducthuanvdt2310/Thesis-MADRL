@@ -118,7 +118,7 @@ def parse_args():
     p.add_argument("--num_episodes",             type=int, default=1)
     p.add_argument("--episode_length",           type=int, default=90,
                    help="Episode length for HAPPO and GNN-HAPPO")
-    p.add_argument("--basestock_episode_length", type=int, default=160,
+    p.add_argument("--basestock_episode_length", type=int, default=120,
                    help="Episode length used exclusively for the (s,S) BaseStock heuristic")
     p.add_argument("--seed",                     type=int, default=42)
 

@@ -2,20 +2,37 @@ import sys
 import os
 import time
 import subprocess
+import argparse
 
-def main():
-    entropy_coefs = [0.001, 0.01, 0.05]
-    num_episodes = 50
-    episode_length = 90
-    n_rollout_threads = 4  # Default in train_multi_dc_gnn.py
+def parse_args():
+    parser = argparse.ArgumentParser(description='Sensitivity Analysis for Entropy Coef')
     
-    # Calculate the required num_env_steps to achieve exactly the requested number of episodes
-    num_env_steps = num_episodes * episode_length 
+    # Episode settings
+    parser.add_argument('--num_episodes', type=int, default=50,
+                        help='Number of training episodes per configuration (default: 50)')
+    parser.add_argument('--episode_length', type=int, default=90,
+                        help='Length of each episode in days (default: 90)')
+    parser.add_argument('--seed', type=int, default=1,
+                        help='Random seed for reproducibility (default: 1)')
+    
+    # Training settings
+    parser.add_argument('--n_rollout_threads', type=int, default=4,
+                        help='Number of parallel rollout threads (default: 4)')
+                        
+    return parser.parse_args()
+
+def main(args):
+    entropy_coefs = [0.001, 0.01, 0.05]
+    
+    # Calculate the required num_env_steps to achieve roughly the requested number of episodes
+    num_env_steps = args.num_episodes * args.episode_length 
     
     print("=" * 80)
     print(f"Starting Sensitivity Analysis for entropy_coef")
     print(f"Values to test: {entropy_coefs}")
-    print(f"Training for {num_episodes} episodes per configuration")
+    print(f"Training for target ~{args.num_episodes} episodes per configuration")
+    print(f"Episode length: {args.episode_length} days")
+    print(f"Seed: {args.seed}")
     print("=" * 80)
     
     sensitivity_results = []
@@ -23,7 +40,7 @@ def main():
     
     for coef in entropy_coefs:
         print(f"\n{'#' * 80}")
-        print(f"Starting Run: entropy_coef = {coef}")
+        print(f"Starting Run: entropy_coef = {coef} (seed = {args.seed})")
         print(f"{'#' * 80}\n")
         
         # We specify a unique experiment_name so logs and models are saved separately 
@@ -35,8 +52,10 @@ def main():
             sys.executable, "train_multi_dc_gnn.py",
             "--entropy_coef", str(coef),
             "--num_env_steps", str(num_env_steps),
+            "--episode_length", str(args.episode_length),
             "--experiment_name", experiment_name,
-            "--n_rollout_threads", str(n_rollout_threads)
+            "--n_rollout_threads", str(args.n_rollout_threads),
+            "--seed", str(args.seed)
         ]
         
         print(f"Executing: {' '.join(cmd)}\n")
@@ -74,7 +93,8 @@ def main():
     print("\n" + "="*80)
     print("SENSITIVITY ANALYSIS SUMMARY REPORT")
     print("="*80)
-    print(f"Total target episodes per configuration: {num_episodes}")
+    print(f"Total target episodes per configuration: {args.num_episodes}")
+    print(f"Seed used: {args.seed}")
     print(f"{'Entropy Coef':<15} | {'Time Taken (Seconds)':<22} | {'Time Formatted':<15}")
     print("-" * 80)
     for res in sensitivity_results:
@@ -91,4 +111,5 @@ def main():
     print("="*80)
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    main(args)

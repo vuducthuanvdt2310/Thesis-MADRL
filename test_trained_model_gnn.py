@@ -939,6 +939,7 @@ class GNNModelEvaluator:
         print('Creating visualizations...')
         self._plot_episode_rewards()
         self._plot_cost_breakdown(stats)
+        self._plot_cost_breakdown_retailer(stats)
         self._plot_service_levels(stats)
         if self.detailed_trajectory:
             self._plot_trajectory()
@@ -995,6 +996,34 @@ class GNNModelEvaluator:
         ax.grid(True, axis='y', alpha=0.3)
         plt.tight_layout()
         plt.savefig(self.save_dir / 'cost_breakdown.png', dpi=300)
+        plt.close()
+
+    def _plot_cost_breakdown_retailer(self, stats):
+        fig, ax = plt.subplots(figsize=(14, 7))
+        agents = [a for a in stats['per_agent'].keys() if a.startswith('Retailer')]
+        hc = [stats['per_agent'][a]['avg_holding_cost'] for a in agents]
+        bc = [stats['per_agent'][a]['avg_backlog_cost'] for a in agents]
+        oc = [stats['per_agent'][a]['avg_ordering_cost'] for a in agents]
+        x = np.arange(len(agents))
+        w = 0.6
+        ax.bar(x, hc, w, label='Holding', color='#4ECDC4', edgecolor='black')
+        ax.bar(x, bc, w, bottom=hc, label='Backlog', color='#FF6B6B', edgecolor='black')
+        ax.bar(x, oc, w, bottom=np.array(hc) + np.array(bc),
+               label='Ordering', color='#FFD700', edgecolor='black')
+        for i in range(len(agents)):
+            total = hc[i] + bc[i] + oc[i]
+            ax.text(i, total, f'{total:.0f}', ha='center', va='bottom',
+                    fontsize=9, fontweight='bold')
+        ax.set_ylabel('Avg Cost / Episode', fontsize=12)
+        ax.set_xlabel('Retailer Agent', fontsize=12)
+        ax.set_title('GNN-HAPPO Cost Breakdown by Retailer',
+                     fontsize=14, fontweight='bold')
+        ax.set_xticks(x)
+        ax.set_xticklabels(agents, rotation=45, ha='right')
+        ax.legend(loc='upper left')
+        ax.grid(True, axis='y', alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(self.save_dir / 'cost_breakdown_retailer.png', dpi=300)
         plt.close()
 
     def _plot_service_levels(self, stats):

@@ -725,7 +725,8 @@ def parse_args():
     parser.add_argument('--happo_model_dir', type=str, default='results/01Apr_base/run_seed_1/models')
     parser.add_argument('--num_episodes', type=int, default=1)
     parser.add_argument('--episode_length', type=int, default=90)
-    parser.add_argument('--basestock_episode_length', type=int, default=160)
+    parser.add_argument('--happo_episode_length', type=int, default=100)
+    parser.add_argument('--basestock_episode_length', type=int, default=120)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--config_path', type=str, default='configs/multi_dc_config.yaml')
     parser.add_argument('--num_agents', type=int, default=17)
@@ -850,6 +851,7 @@ def main():
 
         # HAPPO
         happo_args = copy.deepcopy(args)
+        happo_args.episode_length = args.happo_episode_length
         happo_args.algorithm_name = 'happo'
         happo_args.model_dir = args.happo_model_dir
         evaluator_happo = HAPPOEvaluator(happo_args, scenario=sc)

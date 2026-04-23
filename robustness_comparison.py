@@ -1206,8 +1206,10 @@ def parse_args():
     parser.add_argument('--num_episodes', type=int, default=1,
                         help='Number of evaluation episodes')
     parser.add_argument('--episode_length', type=int, default=90,
-                        help='Episode length for HAPPO and GNN-HAPPO (days)')
-    parser.add_argument('--basestock_episode_length', type=int, default=160,
+                        help='Episode length for GNN-HAPPO (days)')
+    parser.add_argument('--happo_episode_length', type=int, default=115,
+                        help='Episode length for HAPPO (days)')
+    parser.add_argument('--basestock_episode_length', type=int, default=120,
                         help='Episode length used exclusively for the (s,S) BaseStock evaluator')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')
@@ -1268,6 +1270,7 @@ def run_happo(args, scenario: dict, scenario_label: str):
     print(f'{"="*60}')
     import copy
     happo_args = copy.deepcopy(args)
+    happo_args.episode_length = args.happo_episode_length
     happo_args.model_dir = args.happo_model_dir
     happo_args.algorithm_name = 'happo'
     evaluator = HAPPOEvaluator(happo_args, demand_scenario=scenario)
@@ -1482,7 +1485,8 @@ def main():
     print(f'  GNN-HAPPO model : {args.gnn_model_dir}')
     print(f'  HAPPO model     : {args.happo_model_dir}')
     print(f'  Num episodes    : {args.num_episodes}')
-    print(f'  Episode length  : {args.episode_length} days  (HAPPO / GNN-HAPPO)')
+    print(f'  GNN ep. length  : {args.episode_length} days  (GNN-HAPPO)')
+    print(f'  HAPPO ep. length: {args.happo_episode_length} days  (HAPPO)')
     print(f'  BaseStock ep.   : {args.basestock_episode_length} days  ((s,S) only)')
     print(f'  Seed            : {args.seed}')
     print('  Scenarios:')

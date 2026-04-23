@@ -1,10 +1,10 @@
 Scenario,Model,Mean_Total_Cost,Std_Total_Cost,Mean_Fill_Rate_%
-S1-Balanced,"(s,S) BaseStock",109850.02,0.0,92.4
-S1-Balanced,HAPPO,83445.91,0.0,74.65
+S1-Balanced,"(s,S) BaseStock",85538.14,0.0,91.75
+S1-Balanced,HAPPO,98560.1,0.0,71.27
 S1-Balanced,GNN-HAPPO,77534.76,0.0,93.76
-S2-HighPrice,"(s,S) BaseStock",118010.68,0.0,92.4
-S2-HighPrice,HAPPO,85870.04,0.0,74.65
+S2-HighPrice,"(s,S) BaseStock",91237.55,0.0,91.75
+S2-HighPrice,HAPPO,101550.56,0.0,71.27
 S2-HighPrice,GNN-HAPPO,82256.44,0.0,93.76
-S3-HighVariant,"(s,S) BaseStock",111914.02,0.0,92.4
-S3-HighVariant,HAPPO,83786.69,0.0,74.65
+S3-HighVariant,"(s,S) BaseStock",86983.61,0.0,91.75
+S3-HighVariant,HAPPO,99120.96,0.0,71.37
 S3-HighVariant,GNN-HAPPO,78607.01,0.0,93.76
