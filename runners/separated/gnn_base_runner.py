@@ -813,10 +813,17 @@ class GNNRunner(object):
     # =========================================================================
     def log_train(self, train_infos, total_num_steps):
         total_agent_reward = 0
+        total_policy_loss = 0
+        total_value_loss = 0
+
         for agent_id in range(self.num_agents):
             agent_rew = np.mean(self.buffer[agent_id].rewards)
             train_infos[agent_id]["average_step_rewards"] = agent_rew
             total_agent_reward += agent_rew
+            
+            # Accumulate losses to calculate an average for the whole model
+            total_policy_loss += train_infos[agent_id].get('policy_loss', 0)
+            total_value_loss += train_infos[agent_id].get('value_loss', 0)
 
             for k, v in train_infos[agent_id].items():
                 agent_k = "agent%i/" % agent_id + k
@@ -825,6 +832,10 @@ class GNNRunner(object):
         # Log total system reward (sum of all agents)
         self.writter.add_scalar("system/total_average_step_reward", total_agent_reward, total_num_steps)
         self.writter.add_scalar("system/total_episode_reward_estimated", total_agent_reward * self.episode_length, total_num_steps)
+        
+        # Log average losses across all agents
+        self.writter.add_scalar("system/average_policy_loss", total_policy_loss / self.num_agents, total_num_steps)
+        self.writter.add_scalar("system/average_value_loss", total_value_loss / self.num_agents, total_num_steps)
 
     def log_env(self, env_infos, total_num_steps):
         for k, v in env_infos.items():
