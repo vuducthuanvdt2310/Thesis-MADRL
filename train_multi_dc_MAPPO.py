@@ -112,8 +112,8 @@ if __name__ == "__main__":
         scenario_name="inventory_2echelon",
         num_agents=17,           # 2 DCs + 15 Retailers
         episode_length=365,      # Days per episode
-        num_env_steps=36500000,  # Total training steps (~100 episodes × 365 days × 10 threads)
-        n_rollout_threads=10,    # Parallel environments
+        num_env_steps=292000,  # Total training steps (~100 episodes × 365 days × 10 threads)
+        n_rollout_threads=4,    # Parallel environments
         n_training_threads=1,    # Training threads
         algorithm_name="mappo",  # ← MAPPO: centralized critic, independent PPO actors
         experiment_name="mappo_training",
