@@ -2,9 +2,10 @@
 """
 Validate_Results.py
 ====================
-Master validation script for comparing three inventory management policies:
+Master validation script for comparing four inventory management policies:
   • GNN-HAPPO        (proposed, GNN-based multi-agent RL)
   • Standard HAPPO   (baseline, MLP-based multi-agent RL)
+  • MAPPO            (Multi-Agent PPO baseline)
   • (s,S) Heuristic  (classical inventory heuristic)
 
 Input:  Three results_*.csv files, each with 100 rows (one per episode).
@@ -46,6 +47,7 @@ from scipy import stats
 PATHS: dict[str, str] = {
     "GNN-HAPPO":      "evaluation_results/eval_gnn/results_gnn_happo.csv",
     "Standard-HAPPO": "evaluation_results/eval_base/results_standard_happo.csv",
+    "MAPPO":          "evaluation_results/eval_mappo/results_mappo.csv",
     "S-s-Heuristic":  "evaluation_results/basestock_v1/results_ss_heuristic.csv",
 }
 
@@ -150,6 +152,7 @@ def run_paired_ttests(data: dict[str, pd.DataFrame]) -> dict[str, tuple]:
 PALETTE = {
     "GNN-HAPPO":      "#2E86AB",   # teal-blue   (proposed)
     "Standard-HAPPO": "#A23B72",   # purple      (baseline)
+    "MAPPO":          "#3BB273",   # green       (MAPPO baseline)
     "S-s-Heuristic":  "#F18F01",   # amber       (heuristic)
 }
 
@@ -253,6 +256,8 @@ def parse_args():
                         help="Override path for GNN-HAPPO CSV")
     parser.add_argument("--happo_csv", type=str, default=None,
                         help="Override path for Standard-HAPPO CSV")
+    parser.add_argument("--mappo_csv", type=str, default=None,
+                        help="Override path for MAPPO CSV")
     parser.add_argument("--ss_csv",    type=str, default=None,
                         help="Override path for (s,S) Heuristic CSV")
     parser.add_argument("--out_dir",   type=str, default="validation_output",
@@ -269,6 +274,8 @@ def main():
         paths["GNN-HAPPO"] = args.gnn_csv
     if args.happo_csv:
         paths["Standard-HAPPO"] = args.happo_csv
+    if args.mappo_csv:
+        paths["MAPPO"] = args.mappo_csv
     if args.ss_csv:
         paths["S-s-Heuristic"] = args.ss_csv
 

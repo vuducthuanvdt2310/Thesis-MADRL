@@ -1,15 +1,16 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-Robustness Comparison: 3 Models x 3 Demand Scenarios
+Robustness Comparison: 4 Models x 3 Demand Scenarios
 =====================================================
 
-Evaluates three inventory policies under three demand scenarios and produces
+Evaluates four inventory policies under three demand scenarios and produces
 a grouped bar chart comparing total cost and fill rate.
 
   Models:
     - (s,S) BaseStock Heuristic
     - HAPPO  (results/01Apr_base/run_seed_1/models)
+    - MAPPO  (results/25Apr_MAPPO/run_seed_1/models)
     - GNN-HAPPO (results/14Apr_gnn_kaggle_vari/run_seed_1/models)
 
   Scenarios (per-SKU mean & std override):
@@ -52,6 +53,7 @@ from envs.env_wrappers import DummyVecEnvMultiDC
 from algorithms.happo_policy import HAPPO_Policy
 from algorithms.gnn_happo_policy import GNN_HAPPO_Policy
 from utils.graph_utils import build_supply_chain_adjacency, normalize_adjacency
+from test_trained_model_mappo1 import MAPPOModelEvaluatorV1
 
 
 # ---------------------------------------------------------------------------
@@ -1186,8 +1188,46 @@ class GNNModelEvaluator:
 
 
 # ============================================================================
-#  SECTION 4 — Argument parsing & main orchestration
+#  SECTION 4 — MAPPO thin wrapper (adds aggregation helpers)
 # ============================================================================
+
+class MAPPORobustnessEvaluator(MAPPOModelEvaluatorV1):
+    """
+    Extends MAPPOModelEvaluatorV1 with the three aggregation helpers that the
+    robustness comparison script expects (same signatures as HAPPOEvaluator /
+    GNNModelEvaluator).
+    """
+
+    def mean_total_cost(self):
+        costs = []
+        for m in self.episode_metrics:
+            total_holding  = float(np.sum(m['holding_costs']))
+            total_backlog  = float(np.sum(m['backlog_costs']))
+            total_ordering = float(np.sum(m['ordering_costs']))
+            costs.append(total_holding + total_backlog + total_ordering)
+        return float(np.mean(costs)), float(np.std(costs))
+
+    def mean_fill_rate(self):
+        n_dcs = 2
+        rates = []
+        for m in self.episode_metrics:
+            total_placed     = sum(m['_orders_placed'][aid]     for aid in range(n_dcs, self.n_agents))
+            total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(n_dcs, self.n_agents))
+            rates.append((total_from_stock / total_placed * 100.0) if total_placed > 0 else 100.0)
+        return float(np.mean(rates))
+
+    def get_trajectory(self):
+        """Returns step-level demand and orders for the first episode."""
+        if not self.episode_metrics:
+            return None, None
+        m = self.episode_metrics[0]
+        return m.get('traj_demand'), m.get('traj_orders')
+
+
+# ============================================================================
+#  SECTION 5 — Argument parsing & main orchestration
+# ============================================================================
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -1201,6 +1241,9 @@ def parse_args():
     parser.add_argument('--happo_model_dir', type=str,
                         default='results/01Apr_base/run_seed_1/models',
                         help='HAPPO model directory')
+    parser.add_argument('--mappo_model_dir', type=str,
+                        default='results/25Apr_MAPPO/run_seed_1/models',
+                        help='MAPPO model directory')
 
     # -- Episode settings --
     parser.add_argument('--num_episodes', type=int, default=1,
@@ -1209,6 +1252,8 @@ def parse_args():
                         help='Episode length for GNN-HAPPO (days)')
     parser.add_argument('--happo_episode_length', type=int, default=115,
                         help='Episode length for HAPPO (days)')
+    parser.add_argument('--mappo_episode_length', type=int, default=120,
+                        help='Episode length for MAPPO (days)')
     parser.add_argument('--basestock_episode_length', type=int, default=120,
                         help='Episode length used exclusively for the (s,S) BaseStock evaluator')
     parser.add_argument('--seed', type=int, default=42,
@@ -1300,10 +1345,35 @@ def run_gnn(args, scenario: dict, scenario_label: str):
     return mean_cost, std_cost, fill_rate, traj_d, traj_o
 
 
+def run_mappo(args, scenario: dict, scenario_label: str):
+    print(f'\n{"="*60}')
+    print(f'  Running MAPPO -- {scenario_label}')
+    print(f'{"="*60}')
+    import copy
+    mappo_args = copy.deepcopy(args)
+    mappo_args.episode_length = args.mappo_episode_length
+    mappo_args.model_dir      = args.mappo_model_dir
+    mappo_args.save_dir       = args.save_dir + '/mappo_tmp'
+    mappo_args.experiment_name = f'robustness_{scenario_label}'
+    # Apply demand scenario to the underlying env after construction
+    evaluator = MAPPORobustnessEvaluator(mappo_args)
+    # Patch demand scenario into the environment
+    env_list = getattr(evaluator.env, 'env_list', getattr(evaluator.env, 'envs', None))
+    if env_list:
+        _apply_scenario(env_list[0], scenario)
+    evaluator.evaluate()
+    mean_cost, std_cost = evaluator.mean_total_cost()
+    fill_rate = evaluator.mean_fill_rate()
+    traj_d, traj_o = evaluator.get_trajectory()
+    print(f'  --> Mean total cost: {mean_cost:,.2f}  (+/-{std_cost:,.2f})')
+    print(f'  --> Mean fill rate:  {fill_rate:.1f}%')
+    return mean_cost, std_cost, fill_rate, traj_d, traj_o
+
+
 def plot_total_cost(results, scenario_labels, save_dir):
     """Save a standalone bar chart of Mean Total Cost per scenario."""
-    model_names = ['(s,S) BaseStock', 'HAPPO', 'GNN-HAPPO']
-    colors      = ['#4ECDC4', '#FF6B6B', '#3A86FF']
+    model_names = ['(s,S) BaseStock', 'HAPPO', 'MAPPO', 'GNN-HAPPO']
+    colors      = ['#4ECDC4', '#FF6B6B', '#3BB273', '#3A86FF']
 
     n_scenarios = len(scenario_labels)
     n_models    = len(model_names)
@@ -1312,11 +1382,11 @@ def plot_total_cost(results, scenario_labels, save_dir):
     stds  = np.array([[results[s][m][1] for m in range(n_models)] for s in range(n_scenarios)])
 
     x      = np.arange(n_scenarios)
-    width  = 0.22
-    offsets = np.array([-width, 0, width])
+    width  = 0.18
+    offsets = np.array([-1.5*width, -0.5*width, 0.5*width, 1.5*width])
 
-    fig, ax = plt.subplots(figsize=(11, 7))
-    ax.set_title('Total Cost Comparison\n3 Models x 3 Demand Scenarios',
+    fig, ax = plt.subplots(figsize=(13, 7))
+    ax.set_title('Total Cost Comparison\n4 Models x 3 Demand Scenarios',
                  fontsize=14, fontweight='bold', pad=12)
 
     for i, (name, color, offset) in enumerate(zip(model_names, colors, offsets)):
@@ -1351,8 +1421,8 @@ def plot_total_cost(results, scenario_labels, save_dir):
 
 def plot_fill_rate(results, scenario_labels, save_dir):
     """Save a standalone bar chart of Mean Fill Rate per scenario."""
-    model_names = ['(s,S) BaseStock', 'HAPPO', 'GNN-HAPPO']
-    colors      = ['#4ECDC4', '#FF6B6B', '#3A86FF']
+    model_names = ['(s,S) BaseStock', 'HAPPO', 'MAPPO', 'GNN-HAPPO']
+    colors      = ['#4ECDC4', '#FF6B6B', '#3BB273', '#3A86FF']
 
     n_scenarios = len(scenario_labels)
     n_models    = len(model_names)
@@ -1360,11 +1430,11 @@ def plot_fill_rate(results, scenario_labels, save_dir):
     fills = np.array([[results[s][m][2] for m in range(n_models)] for s in range(n_scenarios)])
 
     x      = np.arange(n_scenarios)
-    width  = 0.22
-    offsets = np.array([-width, 0, width])
+    width  = 0.18
+    offsets = np.array([-1.5*width, -0.5*width, 0.5*width, 1.5*width])
 
-    fig, ax = plt.subplots(figsize=(11, 7))
-    ax.set_title('Fill Rate Comparison\n3 Models x 3 Demand Scenarios',
+    fig, ax = plt.subplots(figsize=(13, 7))
+    ax.set_title('Fill Rate Comparison\n4 Models x 3 Demand Scenarios',
                  fontsize=14, fontweight='bold', pad=12)
 
     for i, (name, color, offset) in enumerate(zip(model_names, colors, offsets)):
@@ -1473,20 +1543,22 @@ def print_summary_table(results, scenario_labels, model_names):
 def main():
     args = parse_args()
 
-    model_names = ['(s,S) BaseStock', 'HAPPO', 'GNN-HAPPO']
+    model_names = ['(s,S) BaseStock', 'HAPPO', 'MAPPO', 'GNN-HAPPO']
 
     # Create output directory
     save_dir = Path(args.save_dir)
     save_dir.mkdir(parents=True, exist_ok=True)
 
     print('\n' + '=' * 70)
-    print('  ROBUSTNESS COMPARISON: 3 Models x 3 Demand Scenarios')
+    print('  ROBUSTNESS COMPARISON: 4 Models x 3 Demand Scenarios')
     print('=' * 70)
     print(f'  GNN-HAPPO model : {args.gnn_model_dir}')
     print(f'  HAPPO model     : {args.happo_model_dir}')
+    print(f'  MAPPO model     : {args.mappo_model_dir}')
     print(f'  Num episodes    : {args.num_episodes}')
     print(f'  GNN ep. length  : {args.episode_length} days  (GNN-HAPPO)')
     print(f'  HAPPO ep. length: {args.happo_episode_length} days  (HAPPO)')
+    print(f'  MAPPO ep. length: {args.mappo_episode_length} days  (MAPPO)')
     print(f'  BaseStock ep.   : {args.basestock_episode_length} days  ((s,S) only)')
     print(f'  Seed            : {args.seed}')
     print('  Scenarios:')
@@ -1526,7 +1598,12 @@ def main():
         scenario_results.append((mean_cost, std_cost, fill_rate))
         scenario_trajs.append((traj_d, traj_o))
 
-        # 3. GNN-HAPPO
+        # 3. MAPPO
+        mean_cost, std_cost, fill_rate, traj_d, traj_o = run_mappo(args, sc_val, scenario_label)
+        scenario_results.append((mean_cost, std_cost, fill_rate))
+        scenario_trajs.append((traj_d, traj_o))
+
+        # 4. GNN-HAPPO
         mean_cost, std_cost, fill_rate, traj_d, traj_o = run_gnn(args, sc_val, scenario_label)
         scenario_results.append((mean_cost, std_cost, fill_rate))
         scenario_trajs.append((traj_d, traj_o))

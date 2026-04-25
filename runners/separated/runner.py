@@ -399,14 +399,25 @@ class CRunner(BaseRunner):
         total_agent_reward = 0
         dc_reward = 0
         retailer_reward = 0
+        total_policy_loss = 0
+        total_value_loss = 0
 
         for agent_id in range(self.num_agents):
             agent_rew = np.mean(self.buffer[agent_id].rewards)
             train_infos[agent_id]["average_step_rewards"] = agent_rew
             total_agent_reward += agent_rew
 
-            # Log each agent's reward individually (clean, no other metrics)
+            # Accumulate losses to calculate an average for the whole model
+            total_policy_loss += train_infos[agent_id].get('policy_loss', 0)
+            total_value_loss += train_infos[agent_id].get('value_loss', 0)
+
+            # Log each agent's reward individually
             self.writter.add_scalar(f"agent_reward/agent{agent_id}", agent_rew, total_num_steps)
+            
+            # Log all training info per agent (policy_loss, value_loss, etc.)
+            for k, v in train_infos[agent_id].items():
+                agent_k = "agent%i/" % agent_id + k
+                self.writter.add_scalars(agent_k, {agent_k: v}, total_num_steps)
 
             # Accumulate group rewards
             if agent_id < 2:
@@ -420,6 +431,10 @@ class CRunner(BaseRunner):
         self.writter.add_scalar("system/total_average_step_reward", total_agent_reward, total_num_steps)
         # Estimated episode reward for easy comparison with eval
         self.writter.add_scalar("system/total_episode_reward_estimated", total_agent_reward * self.episode_length, total_num_steps)
+        
+        # Log average losses across all agents
+        self.writter.add_scalar("system/average_policy_loss", total_policy_loss / self.num_agents, total_num_steps)
+        self.writter.add_scalar("system/average_value_loss", total_value_loss / self.num_agents, total_num_steps)
     
     @torch.no_grad()
     def eval(self, eval_sl_list=None):

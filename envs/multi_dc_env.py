@@ -949,7 +949,7 @@ class MultiDCInventoryEnv:
         # All relative cost ratios are preserved — incentive structure is unchanged.
         norm = float(self.max_days)
         rewards = {agent_id: r / norm for agent_id, r in rewards.items()}
-
+                                            
         # === Alpha-weighted local + global reward mixing ===
         # Blends each agent's purely local reward with the system-wide mean reward.
         # This encourages cooperative behaviour without losing the sharp local gradient.
