@@ -10,7 +10,7 @@ def get_config():
 
     # prepare parameters
     parser.add_argument("--algorithm_name", type=str,
-                        default='happo', choices=["happo"])
+                        default='happo', choices=["happo", "mappo", "gnn_happo"])
     parser.add_argument('--scenario_name', type=str, 
                         default='Ineventory Management', help="Which scenario to run on")
     parser.add_argument("--num_landmarks", type=int, 

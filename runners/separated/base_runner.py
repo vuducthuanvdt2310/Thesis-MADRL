@@ -67,6 +67,9 @@ class BaseRunner(object):
         if self.all_args.algorithm_name == "happo":
             from algorithms.happo_trainer import HAPPO as TrainAlgo
             from algorithms.happo_policy import HAPPO_Policy as Policy
+        elif self.all_args.algorithm_name == "mappo":
+            from algorithms.mappo_trainer import MAPPO as TrainAlgo
+            from algorithms.mappo_policy import MAPPO_Policy as Policy
         elif self.all_args.algorithm_name == "gnn_happo":
             from algorithms.gnn_happo_trainer import GNN_HAPPO as TrainAlgo
             from algorithms.gnn_happo_policy import GNN_HAPPO_Policy as Policy
@@ -183,10 +186,8 @@ class BaseRunner(object):
             
             if self.all_args.algorithm_name == "gnn_happo":
                 # GNN actor needs structured observations and adjacency matrix
-                # Reconstruct from buffer's share_obs which contains concatenated observations
                 share_obs_concat = self.buffer[agent_id].share_obs[:-1].reshape(-1, *self.buffer[agent_id].share_obs.shape[2:])
                 obs_structured = self.trainer[agent_id]._reconstruct_structured_obs(share_obs_concat)
-                
                 old_actions_logprob, _ = self.trainer[agent_id].policy.actor.evaluate_actions(
                     obs_structured,
                     self.adj_tensor,
@@ -196,8 +197,8 @@ class BaseRunner(object):
                     self.buffer[agent_id].masks[:-1].reshape(-1, *self.buffer[agent_id].masks.shape[2:]),
                     available_actions,
                     self.buffer[agent_id].active_masks[:-1].reshape(-1, *self.buffer[agent_id].active_masks.shape[2:]))
-            else:
-                # Standard HAPPO actor
+            elif self.all_args.algorithm_name == "happo":
+                # Standard HAPPO: capture old log-probs before this agent's update
                 old_actions_logprob, _ = self.trainer[agent_id].policy.actor.evaluate_actions(
                     self.buffer[agent_id].obs[:-1].reshape(-1, *self.buffer[agent_id].obs.shape[2:]),
                     self.buffer[agent_id].rnn_states[0:1].reshape(-1, *self.buffer[agent_id].rnn_states.shape[2:]),
@@ -206,6 +207,7 @@ class BaseRunner(object):
                     available_actions,
                     self.buffer[agent_id].active_masks[:-1].reshape(-1, *self.buffer[agent_id].active_masks.shape[2:]),
                     agent_id=agent_id)
+            # MAPPO: no old logprob needed — factor stays all-ones
             
             if self.all_args.algorithm_name == "gnn_happo":
                 # GNN trainer requires adjacency matrix and agent_id
@@ -218,10 +220,9 @@ class BaseRunner(object):
                 train_info = self.trainer[agent_id].train(self.buffer[agent_id])
 
             if self.all_args.algorithm_name == "gnn_happo":
-                # GNN actor needs structured observations and adjacency matrix
+                # GNN: compute new log-probs to update the sequential factor
                 share_obs_concat = self.buffer[agent_id].share_obs[:-1].reshape(-1, *self.buffer[agent_id].share_obs.shape[2:])
                 obs_structured = self.trainer[agent_id]._reconstruct_structured_obs(share_obs_concat)
-                
                 new_actions_logprob, _ = self.trainer[agent_id].policy.actor.evaluate_actions(
                     obs_structured,
                     self.adj_tensor,
@@ -231,8 +232,9 @@ class BaseRunner(object):
                     self.buffer[agent_id].masks[:-1].reshape(-1, *self.buffer[agent_id].masks.shape[2:]),
                     available_actions,
                     self.buffer[agent_id].active_masks[:-1].reshape(-1, *self.buffer[agent_id].active_masks.shape[2:]))
-            else:
-                # Standard HAPPO actor
+                factor = factor * _t2n(torch.prod(torch.exp(new_actions_logprob - old_actions_logprob), dim=-1).reshape(self.episode_length, self.n_rollout_threads, 1))
+            elif self.all_args.algorithm_name == "happo":
+                # HAPPO: compute new log-probs and update the sequential factor
                 new_actions_logprob, _ = self.trainer[agent_id].policy.actor.evaluate_actions(
                     self.buffer[agent_id].obs[:-1].reshape(-1, *self.buffer[agent_id].obs.shape[2:]),
                     self.buffer[agent_id].rnn_states[0:1].reshape(-1, *self.buffer[agent_id].rnn_states.shape[2:]),
@@ -241,9 +243,10 @@ class BaseRunner(object):
                     available_actions,
                     self.buffer[agent_id].active_masks[:-1].reshape(-1, *self.buffer[agent_id].active_masks.shape[2:]),
                     agent_id=agent_id)
+                factor = factor * _t2n(torch.prod(torch.exp(new_actions_logprob - old_actions_logprob), dim=-1).reshape(self.episode_length, self.n_rollout_threads, 1))
+            # MAPPO: factor stays all-ones — no inter-agent adjustment
 
-            factor = factor*_t2n(torch.prod(torch.exp(new_actions_logprob-old_actions_logprob),dim=-1).reshape(self.episode_length,self.n_rollout_threads,1))
-            train_infos.append(train_info)      
+            train_infos.append(train_info)
             self.buffer[agent_id].after_update()
 
         return train_infos
