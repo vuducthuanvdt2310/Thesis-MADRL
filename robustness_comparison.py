@@ -77,7 +77,7 @@ DEMAND_SCENARIOS = {
         "label": "S2: High Demand\n(Mixed Stress)",
         "short": "S2-High",
     },
-    "Scenario_3_Extreme_Stress": {
+    "Scenario_3_HighVariance": {
         "SKU_0": {"mean": 1.41, "std": 2.0},
         "SKU_1": {"mean": 1.06, "std": 1.4},
         "SKU_2": {"mean": 0.77, "std": 1.2},
@@ -1252,7 +1252,7 @@ def parse_args():
                         help='Episode length for GNN-HAPPO (days)')
     parser.add_argument('--happo_episode_length', type=int, default=115,
                         help='Episode length for HAPPO (days)')
-    parser.add_argument('--mappo_episode_length', type=int, default=120,
+    parser.add_argument('--mappo_episode_length', type=int, default=130,
                         help='Episode length for MAPPO (days)')
     parser.add_argument('--basestock_episode_length', type=int, default=120,
                         help='Episode length used exclusively for the (s,S) BaseStock evaluator')

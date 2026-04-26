@@ -145,7 +145,7 @@ if __name__ == "__main__":
         #   Normal run : num_env_steps=3650000, n_rollout_threads=4
         #   Full thesis: num_env_steps=36500000, n_rollout_threads=10
         # ----------------------------------------------------------------
-        num_env_steps=3650000,   # 10,000 episodes (good starting point)
+        num_env_steps=36500000,   # 10,000 episodes (good starting point)
         n_rollout_threads=4,     # Parallel environments — 4 is safe on most machines
         n_training_threads=1,
         algorithm_name="gnn_happo",
