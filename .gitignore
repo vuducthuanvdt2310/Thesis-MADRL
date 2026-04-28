@@ -6,4 +6,10 @@ results/
 
 # Exclude zip files
 *.zip
-09Feb_test1.zip
+
+# Training logs and extra results
+results1/
+results_sensitive/
+evaluation_results/
+robustness_results/
+validation_output/
