@@ -83,6 +83,9 @@ class MAPPOModelEvaluatorV1(MAPPOModelEvaluator):
             'dc_cycle_service_level': {},
             'final_inventory': None,
             'final_backlog': None,
+            # Trajectory: step-level retail demand & orders per SKU (aggregated)
+            'traj_demand': [np.zeros(self.n_skus) for _ in range(self.args.episode_length)],
+            'traj_orders': [np.zeros(self.n_skus) for _ in range(self.args.episode_length)],
         }
 
         if save_trajectory:
@@ -228,6 +231,16 @@ class MAPPOModelEvaluatorV1(MAPPOModelEvaluator):
                             from_stock = env_state.step_orders_from_stock.get(agent_id, {}).get(sku, 0)
                             ep_data['_orders_placed'][agent_id]     += placed
                             ep_data['_orders_from_stock'][agent_id] += from_stock
+
+                            # Trajectory aggregation (Retail Demand vs Orders)
+                            actual_demand = 0.0
+                            if (sku < len(env_state.demand_history) and
+                                    r_idx < len(env_state.demand_history[sku]) and
+                                    len(env_state.demand_history[sku][r_idx]) > 0):
+                                actual_demand = float(env_state.demand_history[sku][r_idx][-1])
+
+                            ep_data['traj_demand'][step][sku] += actual_demand
+                            ep_data['traj_orders'][step][sku] += float(executed_actions[agent_id][sku])
 
                     ep_data['holding_costs'][agent_id]  += h_cost
                     ep_data['backlog_costs'][agent_id]  += b_cost
