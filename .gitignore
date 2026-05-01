@@ -13,3 +13,9 @@ results_sensitive/
 evaluation_results/
 robustness_results/
 validation_output/
+# New result folders
+heuristiconoff/
+bullwhip_output/
+convergence_results/
+saves/
+training_log.txt
