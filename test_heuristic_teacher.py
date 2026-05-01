@@ -50,14 +50,14 @@ if __name__ == "__main__":
         print("="*60)
         set_heuristic_config(True, k_val=10.0)
         # Using 36500 steps (100 episodes * 365 steps/episode)
-        run_training("gnn_with_heuristic_k10", num_steps=36500)
+        run_training("gnn_with_heuristic_k10", num_steps=109500)
         
         # --- 2. Run WITHOUT heuristic teacher ---
         print("\n" + "="*60)
         print(" PHASE 2: Training WITHOUT Heuristic Teacher")
         print("="*60)
         set_heuristic_config(False, k_val=10.0)
-        run_training("gnn_without_heuristic_k10", num_steps=36500)
+        run_training("gnn_without_heuristic_k10", num_steps=109500)
         
     except Exception as e:
         print(f"\nAn error occurred during training: {e}")

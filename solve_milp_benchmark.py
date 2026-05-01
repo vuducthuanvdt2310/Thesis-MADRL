@@ -5,7 +5,7 @@ import pandas as pd
 from pathlib import Path
 from envs.multi_dc_env import MultiDCInventoryEnv
 
-def solve_pure_milp(horizon=90, time_limit_sec=10000):
+def solve_pure_milp(horizon=50, time_limit_sec=10000):
     # ==========================================
     # MANUALLY EDIT STARTING INVENTORY HERE
     # ==========================================
