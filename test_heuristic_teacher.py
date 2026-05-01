@@ -23,7 +23,7 @@ def set_heuristic_config(enabled_val, k_val=10.0):
     with open(CONFIG_PATH, 'w') as f:
         f.writelines(lines)
 
-def run_training(experiment_name, num_steps=36500):
+def run_training(experiment_name, num_steps=109500):
     """
     Runs the training script.
     num_steps=36500 corresponds to 100 episodes (since episode_length=365).

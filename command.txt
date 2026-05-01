@@ -16,7 +16,7 @@ gnn= 14Apr_gnn_kaggle_vari
 
 git add .
 git commit -m "update"
-git push
+git push origin main --force
 
 python test_trained_model.py --model_dir "results\21Apr_base_colab\run_seed_1\models" --episode_length 120 --num_episodes 20  --experiment_name "eval_base"
 python test_handover.py
