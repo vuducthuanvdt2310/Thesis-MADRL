@@ -36,13 +36,17 @@ from utils.separated_buffer import SeparatedReplayBuffer
 # SETTINGS  (all tunable at the top)
 # ══════════════════════════════════════════════════════════════════════════════
 
-N_TRAIN_EPISODES = 15   # rollout episodes before evaluation
+N_TRAIN_EPISODES = 20   # rollout episodes before evaluation
 N_EVAL_EPISODES  = 3    # evaluation episodes (no gradient)
 EPISODE_LENGTH   = 90   # days per episode  (90 = one quarter, enough for ordering signal)
-N_TRIALS         = 20   # Optuna trials
+N_TRIALS         = 50   # Optuna trials
 TIMEOUT_HOURS    = 3    # wall-clock timeout for the whole study
 HIDDEN_SIZE      = 64   # network width during search (64 is 2× faster than 128)
-N_AGENTS         = 17   # 2 DCs + 15 Retailers
+# Read actual agent count from environment to avoid mismatch
+_dummy_env = MultiDCInventoryEnv(config_path='configs/multi_dc_config.yaml')
+N_AGENTS = _dummy_env.n_agents
+del _dummy_env
+
 DEVICE           = torch.device("cpu")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -99,18 +103,18 @@ class LiteEnvWrapper:
     def __init__(self):
         self.env = MultiDCInventoryEnv(config_path='configs/multi_dc_config.yaml')
         self.n_agents    = self.env.n_agents
-        self.max_obs_dim = self.env.obs_dim_dc          # 27 (DC obs, largest)
-        self.action_dim  = 6
+        self.max_obs_dim = self.env.obs_dim_dc          # 28 (DC obs, largest)
+        self.action_dim  = self.env.action_dim
 
-        from gymnasium import spaces
         self.observation_space = [
-            spaces.Box(low=0, high=1, shape=(self.max_obs_dim,), dtype=np.float32)
-            for _ in range(self.n_agents)
+            self.env.observation_spaces[i]
+            for i in range(self.n_agents)
         ]
         self.action_space = [
-            spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
-            for _ in range(self.n_agents)
+            self.env.action_spaces[i]
+            for i in range(self.n_agents)
         ]
+        from gymnasium import spaces
         # Shared obs = concatenation of all padded agent obs
         total_obs = self.max_obs_dim * self.n_agents
         self.share_observation_space = [

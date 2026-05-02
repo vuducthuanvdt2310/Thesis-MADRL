@@ -42,6 +42,7 @@ from envs.env_wrappers import DummyVecEnvMultiDC
 from algorithms.happo_policy import HAPPO_Policy
 from algorithms.gnn_happo_policy import GNN_HAPPO_Policy
 from utils.graph_utils import build_supply_chain_adjacency, normalize_adjacency
+from test_trained_model_mappo1 import MAPPOModelEvaluatorV1
 
 PRICE_SCENARIOS = {
     "Scenario_1_Balanced": {
@@ -716,16 +717,42 @@ class GNNModelEvaluator:
 
 
 # ============================================================================
-#  SECTION 4 — Argument parsing & main orchestration
+#  SECTION 4 — MAPPO EVALUATOR
+# ============================================================================
+
+class MAPPOPriceEvaluator(MAPPOModelEvaluatorV1):
+    def mean_total_cost(self):
+        costs = []
+        for m in self.episode_metrics:
+            total_holding  = float(np.sum(m['holding_costs']))
+            total_backlog  = float(np.sum(m['backlog_costs']))
+            total_ordering = float(np.sum(m['ordering_costs']))
+            costs.append(total_holding + total_backlog + total_ordering)
+        return float(np.mean(costs)), float(np.std(costs))
+
+    def mean_fill_rate(self):
+        n_dcs = 2
+        rates = []
+        for m in self.episode_metrics:
+            total_placed     = sum(m['_orders_placed'][aid]     for aid in range(n_dcs, getattr(self.args, 'num_agents', 17)))
+            total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(n_dcs, getattr(self.args, 'num_agents', 17)))
+            rates.append((total_from_stock / total_placed * 100.0) if total_placed > 0 else 100.0)
+        return float(np.mean(rates))
+
+
+# ============================================================================
+#  SECTION 5 — Argument parsing & main orchestration
 # ============================================================================
 
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--gnn_model_dir', type=str, default='results/14Apr_gnn_kaggle_vari/run_seed_1/models')
     parser.add_argument('--happo_model_dir', type=str, default='results/01Apr_base/run_seed_1/models')
+    parser.add_argument('--mappo_model_dir', type=str, default='results/25Apr_MAPPO/run_seed_1/models')
     parser.add_argument('--num_episodes', type=int, default=1)
     parser.add_argument('--episode_length', type=int, default=90)
     parser.add_argument('--happo_episode_length', type=int, default=100)
+    parser.add_argument('--mappo_episode_length', type=int, default=130)
     parser.add_argument('--basestock_episode_length', type=int, default=120)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--config_path', type=str, default='configs/multi_dc_config.yaml')
@@ -747,8 +774,8 @@ def parse_args():
 
 
 def plot_metrics(results, scenarios, save_dir):
-    model_names = ['(s,S) BaseStock', 'HAPPO', 'GNN-HAPPO']
-    colors = ['#4ECDC4', '#FF6B6B', '#3A86FF']
+    model_names = ['(s,S) BaseStock', 'HAPPO', 'MAPPO', 'GNN-HAPPO']
+    colors = ['#4ECDC4', '#FF6B6B', '#3BB273', '#3A86FF']
     n_scenarios = len(scenarios)
     n_models = len(model_names)
 
@@ -758,8 +785,8 @@ def plot_metrics(results, scenarios, save_dir):
     means_cost = np.array([[results[s][m][0] for m in range(n_models)] for s in range(n_scenarios)])
     stds_cost  = np.array([[results[s][m][1] for m in range(n_models)] for s in range(n_scenarios)])
     x = np.arange(n_scenarios)
-    width = 0.22
-    offsets = np.array([-width, 0, width])
+    width = 0.18
+    offsets = np.array([-1.5*width, -0.5*width, 0.5*width, 1.5*width])
 
     fig, ax = plt.subplots(figsize=(11, 7))
     ax.set_title('Total Cost across Price Scenarios', fontsize=14, fontweight='bold', pad=12)
@@ -829,7 +856,7 @@ def print_summary(results, scenarios, model_names):
 
 def main():
     args = parse_args()
-    model_names = ['(s,S) BaseStock', 'HAPPO', 'GNN-HAPPO']
+    model_names = ['(s,S) BaseStock', 'HAPPO', 'MAPPO', 'GNN-HAPPO']
     scenarios = list(PRICE_SCENARIOS.values())
 
     save_dir = Path(args.save_dir)
@@ -857,6 +884,19 @@ def main():
         evaluator_happo = HAPPOEvaluator(happo_args, scenario=sc)
         evaluator_happo.evaluate()
         sc_results.append((*evaluator_happo.mean_total_cost(), evaluator_happo.mean_fill_rate()))
+
+        # MAPPO
+        mappo_args = copy.deepcopy(args)
+        mappo_args.episode_length = args.mappo_episode_length
+        mappo_args.model_dir = args.mappo_model_dir
+        mappo_args.save_dir = str(save_dir / 'mappo_tmp')
+        mappo_args.experiment_name = f'price_scenario_{sc["short"]}'
+        evaluator_mappo = MAPPOPriceEvaluator(mappo_args)
+        env_list = getattr(evaluator_mappo.env, 'env_list', getattr(evaluator_mappo.env, 'envs', None))
+        if env_list:
+            _apply_price_scenario(env_list[0], sc)
+        evaluator_mappo.evaluate()
+        sc_results.append((*evaluator_mappo.mean_total_cost(), evaluator_mappo.mean_fill_rate()))
 
         # GNN-HAPPO
         gnn_args = copy.deepcopy(args)
