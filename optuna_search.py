@@ -36,10 +36,10 @@ from utils.separated_buffer import SeparatedReplayBuffer
 # SETTINGS  (all tunable at the top)
 # ══════════════════════════════════════════════════════════════════════════════
 
-N_TRAIN_EPISODES = 15   # rollout episodes before evaluation
+N_TRAIN_EPISODES = 20   # rollout episodes before evaluation
 N_EVAL_EPISODES  = 3    # evaluation episodes (no gradient)
 EPISODE_LENGTH   = 90   # days per episode  (90 = one quarter, enough for ordering signal)
-N_TRIALS         = 20   # Optuna trials
+N_TRIALS         = 50   # Optuna trials
 TIMEOUT_HOURS    = 3    # wall-clock timeout for the whole study
 HIDDEN_SIZE      = 64   # network width during search (64 is 2× faster than 128)
 
