@@ -44,13 +44,13 @@ def load_or_mock_data():
             'Total_Ordering_Cost': 205028.0
         })
         df_gnn = pd.Series({
-            'Total_Cost': 238387.0,
-            'Fill_Rate': 94.5,
-            'Lost_Sales': 161,
+            'Total_Cost': 228258.1109,
+            'Fill_Rate': 93.61,
+            'Lost_Sales': 186,
             'Avg_Inventory': 149.8,
-            'Total_Holding_Cost': 64713.0,
-            'Total_Backlog_Cost': 3281.0,
-            'Total_Ordering_Cost': 170391.0
+            'Total_Holding_Cost': 62326.0,
+            'Total_Backlog_Cost': 4357.0,
+            'Total_Ordering_Cost': 161573.0
         })
         
     return df_milp, df_gnn

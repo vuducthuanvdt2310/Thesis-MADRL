@@ -234,7 +234,8 @@ class SubprocVecEnvMultiDC(object):
             all_args: Configuration arguments with n_rollout_threads
         """
         # Create parallel environments
-        self.env_list = [MultiDCInventoryEnv(config_path='configs/multi_dc_config.yaml') 
+        config_path = getattr(all_args, 'env_config_path', 'configs/multi_dc_config.yaml')
+        self.env_list = [MultiDCInventoryEnv(config_path=config_path) 
                         for i in range(all_args.n_rollout_threads)]
         self.num_envs = all_args.n_rollout_threads
         
@@ -402,7 +403,8 @@ class DummyVecEnvMultiDC(object):
     
     def __init__(self, all_args):
         """Initialize single Multi-DC environment for evaluation."""
-        self.env_list = [MultiDCInventoryEnv(config_path='configs/multi_dc_config.yaml')]
+        config_path = getattr(all_args, 'env_config_path', 'configs/multi_dc_config.yaml')
+        self.env_list = [MultiDCInventoryEnv(config_path=config_path)]
         self.num_envs = 1
         
         self.num_agent = self.env_list[0].n_agents

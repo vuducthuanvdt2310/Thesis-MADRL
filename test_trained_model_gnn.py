@@ -170,8 +170,9 @@ class GNNModelEvaluator:
         env = DummyVecEnvMultiDC(all_args)
 
         self.n_agents = env.num_agent if hasattr(env, 'num_agent') else 17
+        self.n_dcs = env.n_dcs if hasattr(env, 'n_dcs') else 2
         print(f'[OK] Environment created')
-        print(f'     Agents         : {self.n_agents} (2 DCs + {self.n_agents - 2} Retailers)')
+        print(f'     Agents         : {self.n_agents} ({self.n_dcs} DCs + {self.n_agents - self.n_dcs} Retailers)')
         obs_dims = [env.observation_space[i].shape[0] for i in range(self.n_agents)]
         print(f'     Obs dims       : DC={obs_dims[0]}D, Retailer={obs_dims[2]}D')
         print(f'     Action dim     : {env.action_space[0].shape[0]}D\n')
@@ -180,7 +181,7 @@ class GNNModelEvaluator:
     def _build_graph(self):
         print('Building supply chain graph...')
         adj = build_supply_chain_adjacency(
-            n_dcs=2, n_retailers=self.n_agents - 2, self_loops=True
+            n_dcs=self.n_dcs, n_retailers=self.n_agents - self.n_dcs, self_loops=True
         )
         adj = normalize_adjacency(adj, method='symmetric')
         adj_tensor = torch.FloatTensor(adj).to(self.device)
@@ -488,7 +489,7 @@ class GNNModelEvaluator:
                 # policy for DC agents when inventory position already covers the
                 # heuristic order-up-to level — the DC simply does not need to
                 # order and ordering only adds holding cost.
-                if agent_id < 2 and _pre_env_list:
+                if agent_id < self.n_dcs and _pre_env_list:
                     _env = _pre_env_list[0]
                     _z     = 1.4   # same safety factor as heuristic
                     _lt    = 7  # conservative bound
@@ -541,7 +542,7 @@ class GNNModelEvaluator:
 
                     # Cost breakdown
                     h_cost = b_cost = o_cost = 0.0
-                    is_dc = agent_id < 2
+                    is_dc = agent_id < env_state.n_dcs
                     if is_dc:
                         dc_idx = agent_id
                         for sku in range(3):
@@ -560,7 +561,7 @@ class GNNModelEvaluator:
                                 o_cost += (env_state.C_fixed_dc[dc_idx][sku]
                                            + price * executed_actions[agent_id][sku])
                     else:
-                        r_idx = agent_id - 2
+                        r_idx = agent_id - env_state.n_dcs
                         assigned_dc = env_state.retailer_to_dc[agent_id]
                         for sku in range(3):
                             h_cost += (env_state.inventory[agent_id][sku]
@@ -611,7 +612,7 @@ class GNNModelEvaluator:
                         traj['backlog'][agent_id].append(float(bl))
                         traj['rewards'][agent_id].append(reward)
                         traj['actions'][agent_id].append(executed_actions[agent_id].copy())
-                        if agent_id < 2:
+                        if agent_id < env_state.n_dcs:
                             # DC: actual demand is the sum of orders placed by its assigned retailers
                             demand_vec = np.zeros(self.n_skus, dtype=float)
                             for r_id in env_state.dc_assignments[agent_id]:
@@ -630,7 +631,7 @@ class GNNModelEvaluator:
                         # Demand: cap = mean + 3*std per SKU (from _get_retailer_observation)
                         # Inventory: retailer own inv / 150.0
                         # Order: (qty - 20) / 50 for retailer [20, 70] -> [0, 1]
-                        if agent_id < 2:
+                        if agent_id < env_state.n_dcs:
                             traj['norm_demand'][agent_id].append(np.zeros(self.n_skus, dtype=float))
                             traj['norm_inventory'][agent_id].append(np.zeros(self.n_skus, dtype=float))
                             traj['norm_order'][agent_id].append(np.zeros(self.n_skus, dtype=float))
@@ -693,7 +694,7 @@ class GNNModelEvaluator:
         for agent_id in range(self.n_agents):
             ep_data['avg_inventory'][agent_id] /= T
             ep_data['avg_backlog'][agent_id] /= T
-            if agent_id >= 2:
+            if agent_id >= self.n_dcs:
                 # Retailer: order-count Fill Rate
                 # = orders fully met from on-hand / total orders placed (as %)
                 placed     = ep_data['_orders_placed'][agent_id]
@@ -751,14 +752,14 @@ class GNNModelEvaluator:
                     m['dc_cycle_service_level'].get(dc_id, 100.0)
                     for m in self.episode_metrics
                 ]))
-                for dc_id in range(2)
+                for dc_id in range(self.n_dcs)
             },
         }
 
         for aid in range(self.n_agents):
-            label = f'{"DC" if aid < 2 else "Retailer"}_{aid}'
+            label = f'{"DC" if aid < self.n_dcs else "Retailer"}_{aid}'
 
-            if aid >= 2:
+            if aid >= self.n_dcs:
                 # Retailer: pooled order-count fill rate across ALL episodes
                 # = total orders_from_stock / total orders_placed  (not average of per-ep %)
                 # Pooling is more accurate when episode SL variance is high.
@@ -790,10 +791,10 @@ class GNNModelEvaluator:
         # System-wide retailer fill rate (pooled across all retailer agents and episodes)
         total_placed_all     = sum(m['_orders_placed'][aid]
                                    for m in self.episode_metrics
-                                   for aid in range(2, self.n_agents))
+                                   for aid in range(self.n_dcs, self.n_agents))
         total_from_stock_all = sum(m['_orders_from_stock'][aid]
                                    for m in self.episode_metrics
-                                   for aid in range(2, self.n_agents))
+                                   for aid in range(self.n_dcs, self.n_agents))
         stats['system_retailer_fill_rate'] = (
             (total_from_stock_all / total_placed_all * 100.0)
             if total_placed_all > 0 else 100.0
@@ -839,7 +840,7 @@ class GNNModelEvaluator:
                 row = {
                     'step': step + 1,
                     'agent_id': aid,
-                    'agent': f'{"DC" if aid < 2 else "R"}_{aid}',
+                    'agent': f'{"DC" if aid < self.n_dcs else "R"}_{aid}',
                     'inv': inv,
                     'backlog': bl,
                     'reward': traj['rewards'][aid][step],
@@ -915,8 +916,8 @@ class GNNModelEvaluator:
                     # Fill_Rate: average of per-agent service_level (original method)
                     fill_rate = float(np.mean(m['service_level']))
                     # Lost_Sales: total unfulfilled demand units pooled across all retailer agents
-                    total_placed     = sum(m['_orders_placed'][aid]     for aid in range(2, self.n_agents))
-                    total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(2, self.n_agents))
+                    total_placed     = sum(m['_orders_placed'][aid]     for aid in range(self.n_dcs, self.n_agents))
+                    total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(self.n_dcs, self.n_agents))
                     lost_sales = total_placed - total_from_stock
                     avg_inventory = float(np.mean(m['avg_inventory']))
                     total_holding = float(np.sum(m['holding_costs']))

@@ -40,7 +40,7 @@ class MultiDCInventoryEnv:
             self.config = yaml.safe_load(f)
         
         # Network topology
-        self.n_dcs = 2  # Distribution Centers
+        self.n_dcs = self.config['environment'].get('n_dcs', 2)  # Distribution Centers
         self.n_retailers = self.config['environment'].get('n_retailers', 3)  # Retail locations
         self.n_agents = self.n_dcs + self.n_retailers  # Total: 17 agents (if 15 retailers)
         self.n_skus = self.config['environment']['n_skus']
@@ -53,17 +53,21 @@ class MultiDCInventoryEnv:
         # Loaded from config; maps dc_id -> [retailer agent_ids]
         raw_assignments = self.config.get('dc_assignments', None)
         if raw_assignments:
-            self.dc_assignments = {
-                0: [self.n_dcs + idx for idx in raw_assignments['dc_0']],
-                1: [self.n_dcs + idx for idx in raw_assignments['dc_1']],
-            }
+            self.dc_assignments = {}
+            for dc_id in range(self.n_dcs):
+                key = f'dc_{dc_id}'
+                if key in raw_assignments:
+                    self.dc_assignments[dc_id] = [self.n_dcs + idx for idx in raw_assignments[key]]
+                else:
+                    self.dc_assignments[dc_id] = []
         else:
-            # Default: split retailers evenly between the two DCs
-            half = self.n_retailers // 2
-            self.dc_assignments = {
-                0: list(range(self.n_dcs, self.n_dcs + half)),
-                1: list(range(self.n_dcs + half, self.n_agents)),
-            }
+            # Default: split retailers evenly across all DCs
+            per_dc = self.n_retailers // self.n_dcs
+            self.dc_assignments = {}
+            for dc_id in range(self.n_dcs):
+                start = self.n_dcs + dc_id * per_dc
+                end = self.n_dcs + (dc_id + 1) * per_dc if dc_id < self.n_dcs - 1 else self.n_agents
+                self.dc_assignments[dc_id] = list(range(start, end))
         # Reverse map: retailer_id -> assigned dc_id
         self.retailer_to_dc: Dict[int, int] = {}
         for dc_id, r_list in self.dc_assignments.items():

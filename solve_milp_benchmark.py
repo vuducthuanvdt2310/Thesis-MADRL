@@ -310,4 +310,4 @@ def solve_pure_milp(horizon=50, time_limit_sec=10000):
         print("="*30)
 
 if __name__ == "__main__":
-    solve_pure_milp(horizon=90)
+    solve_pure_milp(horizon=60)

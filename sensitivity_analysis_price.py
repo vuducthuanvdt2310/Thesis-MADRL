@@ -46,25 +46,25 @@ from test_trained_model_mappo1 import MAPPOModelEvaluatorV1
 
 PRICE_SCENARIOS = {
     "Scenario_1_Balanced": {
-        "base_price": [1.0, 0.8, 1.5],
-        "min_price": [0.6, 0.4, 1.0],
-        "max_price": [1.8, 1.4, 2.5],
+        "base_price": [50.0, 40.0, 45.0],
+        "min_price": [40.0, 30.0, 35.0],
+        "max_price": [60.0, 50.0, 55.0],
         "volatility": 0.15,
         "label": "Balanced Price",
         "short": "S1-Balanced"
     },
     "Scenario_2_HighPrice": {
-        "base_price": [2.0, 1.6, 3.0],
-        "min_price": [1.2, 0.8, 2.0],
-        "max_price": [3.6, 2.8, 5.0],
+        "base_price": [100.0, 80.0, 90.0],
+        "min_price": [80.0, 60.0, 70.0],
+        "max_price": [120.0, 100.0, 110.0],
         "volatility": 0.15,
         "label": "High Price",
         "short": "S2-HighPrice"
     },
     "Scenario_3_HighVariant": {
-        "base_price": [1.0, 0.8, 1.5],
-        "min_price": [0.2, 0.1, 0.3],
-        "max_price": [3.0, 2.5, 4.5],
+        "base_price": [50.0, 40.0, 45.0],
+        "min_price": [10.0, 8.0, 9.0],
+        "max_price": [150.0, 120.0, 135.0],
         "volatility": 0.50,
         "label": "High Variant",
         "short": "S3-HighVariant"
@@ -268,7 +268,7 @@ class BaseStockEvaluator:
 
         return ep_data
 
-    def mean_total_cost(self):
+    def get_full_cost(self):
         costs = []
         for m in self.episode_metrics:
             total_holding  = float(np.sum(m['holding_costs']))
@@ -277,7 +277,7 @@ class BaseStockEvaluator:
             costs.append(total_holding + total_backlog + total_ordering)
         return float(np.mean(costs)), float(np.std(costs))
 
-    def mean_fill_rate(self):
+    def get_fill_rate(self):
         rates = []
         for m in self.episode_metrics:
             total_placed     = sum(m['_orders_placed'][aid]     for aid in range(self.n_dcs, self.n_agents))
@@ -484,13 +484,13 @@ class HAPPOEvaluator:
 
         return episode_data
 
-    def mean_total_cost(self):
+    def get_full_cost(self):
         costs = []
         for m in self.episode_metrics:
             costs.append(float(np.sum(m['holding_costs'])) + float(np.sum(m['backlog_costs'])) + float(np.sum(m['ordering_costs'])))
         return float(np.mean(costs)), float(np.std(costs))
 
-    def mean_fill_rate(self):
+    def get_fill_rate(self):
         rates = []
         for m in self.episode_metrics:
             total_placed = sum(m['_orders_placed'][aid] for aid in range(2, self.args.num_agents))
@@ -701,13 +701,13 @@ class GNNModelEvaluator:
 
         return ep_data
 
-    def mean_total_cost(self):
+    def get_full_cost(self):
         costs = []
         for m in self.episode_metrics:
             costs.append(float(np.sum(m['holding_costs'])) + float(np.sum(m['backlog_costs'])) + float(np.sum(m['ordering_costs'])))
         return float(np.mean(costs)), float(np.std(costs))
 
-    def mean_fill_rate(self):
+    def get_fill_rate(self):
         rates = []
         for m in self.episode_metrics:
             total_placed = sum(m['_orders_placed'][aid] for aid in range(2, self.n_agents))
@@ -721,7 +721,7 @@ class GNNModelEvaluator:
 # ============================================================================
 
 class MAPPOPriceEvaluator(MAPPOModelEvaluatorV1):
-    def mean_total_cost(self):
+    def get_full_cost(self):
         costs = []
         for m in self.episode_metrics:
             total_holding  = float(np.sum(m['holding_costs']))
@@ -730,7 +730,7 @@ class MAPPOPriceEvaluator(MAPPOModelEvaluatorV1):
             costs.append(total_holding + total_backlog + total_ordering)
         return float(np.mean(costs)), float(np.std(costs))
 
-    def mean_fill_rate(self):
+    def get_fill_rate(self):
         n_dcs = 2
         rates = []
         for m in self.episode_metrics:
@@ -751,9 +751,9 @@ def parse_args():
     parser.add_argument('--mappo_model_dir', type=str, default='results/25Apr_MAPPO/run_seed_1/models')
     parser.add_argument('--num_episodes', type=int, default=1)
     parser.add_argument('--episode_length', type=int, default=90)
-    parser.add_argument('--happo_episode_length', type=int, default=100)
+    parser.add_argument('--happo_episode_length', type=int, default=120)
     parser.add_argument('--mappo_episode_length', type=int, default=130)
-    parser.add_argument('--basestock_episode_length', type=int, default=120)
+    parser.add_argument('--basestock_episode_length', type=int, default=110)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--config_path', type=str, default='configs/multi_dc_config.yaml')
     parser.add_argument('--num_agents', type=int, default=17)
@@ -798,7 +798,7 @@ def plot_metrics(results, scenarios, save_dir):
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=11)
     ax.set_xlabel('Price Scenario', fontsize=12)
-    ax.set_ylabel('Mean Total Cost', fontsize=12)
+    ax.set_ylabel('Total Cost', fontsize=12)
     ax.legend(loc='upper right', fontsize=10)
     ax.grid(True, axis='y', alpha=0.35, linestyle='--')
     ax.set_axisbelow(True)
@@ -819,7 +819,7 @@ def plot_metrics(results, scenarios, save_dir):
     ax.set_xticks(x)
     ax.set_xticklabels(labels, fontsize=11)
     ax.set_xlabel('Price Scenario', fontsize=12)
-    ax.set_ylabel('Mean Fill Rate (%)', fontsize=12)
+    ax.set_ylabel('Fill Rate (%)', fontsize=12)
     ax.set_ylim([0, 110])
     ax.legend(loc='lower right', fontsize=10)
     ax.grid(True, axis='y', alpha=0.35, linestyle='--')
@@ -833,7 +833,7 @@ def save_csv(results, scenarios, save_dir, model_names):
     out_path = Path(save_dir) / 'price_scenario_summary.csv'
     with open(out_path, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['Scenario', 'Model', 'Mean_Total_Cost', 'Std_Total_Cost', 'Mean_Fill_Rate_%'])
+        writer.writerow(['Scenario', 'Model', 'Total_Cost', 'Std_Total_Cost', 'Fill_Rate_%'])
         for s_idx, sc in enumerate(scenarios):
             for m_idx, m_name in enumerate(model_names):
                 mean_cost, std_cost, fill_rate = results[s_idx][m_idx]
@@ -843,7 +843,7 @@ def save_csv(results, scenarios, save_dir, model_names):
 
 def print_summary(results, scenarios, model_names):
     print('\n' + '=' * 80)
-    header = f"{'Scenario':<18} {'Model':<18} {'Mean Cost':>14} {'Std Cost':>12} {'Fill Rate':>10}"
+    header = f"{'Scenario':<18} {'Model':<18} {'Total Cost':>14} {'Std Cost':>12} {'Fill Rate':>10}"
     print(header)
     print('-' * 80)
     for s_idx, sc in enumerate(scenarios):
@@ -874,7 +874,7 @@ def main():
         bs_args.episode_length = args.basestock_episode_length
         evaluator_bs = BaseStockEvaluator(bs_args, scenario=sc, config_path=args.config_path)
         evaluator_bs.evaluate()
-        sc_results.append((*evaluator_bs.mean_total_cost(), evaluator_bs.mean_fill_rate()))
+        sc_results.append((*evaluator_bs.get_full_cost(), evaluator_bs.get_fill_rate()))
 
         # HAPPO
         happo_args = copy.deepcopy(args)
@@ -883,7 +883,7 @@ def main():
         happo_args.model_dir = args.happo_model_dir
         evaluator_happo = HAPPOEvaluator(happo_args, scenario=sc)
         evaluator_happo.evaluate()
-        sc_results.append((*evaluator_happo.mean_total_cost(), evaluator_happo.mean_fill_rate()))
+        sc_results.append((*evaluator_happo.get_full_cost(), evaluator_happo.get_fill_rate()))
 
         # MAPPO
         mappo_args = copy.deepcopy(args)
@@ -896,14 +896,14 @@ def main():
         if env_list:
             _apply_price_scenario(env_list[0], sc)
         evaluator_mappo.evaluate()
-        sc_results.append((*evaluator_mappo.mean_total_cost(), evaluator_mappo.mean_fill_rate()))
+        sc_results.append((*evaluator_mappo.get_full_cost(), evaluator_mappo.get_fill_rate()))
 
         # GNN-HAPPO
         gnn_args = copy.deepcopy(args)
         gnn_args.model_dir = args.gnn_model_dir
         evaluator_gnn = GNNModelEvaluator(gnn_args, scenario=sc)
         evaluator_gnn.evaluate()
-        sc_results.append((*evaluator_gnn.mean_total_cost(), evaluator_gnn.mean_fill_rate()))
+        sc_results.append((*evaluator_gnn.get_full_cost(), evaluator_gnn.get_fill_rate()))
 
         results.append(sc_results)
 
