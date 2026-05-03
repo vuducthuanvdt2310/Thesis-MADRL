@@ -1250,11 +1250,11 @@ def parse_args():
                         help='Number of evaluation episodes')
     parser.add_argument('--episode_length', type=int, default=90,
                         help='Episode length for GNN-HAPPO (days)')
-    parser.add_argument('--happo_episode_length', type=int, default=115,
+    parser.add_argument('--happo_episode_length', type=int, default=90,
                         help='Episode length for HAPPO (days)')
-    parser.add_argument('--mappo_episode_length', type=int, default=130,
+    parser.add_argument('--mappo_episode_length', type=int, default=90,
                         help='Episode length for MAPPO (days)')
-    parser.add_argument('--basestock_episode_length', type=int, default=120,
+    parser.add_argument('--basestock_episode_length', type=int, default=90,
                         help='Episode length used exclusively for the (s,S) BaseStock evaluator')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed')

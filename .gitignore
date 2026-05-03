@@ -19,3 +19,4 @@ bullwhip_output/
 convergence_results/
 saves/
 training_log.txt
+results_entropy/

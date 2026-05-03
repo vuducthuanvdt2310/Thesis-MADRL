@@ -223,9 +223,9 @@ class MultiDCInventoryEnv:
         self._dc_target_stock       = None
 
         # --- Cost component multipliers ---
-        self.holding_weight = float(rewards_cfg.get('holding_weight', 1.0))
-        self.backlog_weight = float(rewards_cfg.get('backlog_weight', 1.0))
-        self.ordering_weight = float(rewards_cfg.get('ordering_weight', 1.0))
+        self.holding_weight = float(rewards_cfg.get('holding_weight', 0.3))
+        self.backlog_weight = float(rewards_cfg.get('backlog_weight', 1.5))
+        self.ordering_weight = float(rewards_cfg.get('ordering_weight', 0.1))
 
         # ── Step 1 & 5: Look-Back Potential-Based Reward Shaping ──────────────────
         # k   : scaling factor; maps |heuristic - action| → potential magnitude.

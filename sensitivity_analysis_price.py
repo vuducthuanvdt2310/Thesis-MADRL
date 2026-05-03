@@ -209,6 +209,8 @@ class BaseStockEvaluator:
             'ordering_costs': [0.0] * self.n_agents,
             '_orders_placed':     [0] * self.n_agents,
             '_orders_from_stock': [0] * self.n_agents,
+            'traj_demand': [np.zeros(self.n_skus) for _ in range(self.args.episode_length)],
+            'traj_orders': [np.zeros(self.n_skus) for _ in range(self.args.episode_length)],
         }
 
         for step in range(self.args.episode_length):
@@ -261,6 +263,9 @@ class BaseStockEvaluator:
                         from_stock = self.env.step_orders_from_stock.get(agent_id, {}).get(sku, 0)
                         ep_data['_orders_placed'][agent_id]     += placed
                         ep_data['_orders_from_stock'][agent_id] += from_stock
+                        
+                        ep_data['traj_demand'][step][sku] += float(placed)
+                        ep_data['traj_orders'][step][sku] += float(executed_actions[agent_id][sku])
 
                 ep_data['holding_costs'][agent_id]  += h_cost
                 ep_data['backlog_costs'][agent_id]   += b_cost
@@ -284,6 +289,10 @@ class BaseStockEvaluator:
             total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(self.n_dcs, self.n_agents))
             rates.append((total_from_stock / total_placed * 100.0) if total_placed > 0 else 100.0)
         return float(np.mean(rates))
+
+    def get_trajectory(self):
+        if not self.episode_metrics: return None, None
+        return self.episode_metrics[0]['traj_demand'], self.episode_metrics[0]['traj_orders']
 
 
 # ============================================================================
@@ -410,6 +419,8 @@ class HAPPOEvaluator:
             'ordering_costs': [0] * self.args.num_agents,
             '_orders_placed':     [0] * self.args.num_agents,
             '_orders_from_stock': [0] * self.args.num_agents,
+            'traj_demand': [np.zeros(n_skus) for _ in range(self.args.episode_length)],
+            'traj_orders': [np.zeros(n_skus) for _ in range(self.args.episode_length)],
         }
 
         for step in range(self.args.episode_length):
@@ -477,6 +488,15 @@ class HAPPOEvaluator:
                         for sku in range(n_skus):
                             episode_data['_orders_placed'][agent_id] += env_state.step_orders_placed.get(agent_id, {}).get(sku, 0)
                             episode_data['_orders_from_stock'][agent_id] += env_state.step_orders_from_stock.get(agent_id, {}).get(sku, 0)
+                            
+                            actual_demand = 0.0
+                            if (sku < len(env_state.demand_history) and
+                                    r_idx < len(env_state.demand_history[sku]) and
+                                    len(env_state.demand_history[sku][r_idx]) > 0):
+                                actual_demand = float(env_state.demand_history[sku][r_idx][-1])
+                            
+                            episode_data['traj_demand'][step][sku] += actual_demand
+                            episode_data['traj_orders'][step][sku] += float(executed_actions[agent_id][sku])
 
                     episode_data['holding_costs'][agent_id] += holding_cost_step
                     episode_data['backlog_costs'][agent_id] += backlog_cost_step
@@ -497,6 +517,10 @@ class HAPPOEvaluator:
             total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(2, self.args.num_agents))
             rates.append((total_from_stock / total_placed * 100.0) if total_placed > 0 else 100.0)
         return float(np.mean(rates))
+
+    def get_trajectory(self):
+        if not self.episode_metrics: return None, None
+        return self.episode_metrics[0]['traj_demand'], self.episode_metrics[0]['traj_orders']
 
 
 # ============================================================================
@@ -628,6 +652,8 @@ class GNNModelEvaluator:
             'ordering_costs': [0.0] * self.n_agents,
             '_orders_placed': [0] * self.n_agents,
             '_orders_from_stock': [0] * self.n_agents,
+            'traj_demand': [np.zeros(self.n_skus) for _ in range(self.args.episode_length)],
+            'traj_orders': [np.zeros(self.n_skus) for _ in range(self.args.episode_length)],
         }
 
         for step in range(self.args.episode_length):
@@ -694,6 +720,15 @@ class GNNModelEvaluator:
                         for sku in range(3):
                             ep_data['_orders_placed'][agent_id] += env_state.step_orders_placed.get(agent_id, {}).get(sku, 0)
                             ep_data['_orders_from_stock'][agent_id] += env_state.step_orders_from_stock.get(agent_id, {}).get(sku, 0)
+                            
+                            actual_demand = 0.0
+                            if (sku < len(env_state.demand_history) and
+                                    r_idx < len(env_state.demand_history[sku]) and
+                                    len(env_state.demand_history[sku][r_idx]) > 0):
+                                actual_demand = float(env_state.demand_history[sku][r_idx][-1])
+                            
+                            ep_data['traj_demand'][step][sku] += actual_demand
+                            ep_data['traj_orders'][step][sku] += float(executed_actions[agent_id][sku])
 
                     ep_data['holding_costs'][agent_id] += h_cost
                     ep_data['backlog_costs'][agent_id] += b_cost
@@ -714,6 +749,10 @@ class GNNModelEvaluator:
             total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(2, self.n_agents))
             rates.append((total_from_stock / total_placed * 100.0) if total_placed > 0 else 100.0)
         return float(np.mean(rates))
+
+    def get_trajectory(self):
+        if not self.episode_metrics: return None, None
+        return self.episode_metrics[0]['traj_demand'], self.episode_metrics[0]['traj_orders']
 
 
 # ============================================================================
@@ -739,6 +778,12 @@ class MAPPOPriceEvaluator(MAPPOModelEvaluatorV1):
             rates.append((total_from_stock / total_placed * 100.0) if total_placed > 0 else 100.0)
         return float(np.mean(rates))
 
+    def get_trajectory(self):
+        if not self.episode_metrics:
+            return None, None
+        m = self.episode_metrics[0]
+        return m.get('traj_demand'), m.get('traj_orders')
+
 
 # ============================================================================
 #  SECTION 5 — Argument parsing & main orchestration
@@ -751,9 +796,9 @@ def parse_args():
     parser.add_argument('--mappo_model_dir', type=str, default='results/25Apr_MAPPO/run_seed_1/models')
     parser.add_argument('--num_episodes', type=int, default=1)
     parser.add_argument('--episode_length', type=int, default=90)
-    parser.add_argument('--happo_episode_length', type=int, default=120)
-    parser.add_argument('--mappo_episode_length', type=int, default=130)
-    parser.add_argument('--basestock_episode_length', type=int, default=110)
+    parser.add_argument('--happo_episode_length', type=int, default=90) #120
+    parser.add_argument('--mappo_episode_length', type=int, default=90) #130
+    parser.add_argument('--basestock_episode_length', type=int, default=90) #110
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--config_path', type=str, default='configs/multi_dc_config.yaml')
     parser.add_argument('--num_agents', type=int, default=17)
@@ -771,6 +816,43 @@ def parse_args():
     parser.add_argument('--critic_pooling', type=str, default='mean')
     parser.add_argument('--save_dir', type=str, default='evaluation_results/sensitivity_price_scenario')
     return parser.parse_args()
+
+
+def plot_demand_vs_orders(trajectories, model_names, scenario_labels, save_dir):
+    import re
+    for m_idx, m_name in enumerate(model_names):
+        fig, axes = plt.subplots(len(scenario_labels), 3, figsize=(15, 3.5 * len(scenario_labels)))
+        fig.suptitle(f'Demand vs. Orders: {m_name}', fontsize=16, fontweight='bold', y=1.02)
+        
+        for s_idx, s_label in enumerate(scenario_labels):
+            traj_d, traj_o = trajectories[s_idx][m_idx]
+            
+            if traj_d is None or traj_o is None:
+                continue
+                
+            d_arr = np.array(traj_d)
+            o_arr = np.array(traj_o)
+            
+            for sku in range(3):
+                ax = axes[s_idx, sku] if len(scenario_labels) > 1 else axes[sku]
+                steps = np.arange(len(d_arr))
+                
+                ax.plot(steps, d_arr[:, sku], label='Retail Demand', color='#FF6B6B', alpha=0.85, linewidth=1.5)
+                ax.plot(steps, o_arr[:, sku], label='Retail Orders', color='#3A86FF', alpha=0.85, linestyle='--', linewidth=1.5)
+                
+                ax.set_title(f'Scenario: {s_label.strip()} | SKU {sku}', fontsize=11)
+                ax.set_xlabel('Time Step (Days)', fontsize=10)
+                ax.set_ylabel('Quantity', fontsize=10)
+                if s_idx == 0 and sku == 0:
+                    ax.legend(loc='upper right', fontsize=9)
+                ax.grid(True, alpha=0.3)
+                
+        plt.tight_layout()
+        safe_name = re.sub(r'[^a-zA-Z0-9_\-]', '_', m_name.replace('(s,S)', 'Ss').strip('_'))
+        out_path = Path(save_dir) / f'demand_order_traj_price_scenario_{safe_name}.png'
+        plt.savefig(out_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f'[OK] Trajectory chart saved to: {out_path}')
 
 
 def plot_metrics(results, scenarios, save_dir):
@@ -863,9 +945,11 @@ def main():
     save_dir.mkdir(parents=True, exist_ok=True)
 
     results = [] # [s_idx][m_idx] = (cost, std, fill)
+    trajectories = [] # [s_idx][m_idx] = (traj_d, traj_o)
 
     for sc in scenarios:
         sc_results = []
+        sc_trajs = []
         print(f"\nEvaluating Scenario: {sc['label']}")
 
         # BaseStock
@@ -875,6 +959,7 @@ def main():
         evaluator_bs = BaseStockEvaluator(bs_args, scenario=sc, config_path=args.config_path)
         evaluator_bs.evaluate()
         sc_results.append((*evaluator_bs.get_full_cost(), evaluator_bs.get_fill_rate()))
+        sc_trajs.append(evaluator_bs.get_trajectory())
 
         # HAPPO
         happo_args = copy.deepcopy(args)
@@ -884,6 +969,7 @@ def main():
         evaluator_happo = HAPPOEvaluator(happo_args, scenario=sc)
         evaluator_happo.evaluate()
         sc_results.append((*evaluator_happo.get_full_cost(), evaluator_happo.get_fill_rate()))
+        sc_trajs.append(evaluator_happo.get_trajectory())
 
         # MAPPO
         mappo_args = copy.deepcopy(args)
@@ -897,6 +983,7 @@ def main():
             _apply_price_scenario(env_list[0], sc)
         evaluator_mappo.evaluate()
         sc_results.append((*evaluator_mappo.get_full_cost(), evaluator_mappo.get_fill_rate()))
+        sc_trajs.append(evaluator_mappo.get_trajectory())
 
         # GNN-HAPPO
         gnn_args = copy.deepcopy(args)
@@ -904,12 +991,15 @@ def main():
         evaluator_gnn = GNNModelEvaluator(gnn_args, scenario=sc)
         evaluator_gnn.evaluate()
         sc_results.append((*evaluator_gnn.get_full_cost(), evaluator_gnn.get_fill_rate()))
+        sc_trajs.append(evaluator_gnn.get_trajectory())
 
         results.append(sc_results)
+        trajectories.append(sc_trajs)
 
     print_summary(results, scenarios, model_names)
     save_csv(results, scenarios, save_dir, model_names)
     plot_metrics(results, scenarios, save_dir)
+    plot_demand_vs_orders(trajectories, model_names, [sc['label'] for sc in scenarios], save_dir)
     print(f'\n[DONE] All results saved to: {save_dir}\n')
 
 
