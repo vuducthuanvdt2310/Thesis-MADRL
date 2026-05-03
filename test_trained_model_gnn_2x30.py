@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 """
-Test/Evaluation Script for Trained GNN-HAPPO Models — 4 DC × 40 Retailer Scale
+Test/Evaluation Script for Trained GNN-HAPPO Models — 2 DC × 30 Retailer Scale
 
 Wraps the existing GNNModelEvaluator from test_trained_model_gnn.py,
-overriding environment creation to use the 4x40 config.
+overriding environment creation to use the 2x30 config.
 
 Usage:
-    python test_trained_model_gnn_4x40.py \
-        --model_dir results/gnn_happo_4x40/run_seed_1/models \
+    python test_trained_model_gnn_2x30.py \
+        --model_dir results/gnn_happo_2x30/run_seed_1/models \
         --num_episodes 100 --episode_length 365
 """
 
@@ -25,22 +25,22 @@ from utils.graph_utils import build_supply_chain_adjacency, normalize_adjacency
 # ================================================================
 # SCALED CONFIG
 # ================================================================
-N_DCS = 4
-N_RETAILERS = 40
-N_AGENTS = N_DCS + N_RETAILERS  # 44
-CONFIG_PATH = 'configs/multi_dc_4x40_config.yaml'
+N_DCS = 2
+N_RETAILERS = 30
+N_AGENTS = N_DCS + N_RETAILERS  # 32
+CONFIG_PATH = 'configs/multi_dc_2x30_config.yaml'
 
 
-class GNNModelEvaluator4x40(GNNModelEvaluator):
-    """Evaluator subclass for the 4 DC × 40 Retailer scaled environment."""
+class GNNModelEvaluator2x30(GNNModelEvaluator):
+    """Evaluator subclass for the 2 DC × 30 Retailer scaled environment."""
 
     def _create_env(self):
-        """Override: create env with 4x40 config."""
-        print('Creating evaluation environment (4×40 scale)...')
+        """Override: create env with 2x30 config."""
+        print('Creating evaluation environment (2×30 scale)...')
         parser = get_config()
         parser.set_defaults(
             env_name='MultiDC',
-            scenario_name='inventory_2echelon_4x40',
+            scenario_name='inventory_2echelon_2x30',
             episode_length=self.args.episode_length,
             n_eval_rollout_threads=1,
             use_centralized_V=True,
@@ -60,8 +60,8 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
         return env
 
     def _build_graph(self):
-        """Override: build graph for 4 DCs + 40 retailers."""
-        print('Building supply chain graph (4×40)...')
+        """Override: build graph for 2 DCs + 30 retailers."""
+        print('Building supply chain graph (2×30)...')
         adj = build_supply_chain_adjacency(
             n_dcs=N_DCS, n_retailers=N_RETAILERS, self_loops=True
         )
@@ -71,7 +71,7 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
         return adj_tensor
 
     def _build_all_args(self):
-        """Override: set num_agents to 44."""
+        """Override: set num_agents to 32."""
         gnn_type = getattr(self, 'detected_gnn_type', self.args.gnn_type)
         parser = get_config()
         parser.add_argument('--gnn_type', type=str, default=gnn_type)
@@ -88,7 +88,7 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
                             default=self.single_agent_obs_dim)
         parser.set_defaults(
             env_name='MultiDC',
-            scenario_name='inventory_2echelon_4x40',
+            scenario_name='inventory_2echelon_2x30',
             num_agents=self.n_agents,
             use_centralized_V=True,
             algorithm_name='gnn_happo',
@@ -125,7 +125,7 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
 
     def _print_header(self):
         print('=' * 70)
-        print('GNN-HAPPO Model Evaluation — 4×40 Scale')
+        print('GNN-HAPPO Model Evaluation — 2×30 Scale')
         print('=' * 70)
         print(f'Model directory : {self.args.model_dir}')
         print(f'Config          : {CONFIG_PATH}')
@@ -138,7 +138,7 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
 
     def _print_summary(self, stats):
         print('\n' + '=' * 70)
-        print('GNN-HAPPO Evaluation Summary — 4×40 Scale')
+        print('GNN-HAPPO Evaluation Summary — 2×30 Scale')
         print('=' * 70)
         print(f"Episodes      : {stats['num_episodes']}")
         print(f"Episode length: {stats['episode_length']} days")
@@ -164,7 +164,7 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
 
 def main():
     args = parse_args()
-    evaluator = GNNModelEvaluator4x40(args)
+    evaluator = GNNModelEvaluator2x30(args)
     evaluator.evaluate()
     evaluator.generate_report()
 

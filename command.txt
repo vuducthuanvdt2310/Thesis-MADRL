@@ -8,12 +8,13 @@ python test_trained_model.py --model_dir "results\01Apr_base\run_seed_1\models" 
 python test_trained_model_mappo1.py --model_dir "results\25Apr_MAPPO\run_seed_1\models" --episode_length 130 --num_episodes 60  --experiment_name "eval_mappo"
 python test_trained_model_gnn.py --model_dir "results/14Apr_gnn_kaggle_vari/run_seed_1/models" --episode_length 90 --num_episodes 60 --experiment_name "eval_gnn"
 python Test_baseline_basestock.py --experiment_name "basestock_v1" --episode_length 120 --num_episodes 60
+python test_trained_model_gnn_4x40.py --model_dir "results/gnn_happo_4x40/run_seed_1/models" --episode_length 90 --num_episodes 1 --experiment_name "4x40"
 
 base= 01Apr
 mappo=25Apr
 gnn= 14Apr_gnn_kaggle_vari
 
-
+python test_trained_model_mappo1.py --model_dir "results_sensitive\mappo_sensi\run_seed_1\models" --episode_length 130 --num_episodes 10  --experiment_name "eval_mappotest" 
 git add .
 git commit -m "update"
 git push origin main --force

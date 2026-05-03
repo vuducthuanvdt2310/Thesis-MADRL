@@ -1,0 +1,231 @@
+# Multi-DC 2-Echelon Inventory Environment Configuration
+# SCALED: 1 Supplier → 2 DCs → 30 Retailers (32 agents total)
+
+environment:
+  n_skus: 3
+  n_dcs: 2
+  n_retailers: 30
+  max_days: 365
+
+  lead_time:
+    supplier_to_dc:
+      distribution: "uniform"
+      min: 7
+      max: 14
+    dc_to_retailer:
+      distribution: "fixed"
+      min: 1
+      max: 1
+
+# DC-to-Retailer exclusive assignment (15 retailers per DC)
+# Values are 0-indexed retailer indices (not agent IDs).
+# Agent IDs: DC0=0, DC1=1, Retailers=2..31
+dc_assignments:
+  dc_0: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+  dc_1: [15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]
+
+constraints:
+  safety_stock_threshold:
+    - [5.0, 5.0, 5.0]  # Retailer_0
+    - [5.0, 5.0, 5.0]  # Retailer_1
+    - [5.0, 5.0, 5.0]  # Retailer_2
+    - [5.0, 5.0, 5.0]  # Retailer_3
+    - [5.0, 5.0, 5.0]  # Retailer_4
+    - [5.0, 5.0, 5.0]  # Retailer_5
+    - [5.0, 5.0, 5.0]  # Retailer_6
+    - [5.0, 5.0, 5.0]  # Retailer_7
+    - [5.0, 5.0, 5.0]  # Retailer_8
+    - [5.0, 5.0, 5.0]  # Retailer_9
+    - [5.0, 5.0, 5.0]  # Retailer_10
+    - [5.0, 5.0, 5.0]  # Retailer_11
+    - [5.0, 5.0, 5.0]  # Retailer_12
+    - [5.0, 5.0, 5.0]  # Retailer_13
+    - [5.0, 5.0, 5.0]  # Retailer_14
+    - [5.0, 5.0, 5.0]  # Retailer_15
+    - [5.0, 5.0, 5.0]  # Retailer_16
+    - [5.0, 5.0, 5.0]  # Retailer_17
+    - [5.0, 5.0, 5.0]  # Retailer_18
+    - [5.0, 5.0, 5.0]  # Retailer_19
+    - [5.0, 5.0, 5.0]  # Retailer_20
+    - [5.0, 5.0, 5.0]  # Retailer_21
+    - [5.0, 5.0, 5.0]  # Retailer_22
+    - [5.0, 5.0, 5.0]  # Retailer_23
+    - [5.0, 5.0, 5.0]  # Retailer_24
+    - [5.0, 5.0, 5.0]  # Retailer_25
+    - [5.0, 5.0, 5.0]  # Retailer_26
+    - [5.0, 5.0, 5.0]  # Retailer_27
+    - [5.0, 5.0, 5.0]  # Retailer_28
+    - [5.0, 5.0, 5.0]  # Retailer_29
+  safety_stock_penalty: 1.0
+
+rewards:
+  survival_reward: 0.0
+  termination_penalty: 50.0
+  sale_revenue_retailer: 2.5
+  holding_weight: 0.3
+  backlog_weight: 1.5
+  ordering_weight: 0.1
+  target_stock_days_retailer: 8
+  target_stock_days_dc: 14
+  excess_penalty_retailer: 0.3
+  excess_penalty_dc: 0.03
+  alpha: 0.2
+  heuristic_shaping:
+    enabled: true
+    k: 0.5
+    demand_window: 14
+    initial_weight: 1.0
+
+costs:
+  # DC Costs (2 DCs x 3 SKUs)
+  holding_cost_dc:
+    - [0.1, 0.1, 0.1]  # DC_0
+    - [0.1, 0.1, 0.1]  # DC_1
+
+  backlog_cost_dc:
+    - [3.0, 2.5, 4.0]  # DC_0
+    - [3.0, 2.5, 4.0]  # DC_1
+
+  fixed_order_cost_dc:
+    - [2.0, 2.0, 2.0]  # DC_0
+    - [2.0, 2.0, 2.0]  # DC_1
+
+  # Retailer Costs (30 Retailers x 3 SKUs)
+  holding_cost_retailer:
+    - [0.4, 0.5, 0.6]  # Retailer_0
+    - [0.4, 0.5, 0.6]  # Retailer_1
+    - [0.4, 0.5, 0.6]  # Retailer_2
+    - [0.4, 0.5, 0.6]  # Retailer_3
+    - [0.4, 0.5, 0.6]  # Retailer_4
+    - [0.4, 0.5, 0.6]  # Retailer_5
+    - [0.4, 0.5, 0.6]  # Retailer_6
+    - [0.4, 0.5, 0.6]  # Retailer_7
+    - [0.4, 0.5, 0.6]  # Retailer_8
+    - [0.4, 0.5, 0.6]  # Retailer_9
+    - [0.4, 0.5, 0.6]  # Retailer_10
+    - [0.4, 0.5, 0.6]  # Retailer_11
+    - [0.4, 0.5, 0.6]  # Retailer_12
+    - [0.4, 0.5, 0.6]  # Retailer_13
+    - [0.4, 0.5, 0.6]  # Retailer_14
+    - [0.4, 0.5, 0.6]  # Retailer_15
+    - [0.4, 0.5, 0.6]  # Retailer_16
+    - [0.4, 0.5, 0.6]  # Retailer_17
+    - [0.4, 0.5, 0.6]  # Retailer_18
+    - [0.4, 0.5, 0.6]  # Retailer_19
+    - [0.4, 0.5, 0.6]  # Retailer_20
+    - [0.4, 0.5, 0.6]  # Retailer_21
+    - [0.4, 0.5, 0.6]  # Retailer_22
+    - [0.4, 0.5, 0.6]  # Retailer_23
+    - [0.4, 0.5, 0.6]  # Retailer_24
+    - [0.4, 0.5, 0.6]  # Retailer_25
+    - [0.4, 0.5, 0.6]  # Retailer_26
+    - [0.4, 0.5, 0.6]  # Retailer_27
+    - [0.4, 0.5, 0.6]  # Retailer_28
+    - [0.4, 0.5, 0.6]  # Retailer_29
+
+  backlog_cost_retailer:
+    - [1.3, 1.3, 1.3]  # Retailer_0
+    - [1.3, 1.3, 1.3]  # Retailer_1
+    - [1.3, 1.3, 1.3]  # Retailer_2
+    - [1.3, 1.3, 1.3]  # Retailer_3
+    - [1.3, 1.3, 1.3]  # Retailer_4
+    - [1.3, 1.3, 1.3]  # Retailer_5
+    - [1.3, 1.3, 1.3]  # Retailer_6
+    - [1.3, 1.3, 1.3]  # Retailer_7
+    - [1.3, 1.3, 1.3]  # Retailer_8
+    - [1.3, 1.3, 1.3]  # Retailer_9
+    - [1.3, 1.3, 1.3]  # Retailer_10
+    - [1.3, 1.3, 1.3]  # Retailer_11
+    - [1.3, 1.3, 1.3]  # Retailer_12
+    - [1.3, 1.3, 1.3]  # Retailer_13
+    - [1.3, 1.3, 1.3]  # Retailer_14
+    - [1.3, 1.3, 1.3]  # Retailer_15
+    - [1.3, 1.3, 1.3]  # Retailer_16
+    - [1.3, 1.3, 1.3]  # Retailer_17
+    - [1.3, 1.3, 1.3]  # Retailer_18
+    - [1.3, 1.3, 1.3]  # Retailer_19
+    - [1.3, 1.3, 1.3]  # Retailer_20
+    - [1.3, 1.3, 1.3]  # Retailer_21
+    - [1.3, 1.3, 1.3]  # Retailer_22
+    - [1.3, 1.3, 1.3]  # Retailer_23
+    - [1.3, 1.3, 1.3]  # Retailer_24
+    - [1.3, 1.3, 1.3]  # Retailer_25
+    - [1.3, 1.3, 1.3]  # Retailer_26
+    - [1.3, 1.3, 1.3]  # Retailer_27
+    - [1.3, 1.3, 1.3]  # Retailer_28
+    - [1.3, 1.3, 1.3]  # Retailer_29
+
+  fixed_order_cost_retailer:
+    - [0.7, 0.7, 0.7]  # Retailer_0
+    - [0.7, 0.7, 0.7]  # Retailer_1
+    - [0.7, 0.7, 0.7]  # Retailer_2
+    - [0.7, 0.7, 0.7]  # Retailer_3
+    - [0.7, 0.7, 0.7]  # Retailer_4
+    - [0.7, 0.7, 0.7]  # Retailer_5
+    - [0.7, 0.7, 0.7]  # Retailer_6
+    - [0.7, 0.7, 0.7]  # Retailer_7
+    - [0.7, 0.7, 0.7]  # Retailer_8
+    - [0.7, 0.7, 0.7]  # Retailer_9
+    - [0.7, 0.7, 0.7]  # Retailer_10
+    - [0.7, 0.7, 0.7]  # Retailer_11
+    - [0.7, 0.7, 0.7]  # Retailer_12
+    - [0.7, 0.7, 0.7]  # Retailer_13
+    - [0.7, 0.7, 0.7]  # Retailer_14
+    - [0.7, 0.7, 0.7]  # Retailer_15
+    - [0.7, 0.7, 0.7]  # Retailer_16
+    - [0.7, 0.7, 0.7]  # Retailer_17
+    - [0.7, 0.7, 0.7]  # Retailer_18
+    - [0.7, 0.7, 0.7]  # Retailer_19
+    - [0.7, 0.7, 0.7]  # Retailer_20
+    - [0.7, 0.7, 0.7]  # Retailer_21
+    - [0.7, 0.7, 0.7]  # Retailer_22
+    - [0.7, 0.7, 0.7]  # Retailer_23
+    - [0.7, 0.7, 0.7]  # Retailer_24
+    - [0.7, 0.7, 0.7]  # Retailer_25
+    - [0.7, 0.7, 0.7]  # Retailer_26
+    - [0.7, 0.7, 0.7]  # Retailer_27
+    - [0.7, 0.7, 0.7]  # Retailer_28
+    - [0.7, 0.7, 0.7]  # Retailer_29
+
+  # Variable costs: (30 retailers, 2 DCs, 3 SKUs)
+  variable_cost_retailer:
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R0
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R1
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R2
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R3
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R4
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R5
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R6
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R7
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R8
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R9
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R10
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R11
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R12
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R13
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R14
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R15
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R16
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R17
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R18
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R19
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R20
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R21
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R22
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R23
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R24
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R25
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R26
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R27
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R28
+    - [ [0.5, 0.6, 0.7], [0.5, 0.6, 0.7] ]  # R29
+
+pricing:
+  base_price: [50, 40, 45]
+  min_price: [40, 30, 35]
+  max_price: [60, 50, 55]
+  volatility: 0.15
+
+demand:
+  mean: [1.41, 1.06, 0.77]
+  std:  [2, 1.4, 1.2]
