@@ -178,19 +178,13 @@ def plot_comparison(results, variations, save_dir, args):
     """
     plt.figure(figsize=(8, 6))
     
-    # Normalization factors (episode_length * n_agents)
-    n_agents = args.num_agents
-    norm_factors = {
-        'Base Stock': args.basestock_episode_length * n_agents,
-        'HAPPO':      args.happo_episode_length * n_agents,
-        'MAPPO':      args.mappo_episode_length * n_agents,
-        'GNN-HAPPO':  args.episode_length * n_agents
-    }
+    # Scaling factor for '000 VND
+    scaling_factor = 1000.0
     
     plot_configs = {
-        'GNN-HAPPO': {'label': 'MAPPO', 'marker': '.', 'color': '#3A86FF', 'markersize': 8},
+        'GNN-HAPPO': {'label': 'GNN-HAPPO', 'marker': '.', 'color': '#3A86FF', 'markersize': 8},
         'HAPPO':     {'label': 'HAPPO',    'marker': '^', 'color': '#D67D4B', 'markersize': 8},
-        'MAPPO':     {'label': 'GNN-HAPPO', 'marker': 'd', 'color': '#3BB273', 'markersize': 8},
+        'MAPPO':     {'label': 'MAPPO', 'marker': 'd', 'color': '#3BB273', 'markersize': 8},
         'Base Stock':{'label': 'Base Stock', 'marker': '*', 'color': '#C04141', 'markersize': 8}
     }
     
@@ -198,8 +192,8 @@ def plot_comparison(results, variations, save_dir, args):
     
     for model in model_order:
         if model in results:
-            # Normalize: Average daily cost per agent
-            vals = np.array(results[model]) / norm_factors.get(model, 1.0)
+            # Scale to '000 VND
+            vals = np.array(results[model]) / scaling_factor
             cfg = plot_configs[model]
             plt.plot(variations, vals, 
                      label=cfg['label'], 
@@ -209,7 +203,7 @@ def plot_comparison(results, variations, save_dir, args):
                      linewidth=2)
     
     plt.xlabel('Lead time variation', fontsize=14)
-    plt.ylabel('Cost', fontsize=14)
+    plt.ylabel("Cost ('000 VND)", fontsize=14)
     
     # Direct labeling of lead time distributions
     x_labels = ["U[6, 13]", "U[7, 14]", "U[8, 15]", "U[9, 16]", "U[10, 17]"]

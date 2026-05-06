@@ -14,7 +14,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from test_trained_model_gnn import GNNModelEvaluator
 
 # ── Configuration ──────────────────────────────────────────────────────────────
-NUM_EPISODES = 10   # number of episodes per entropy value for box-plot statistics
+NUM_EPISODES = 10   # number of episodes per learning rate value for box-plot statistics
 N_DCS        = 2    # number of DC agents (must match training config)
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -23,7 +23,7 @@ def get_args(model_dir, num_episodes=NUM_EPISODES):
     parser.add_argument('--model_dir', type=str, default=model_dir)
     parser.add_argument('--config_path', type=str, default='configs/multi_sku_config.yaml')
     parser.add_argument('--num_episodes', type=int, default=num_episodes)
-    parser.add_argument('--episode_length', type=int, default=93)
+    parser.add_argument('--episode_length', type=int, default=90)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--save_dir', type=str, default='evaluation_results_temp')
     parser.add_argument('--experiment_name', type=str, default='temp_eval')
@@ -86,7 +86,7 @@ def plot_boxplot(data_dict, labels, ylabel, title, out_file, colors, show_mean=T
     Parameters
     ----------
     data_dict : dict[str, list[float]]
-        Ordered dict mapping entropy label -> list of per-episode values.
+        Ordered dict mapping label -> list of per-episode values.
     labels    : list[str]   X-axis tick labels.
     ylabel    : str
     title     : str
@@ -145,25 +145,25 @@ def plot_boxplot(data_dict, labels, ylabel, title, out_file, colors, show_mean=T
 
 
 def main():
-    entropies = ["0.001", "0.01", "0.05"]
+    lrs = ["0.0001", "0.0005", "0.001"]
     model_dirs = {
-        "0.001": "results/lr_sensi/actor_lr_0.0001/run_seed_1/models",
-        "0.01":  "results/lr_sensi/actor_lr_0.0005/run_seed_1/models",
-        "0.05":  "results/lr_sensi/actor_lr_0.001/run_seed_1/models",
+        "0.0001": "results/lr_sensi/actor_lr_0.0001/run_seed_1/models",
+        "0.0005": "results/lr_sensi/actor_lr_0.0005/run_seed_1/models",
+        "0.001":  "results/lr_sensi/actor_lr_0.001/run_seed_1/models",
     }
 
-    # Storage: entropy -> list of per-episode values
+    # Storage: lr -> list of per-episode values
     all_total_costs = {}
     all_fill_rates  = {}
 
-    for ent in entropies:
-        mdir = model_dirs[ent]
+    for lr in lrs:
+        mdir = model_dirs[lr]
         if not os.path.exists(mdir):
             print(f"[SKIP] Directory not found: {mdir}")
             continue
 
         print(f"\n{'='*60}")
-        print(f"Evaluating entropy={ent}  ({NUM_EPISODES} episodes) ...")
+        print(f"Evaluating Learning Rate={lr}  ({NUM_EPISODES} episodes) ...")
         print(f"{'='*60}")
 
         args      = get_args(mdir, num_episodes=NUM_EPISODES)
@@ -175,8 +175,8 @@ def main():
         ep_costs, ep_frs = extract_episode_metrics(
             evaluator.episode_metrics, N_DCS, n_agents
         )
-        all_total_costs[ent] = ep_costs
-        all_fill_rates[ent]  = ep_frs
+        all_total_costs[lr] = ep_costs
+        all_fill_rates[lr]  = ep_frs
 
         print(f"  Total Cost  — mean: {np.mean(ep_costs):,.2f}  std: {np.std(ep_costs):,.2f}")
         print(f"  Fill Rate   — mean: {np.mean(ep_frs):.2f}%  std: {np.std(ep_frs):.2f}%")
@@ -185,45 +185,44 @@ def main():
         print("No data collected. Exiting.")
         return
 
-    # Only plot entropies that were evaluated
-    eval_entropies = [e for e in entropies if e in all_total_costs]
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c'][:len(eval_entropies)]
-    labels = [f'Entropy\n{e}' for e in eval_entropies]
+    # Only plot learning rates that were evaluated
+    eval_lrs = [lr for lr in lrs if lr in all_total_costs]
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c'][:len(eval_lrs)]
+    labels = [f'Learning Rate\n{lr}' for lr in eval_lrs]
 
     # ── Box Plot 1: Total Cost ─────────────────────────────────────────────────
-    # Scale to '000 VND to match ylabel
     plot_boxplot(
-        data_dict = {e: np.array(all_total_costs[e])  for e in eval_entropies},
+        data_dict = {lr: all_total_costs[lr] for lr in eval_lrs},
         labels    = labels,
-        ylabel    = "Total Cost ('000 VND)",
-        title     = f'Total Cost Distribution Across {NUM_EPISODES} Episodes\n(Entropy Sensitivity)',
-        out_file  = 'entropy_cost_boxplot.png',
+        ylabel    = 'Total Cost (000VND)',
+        title     = f'Total Cost Distribution Across {NUM_EPISODES} Episodes\n(Learning Rate Sensitivity)',
+        out_file  = 'lr_cost_boxplot.png',
         colors    = colors,
         show_mean = True,
     )
 
     # ── Box Plot 2: Fill Rate ──────────────────────────────────────────────────
     plot_boxplot(
-        data_dict = {e: all_fill_rates[e] for e in eval_entropies},
+        data_dict = {lr: all_fill_rates[lr] for lr in eval_lrs},
         labels    = labels,
         ylabel    = 'Fill Rate (%)',
-        title     = f'Fill Rate Distribution Across {NUM_EPISODES} Episodes\n(Entropy Sensitivity)',
-        out_file  = 'entropy_fill_rate_boxplot.png',
+        title     = f'Fill Rate Distribution Across {NUM_EPISODES} Episodes\n(Learning Rate Sensitivity)',
+        out_file  = 'lr_fill_rate_boxplot.png',
         colors    = colors,
         show_mean = True,
     )
 
     # ── Summary Table ──────────────────────────────────────────────────────────
     print("\n" + "="*65)
-    print(f"{'Entropy':<12} {'Cost Mean':>12} {'Cost Std':>10} {'FR Mean':>10} {'FR Std':>8}")
+    print(f"{'Learning Rate':<15} {'Cost Mean':>12} {'Cost Std':>10} {'FR Mean':>10} {'FR Std':>8}")
     print("-"*65)
-    for e in eval_entropies:
+    for lr in eval_lrs:
         print(
-            f"{e:<12}"
-            f"{np.mean(all_total_costs[e]):>12,.2f}"
-            f"{np.std(all_total_costs[e]):>10,.2f}"
-            f"{np.mean(all_fill_rates[e]):>10.2f}%"
-            f"{np.std(all_fill_rates[e]):>8.2f}%"
+            f"{lr:<15}"
+            f"{np.mean(all_total_costs[lr]):>12,.2f}"
+            f"{np.std(all_total_costs[lr]):>10,.2f}"
+            f"{np.mean(all_fill_rates[lr]):>10.2f}%"
+            f"{np.std(all_fill_rates[lr]):>8.2f}%"
         )
     print("="*65)
 

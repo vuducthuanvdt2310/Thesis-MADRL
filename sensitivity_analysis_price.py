@@ -796,9 +796,9 @@ def parse_args():
     parser.add_argument('--mappo_model_dir', type=str, default='results/25Apr_MAPPO/run_seed_1/models')
     parser.add_argument('--num_episodes', type=int, default=1)
     parser.add_argument('--episode_length', type=int, default=90)
-    parser.add_argument('--happo_episode_length', type=int, default=90) #120
-    parser.add_argument('--mappo_episode_length', type=int, default=90) #130
-    parser.add_argument('--basestock_episode_length', type=int, default=90) #110
+    parser.add_argument('--happo_episode_length', type=int, default=120) #120
+    parser.add_argument('--mappo_episode_length', type=int, default=130) #130
+    parser.add_argument('--basestock_episode_length', type=int, default=110) #110
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--config_path', type=str, default='configs/multi_dc_config.yaml')
     parser.add_argument('--num_agents', type=int, default=17)
