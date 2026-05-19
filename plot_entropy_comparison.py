@@ -23,7 +23,7 @@ def get_args(model_dir, num_episodes=NUM_EPISODES):
     parser.add_argument('--model_dir', type=str, default=model_dir)
     parser.add_argument('--config_path', type=str, default='configs/multi_sku_config.yaml')
     parser.add_argument('--num_episodes', type=int, default=num_episodes)
-    parser.add_argument('--episode_length', type=int, default=93)
+    parser.add_argument('--episode_length', type=int, default=90)
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--save_dir', type=str, default='evaluation_results_temp')
     parser.add_argument('--experiment_name', type=str, default='temp_eval')

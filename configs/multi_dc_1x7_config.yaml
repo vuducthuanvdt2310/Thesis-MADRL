@@ -1,0 +1,112 @@
+# Multi-DC 2-Echelon Inventory Environment Configuration
+# SMALL SCALE: 1 Supplier → 1 DC → 7 Retailers (8 agents total)
+
+environment:
+  n_skus: 3
+  n_dcs: 1
+  n_retailers: 7
+  max_days: 365
+
+  lead_time:
+    supplier_to_dc:
+      distribution: "uniform"
+      min: 7
+      max: 14
+    dc_to_retailer:
+      distribution: "fixed"
+      min: 1
+      max: 1
+
+# DC-to-Retailer exclusive assignment (all 7 retailers under single DC)
+# Values are 0-indexed retailer indices (not agent IDs).
+# Agent IDs: DC0=0, Retailers=1..7
+dc_assignments:
+  dc_0: [0, 1, 2, 3, 4, 5, 6]
+
+constraints:
+  safety_stock_threshold:
+    - [5.0, 5.0, 5.0]  # Retailer_0
+    - [5.0, 5.0, 5.0]  # Retailer_1
+    - [5.0, 5.0, 5.0]  # Retailer_2
+    - [5.0, 5.0, 5.0]  # Retailer_3
+    - [5.0, 5.0, 5.0]  # Retailer_4
+    - [5.0, 5.0, 5.0]  # Retailer_5
+    - [5.0, 5.0, 5.0]  # Retailer_6
+  safety_stock_penalty: 1.0
+
+rewards:
+  survival_reward: 0.0
+  termination_penalty: 50.0
+  sale_revenue_retailer: 2.5
+  holding_weight: 0.3
+  backlog_weight: 1.5
+  ordering_weight: 0.1
+  target_stock_days_retailer: 8
+  target_stock_days_dc: 14
+  excess_penalty_retailer: 0.3
+  excess_penalty_dc: 0.03
+  alpha: 0.2
+  heuristic_shaping:
+    enabled: true
+    k: 0.5
+    demand_window: 14
+    initial_weight: 1.0
+
+costs:
+  # DC Costs (1 DC x 3 SKUs)
+  holding_cost_dc:
+    - [0.05, 0.05, 0.05]  # DC_0
+
+  backlog_cost_dc:
+    - [3.0, 2.5, 4.0]  # DC_0
+
+  fixed_order_cost_dc:
+    - [2.0, 2.0, 2.0]  # DC_0
+
+  # Retailer Costs (7 Retailers x 3 SKUs)
+  holding_cost_retailer:
+    - [0.1, 0.1, 0.2]  # Retailer_0
+    - [0.1, 0.1, 0.2]  # Retailer_1
+    - [0.1, 0.1, 0.2]  # Retailer_2
+    - [0.1, 0.1, 0.2]  # Retailer_3
+    - [0.1, 0.1, 0.2]  # Retailer_4
+    - [0.1, 0.1, 0.2]  # Retailer_5
+    - [0.1, 0.1, 0.2]  # Retailer_6
+
+  backlog_cost_retailer:
+    - [1.3, 1.3, 1.3]  # Retailer_0
+    - [1.3, 1.3, 1.3]  # Retailer_1
+    - [1.3, 1.3, 1.3]  # Retailer_2
+    - [1.3, 1.3, 1.3]  # Retailer_3
+    - [1.3, 1.3, 1.3]  # Retailer_4
+    - [1.3, 1.3, 1.3]  # Retailer_5
+    - [1.3, 1.3, 1.3]  # Retailer_6
+
+  fixed_order_cost_retailer:
+    - [0.7, 0.7, 0.7]  # Retailer_0
+    - [0.7, 0.7, 0.7]  # Retailer_1
+    - [0.7, 0.7, 0.7]  # Retailer_2
+    - [0.7, 0.7, 0.7]  # Retailer_3
+    - [0.7, 0.7, 0.7]  # Retailer_4
+    - [0.7, 0.7, 0.7]  # Retailer_5
+    - [0.7, 0.7, 0.7]  # Retailer_6
+
+  # Variable costs: (7 retailers, 1 DC, 3 SKUs)
+  variable_cost_retailer:
+    - [ [0.5, 0.6, 0.7] ]  # R0
+    - [ [0.5, 0.6, 0.7] ]  # R1
+    - [ [0.5, 0.6, 0.7] ]  # R2
+    - [ [0.5, 0.6, 0.7] ]  # R3
+    - [ [0.5, 0.6, 0.7] ]  # R4
+    - [ [0.5, 0.6, 0.7] ]  # R5
+    - [ [0.5, 0.6, 0.7] ]  # R6
+
+pricing:
+  base_price: [50, 40, 45]
+  min_price: [40, 30, 35]
+  max_price: [60, 50, 55]
+  volatility: 0.15
+
+demand:
+  mean: [1.41, 1.06, 0.77]
+  std:  [2, 1.4, 1.2]

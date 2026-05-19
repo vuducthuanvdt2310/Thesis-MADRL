@@ -59,7 +59,7 @@ def parse_args():
     # Episode settings
     parser.add_argument('--num_episodes', type=int, default=10,
                         help='Number of evaluation episodes (default: 10)')
-    parser.add_argument('--episode_length', type=int, default=90,
+    parser.add_argument('--episode_length', type=int, default=120,
                         help='Length of each episode in days')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for reproducibility (default: 42)')

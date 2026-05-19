@@ -35,22 +35,22 @@ def load_or_mock_data():
         print("[Info] Using example data for plotting. Update file paths to use real data.")
         # MOCK DATA (Replace with your actual GNN vs MILP results)
         df_milp = pd.Series({
-            'Total_Cost': 210287.9387,
+            'Total_Cost': 225667.9,
             'Fill_Rate': 100,
             'Lost_Sales': 0,
             'Avg_Inventory': 26.6,
-            'Total_Holding_Cost': 5197.0,
+            'Total_Holding_Cost': 16732.675,
             'Total_Backlog_Cost': 62.0,
-            'Total_Ordering_Cost': 205028.0
+            'Total_Ordering_Cost': 208873.22,
         })
         df_gnn = pd.Series({
-            'Total_Cost': 228258.1109,
+            'Total_Cost': 243969.5,
             'Fill_Rate': 93.61,
             'Lost_Sales': 186,
             'Avg_Inventory': 149.8,
-            'Total_Holding_Cost': 62326.0,
-            'Total_Backlog_Cost': 4357.0,
-            'Total_Ordering_Cost': 161573.0
+            'Total_Holding_Cost': 70182.5,
+            'Total_Backlog_Cost': 2217.0,
+            'Total_Ordering_Cost': 171570.0
         })
         
     return df_milp, df_gnn
@@ -78,7 +78,7 @@ def plot_cost_breakdown(df_milp, df_gnn, save_dir):
     for i, total in enumerate([df_milp['Total_Cost'], df_gnn['Total_Cost']]):
         ax.text(i, total + 50, f'Total: ${total:,.0f}', ha='center', fontweight='bold', fontsize=14)
         
-    ax.set_ylabel('Total System Cost ($)')
+    ax.set_ylabel('Total System Cost (000VND)')
     ax.set_title('Cost Breakdown Analysis: Optimal vs Proposed Method', pad=20, fontweight='bold')
     ax.legend(loc='upper left', bbox_to_anchor=(1, 1))
     

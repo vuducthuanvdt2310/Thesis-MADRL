@@ -29,7 +29,7 @@ from runners.separated.gnn_base_runner import GNNRunner as Runner
 def is_running_in_colab():
     """Check if the script is running in Google Colab."""
     try:
-        import google.colab
+        import google.colab  # type: ignore
         return True
     except ImportError:
         return False
@@ -41,7 +41,7 @@ def mount_google_drive():
             print("[OK] Google Drive already mounted!")
             return True
 
-        from google.colab import drive
+        from google.colab import drive  # type: ignore
         drive.mount('/content/drive', force_remount=False)
         print("✓ Google Drive mounted successfully!")
         return True

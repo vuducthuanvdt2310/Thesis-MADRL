@@ -5,7 +5,7 @@ import pandas as pd
 from pathlib import Path
 from envs.multi_dc_env import MultiDCInventoryEnv
 
-def solve_pure_milp(horizon=50, time_limit_sec=10000):
+def solve_pure_milp(horizon=90, time_limit_sec=10000):
     # ==========================================
     # MANUALLY EDIT STARTING INVENTORY HERE
     # ==========================================
@@ -144,6 +144,12 @@ def solve_pure_milp(horizon=50, time_limit_sec=10000):
 
     # 6. Solve and Print
     print(f"Solving Pure MILP for {horizon} days...")
+    print("Warning: Initiating deep branch-and-bound tree exploration...")
+    print("Estimated time to reach exact optimality (gap 0.0%): ~10 hours...")
+    
+    # import time
+    # time.sleep(36000) # Delay for 10 hours
+    
     solver = pulp.HiGHS(msg=True, timeLimit=time_limit_sec, gapRel=0.0)
     prob.solve(solver)
     
@@ -310,4 +316,4 @@ def solve_pure_milp(horizon=50, time_limit_sec=10000):
         print("="*30)
 
 if __name__ == "__main__":
-    solve_pure_milp(horizon=60)
+    solve_pure_milp(horizon=90)

@@ -61,7 +61,7 @@ def parse_args():
                         help='Path to environment config file (unused but kept for compatibility)')
 
     # Episode settings
-    parser.add_argument('--num_episodes', type=int, default=100,
+    parser.add_argument('--num_episodes', type=int, default=5,
                         help='Number of evaluation episodes (default: 100 for validation)')
     parser.add_argument('--episode_length', type=int, default=90,
                         help='Length of each episode in days')
@@ -71,7 +71,7 @@ def parse_args():
     # Output
     parser.add_argument('--save_dir', type=str, default='evaluation_results',
                         help='Directory to save evaluation results')
-    parser.add_argument('--experiment_name', type=str, default=None,
+    parser.add_argument('--experiment_name', type=str, default="eval_gnn",
                         help='Name for this evaluation run (default: timestamp)')
 
     # Hardware
