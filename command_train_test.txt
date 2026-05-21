@@ -1,0 +1,19 @@
+python train_multi_dc_baseline.py --experiment_name "01Apr_base" --model_dir "results/05Mar_2base/run_seed_1"
+python train_multi_dc_gnn.py --experiment_name "14Apr_gnn_kaggle_vari2" --model_dir "results/14Apr_gnn_kaggle_vari2/run_seed_1"
+python train_multi_dc_gnn_1x7.py --experiment_name "1x7"
+python train_multi_dc_MAPPO.py --experiment_name "24Apr_MAPPO"
+python train_multi_dc_gnn_small.py --experiment_name "small"
+
+train many network
+
+python train_multi_dc_gnn_1x7.py --experiment_name "gnn_happo_1x7"
+python train_multi_dc_happo_1x7.py --experiment_name "happo_1x7"
+python train_multi_dc_mappo_1x7.py --experiment_name "mappo_1x7"
+
+python train_multi_dc_gnn_2x30.py --experiment_name "gnn_happo_2x30"
+python train_multi_dc_happo_2x30.py --experiment_name "happo_2x30"
+python train_multi_dc_mappo_2x30.py --experiment_name "mappo_2x30"
+
+python train_multi_dc_gnn_4x40.py --experiment_name "gnn_happo_4x40"
+python train_multi_dc_happo_4x40.py --experiment_name "happo_4x40"
+python train_multi_dc_mappo_4x40.py --experiment_name "mappo_4x40"

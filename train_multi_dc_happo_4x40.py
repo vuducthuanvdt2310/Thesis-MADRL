@@ -1,0 +1,159 @@
+#!/usr/bin/env python
+"""
+HAPPO Training Script for 4×40 Inventory Environment
+Topology: 1 Supplier → 4 DCs → 40 Retailers (44 agents total)
+"""
+
+import sys
+import os
+import numpy as np
+from pathlib import Path
+import shutil
+import torch
+from config import get_config
+from envs.env_wrappers import SubprocVecEnvMultiDC, DummyVecEnvMultiDC
+from runners.separated.runner import CRunner as Runner
+
+def is_running_in_colab():
+    try:
+        import google.colab  # type: ignore
+        return True
+    except ImportError:
+        return False
+
+def mount_google_drive():
+    try:
+        if os.path.exists('/content/drive/MyDrive'):
+            return True
+        from google.colab import drive  # type: ignore
+        drive.mount('/content/drive', force_remount=False)
+        return True
+    except Exception:
+        return False
+
+USE_GOOGLE_DRIVE = False
+GOOGLE_DRIVE_PATH = "/content/drive/MyDrive/thesis_models"
+
+N_DCS = 4
+N_RETAILERS = 40
+N_AGENTS = N_DCS + N_RETAILERS  # 44
+CONFIG_PATH = 'configs/multi_dc_4x40_config.yaml'
+
+def make_train_env(all_args):
+    return SubprocVecEnvMultiDC(all_args)
+
+def make_eval_env(all_args):
+    return DummyVecEnvMultiDC(all_args)
+
+def parse_args(args, parser):
+    return parser.parse_known_args(args)[0]
+
+
+if __name__ == "__main__":
+    in_colab = is_running_in_colab()
+    use_gdrive = USE_GOOGLE_DRIVE or in_colab
+    if use_gdrive:
+        print("=" * 70); print("Google Colab Environment Detected"); print("=" * 70)
+        if in_colab and not mount_google_drive():
+            use_gdrive = False
+        print()
+
+    BASE_SAVE_DIR = Path(GOOGLE_DRIVE_PATH) if use_gdrive else Path(os.path.dirname(os.path.abspath(__file__)))
+
+    parser = get_config()
+    parser.set_defaults(
+        env_name="MultiDC",
+        scenario_name="inventory_2echelon_4x40",
+        num_agents=N_AGENTS,
+        episode_length=365,
+        num_env_steps=36500000,
+        n_rollout_threads=4,
+        n_training_threads=1,
+        algorithm_name="happo",
+        experiment_name="happo_4x40",
+        use_eval=True,
+        n_eval_rollout_threads=1,
+        eval_interval=10,
+        eval_episodes=5,
+        log_interval=1,
+        n_warmup_evaluations=3,
+        n_no_improvement_thres=1000,
+        entropy_coef=0.08,
+        std_x_coef=2.0,
+        std_y_coef=1.5,
+    )
+
+    all_args = parse_args(sys.argv[1:], parser)
+    all_args.env_config_path = CONFIG_PATH
+
+    RESUME_MODEL_DIR = None
+    if RESUME_MODEL_DIR:
+        all_args.model_dir = RESUME_MODEL_DIR
+
+    seeds = all_args.seed
+    if isinstance(seeds, int):
+        seeds = [seeds]
+
+    print("=" * 70)
+    print(f"HAPPO Training — 4x40 ({N_DCS} DCs + {N_RETAILERS} Retailers)")
+    print("=" * 70)
+    print(f"Config          : {CONFIG_PATH}")
+    print(f"Algorithm       : {all_args.algorithm_name.upper()}")
+    print(f"Agents          : {N_AGENTS}")
+    print(f"Parallel envs   : {all_args.n_rollout_threads}")
+    print(f"Episode length  : {all_args.episode_length}")
+    print(f"Total steps     : {all_args.num_env_steps:,}")
+    print("=" * 70)
+
+    if all_args.cuda and torch.cuda.is_available():
+        print("Using GPU..."); device = torch.device("cuda:0")
+        torch.set_num_threads(all_args.n_training_threads)
+        if all_args.cuda_deterministic:
+            torch.backends.cudnn.benchmark = False; torch.backends.cudnn.deterministic = True
+    else:
+        print("Using CPU..."); device = torch.device("cpu")
+        torch.set_num_threads(all_args.n_training_threads)
+
+    for seed in seeds:
+        print(f"\n{'='*70}\nTraining starts for seed: {seed}\n{'='*70}\n")
+        run_dir = BASE_SAVE_DIR / "results" / all_args.experiment_name
+        if not run_dir.exists(): os.makedirs(str(run_dir))
+        curr_run = 'run_seed_%i' % (seed + 1)
+        seed_res_record_file = run_dir / "seed_results.txt"
+        run_dir = run_dir / curr_run
+        if not run_dir.exists(): os.makedirs(str(run_dir))
+        models_dir = run_dir / "models"
+        if not models_dir.exists(): os.makedirs(str(models_dir))
+        print(f"Results: {run_dir}\nModels:  {models_dir}\n")
+        if not os.path.exists(seed_res_record_file): open(seed_res_record_file, 'a+')
+
+        torch.manual_seed(seed); torch.cuda.manual_seed_all(seed); np.random.seed(seed)
+
+        envs = make_train_env(all_args)
+        eval_envs = make_eval_env(all_args) if all_args.use_eval else None
+        num_agents = all_args.num_agents
+        print(f"Envs created: {envs.num_envs} parallel | {num_agents} agents\n")
+
+        config = {"all_args": all_args, "envs": envs, "eval_envs": eval_envs,
+                  "num_agents": num_agents, "device": device, "run_dir": run_dir}
+        try:
+            print("Starting HAPPO training...\n")
+            runner = Runner(config); reward, bw = runner.run()
+            with open(seed_res_record_file, 'a+') as f:
+                f.write(str(seed) + ' ' + str(reward) + ' ')
+                for fluc in bw: f.write(str(fluc) + ' ')
+                f.write('\n')
+            print(f"\nCompleted seed {seed} | Reward: {reward}")
+        except KeyboardInterrupt: print("\nInterrupted."); break
+        except Exception as e:
+            print(f"\nFailed: {e}"); import traceback; traceback.print_exc(); break
+        finally:
+            envs.close()
+            if all_args.use_eval and eval_envs is not envs: eval_envs.close()
+
+        try:
+            output_path = os.path.join(os.getcwd(), all_args.experiment_name)
+            shutil.make_archive(output_path, 'zip', run_dir)
+        except Exception: pass
+
+    print(f"\n{'='*70}\nAll training runs completed!\n{'='*70}")
