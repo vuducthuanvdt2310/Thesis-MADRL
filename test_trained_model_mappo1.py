@@ -391,7 +391,7 @@ class MAPPOModelEvaluatorV1(MAPPOModelEvaluator):
 
     def _save_metrics_csv(self):
         import csv
-        results_path = self.save_dir / 'results_mappo.csv'
+        results_path = self.save_dir / 'results_mappo_2x15.csv'
         compat_path  = self.save_dir / 'episode_metrics.csv'
         for path in (results_path, compat_path):
             with open(path, 'w', newline='') as f:

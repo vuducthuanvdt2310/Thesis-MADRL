@@ -76,7 +76,7 @@ if __name__ == "__main__":
         experiment_name="mappo_1x7",
         use_eval=True,
         n_eval_rollout_threads=1,
-        eval_interval=10,
+        eval_interval=1,
         eval_episodes=5,
         log_interval=1,
         n_warmup_evaluations=3,

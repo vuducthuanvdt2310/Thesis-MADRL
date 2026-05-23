@@ -57,7 +57,7 @@ if __name__ == "__main__":
         num_agents=N_AGENTS, episode_length=365, num_env_steps=36500000,
         n_rollout_threads=4, n_training_threads=1,
         algorithm_name="mappo", experiment_name="mappo_4x40",
-        use_eval=True, n_eval_rollout_threads=1, eval_interval=10,
+        use_eval=True, n_eval_rollout_threads=1, eval_interval=1,
         eval_episodes=5, log_interval=1, n_warmup_evaluations=3,
         n_no_improvement_thres=1000,
         entropy_coef=0.08, std_x_coef=2.0, std_y_coef=1.5,

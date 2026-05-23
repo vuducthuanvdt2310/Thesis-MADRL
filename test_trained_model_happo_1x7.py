@@ -612,7 +612,7 @@ class HAPPOEvaluator1x7(ModelEvaluator):
         """Save episode metrics to CSV (uses ``self.n_dcs`` for retailer range)."""
         import csv
 
-        results_path = self.save_dir / 'results_standard_happo.csv'
+        results_path = self.save_dir / 'results_standard_happo_1x7.csv'
         compat_path  = self.save_dir / 'episode_metrics.csv'
 
         for csv_path in (results_path, compat_path):

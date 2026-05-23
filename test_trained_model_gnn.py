@@ -901,10 +901,12 @@ class GNNModelEvaluator:
             json.dump(output, f, indent=2, cls=NumpyEncoder)
         print(f'[OK] Saved metrics JSON: {path.name}')
 
+    RESULTS_CSV_NAME = 'results_gnn_happo.csv'
+
     def _save_metrics_csv(self):
         import csv
         # Primary output: standardised validation file
-        results_path = self.save_dir / 'results_gnn_happo.csv'
+        results_path = self.save_dir / self.RESULTS_CSV_NAME
         # Also keep the generic name for backward compat
         compat_path  = self.save_dir / 'episode_metrics.csv'
         for path in (results_path, compat_path):

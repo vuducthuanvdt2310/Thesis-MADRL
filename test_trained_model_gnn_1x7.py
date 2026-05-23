@@ -34,6 +34,8 @@ CONFIG_PATH = 'configs/multi_dc_1x7_config.yaml'
 class GNNModelEvaluator1x7(GNNModelEvaluator):
     """Evaluator subclass for the 1 DC × 7 Retailer environment."""
 
+    RESULTS_CSV_NAME = 'results_gnn_happo_1x7.csv'
+
     def _create_env(self):
         """Override: create env with 1x7 config."""
         print('Creating evaluation environment (1×7 scale)...')

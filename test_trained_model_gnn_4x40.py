@@ -34,6 +34,8 @@ CONFIG_PATH = 'configs/multi_dc_4x40_config.yaml'
 class GNNModelEvaluator4x40(GNNModelEvaluator):
     """Evaluator subclass for the 4 DC × 40 Retailer scaled environment."""
 
+    RESULTS_CSV_NAME = 'results_gnn_happo_4x40.csv'
+
     def _create_env(self):
         """Override: create env with 4x40 config."""
         print('Creating evaluation environment (4×40 scale)...')

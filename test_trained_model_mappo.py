@@ -827,7 +827,7 @@ class MAPPOModelEvaluator:
     def _save_metrics_csv(self):
         import csv
         # Primary output: standardised validation file
-        results_path = self.save_dir / 'results_gnn_happo.csv'
+        results_path = self.save_dir / 'results_gnn_happo_2x15.csv'
         # Also keep the generic name for backward compat
         compat_path  = self.save_dir / 'episode_metrics.csv'
         for path in (results_path, compat_path):
