@@ -51,6 +51,9 @@ class GNNActor(nn.Module):
         self.hidden_size = args.hidden_size
         self.args = args
         self.n_agents = n_agents
+        # Topology-aware DC count. Defaults to 2 so legacy callers (the 2-DC
+        # baseline) keep their old behaviour when n_dcs is not set on args.
+        self.n_dcs = int(getattr(args, 'n_dcs', 2))
         self._gain = args.gain
         self._use_orthogonal = args.use_orthogonal
         self._use_policy_active_masks = args.use_policy_active_masks
@@ -164,16 +167,19 @@ class GNNActor(nn.Module):
             actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
         
         # ── Approach A: extract reference_demand from raw observation ─────────
-        # Retailers (agent_id >= 2): demand at obs indices [6, 13, 20], normalised
-        # by demand_cap ≈ 3.8. Denormalise back to physical units so DiagGaussian
-        # can compute a sensible adjustment (±1 unit around the real demand).
-        # DCs (agent_id < 2): no direct demand obs → pass None, use tanh fallback.
+        # Retailers (agent_id >= self.n_dcs): demand at obs indices [6, 13, 20],
+        # normalised by demand_cap ≈ 3.8. Denormalise back to physical units so
+        # DiagGaussian can compute a sensible adjustment (±1 unit around the real
+        # demand).
+        # DCs (agent_id < self.n_dcs): no direct demand obs → pass None, use
+        # tanh fallback. self.n_dcs is propagated by env_wrappers from the env
+        # config (1, 2, 4, ...), so this works for every topology.
         #
         # obs shape: [batch, n_agents, padded_obs_dim=28]
         # agent raw obs: obs[:, agent_id, :]   shape: [batch, 28]
         RETAILER_DEMAND_INDICES = [6, 13, 20]  # indices in the 28D padded obs
         RETAILER_DEMAND_NORM    = 3.8          # demand_cap = mean + 3×std
-        if agent_id >= 2:  # Retailer
+        if agent_id >= self.n_dcs:  # Retailer
             agent_raw_obs    = obs[:, agent_id, :]                             # [batch, 28]
             ref_demand_norm  = agent_raw_obs[:, RETAILER_DEMAND_INDICES]       # [batch, 3]
             reference_demand = ref_demand_norm * RETAILER_DEMAND_NORM          # [batch, 3] physical
@@ -230,9 +236,10 @@ class GNNActor(nn.Module):
             actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
         
         # ── Approach A: same demand extraction as forward() ───────────────────
+        # Uses self.n_dcs (topology-aware) instead of the legacy hardcoded 2.
         RETAILER_DEMAND_INDICES = [6, 13, 20]
         RETAILER_DEMAND_NORM    = 3.8
-        if agent_id >= 2:
+        if agent_id >= self.n_dcs:
             agent_raw_obs    = obs[:, agent_id, :]
             ref_demand_norm  = agent_raw_obs[:, RETAILER_DEMAND_INDICES]
             reference_demand = ref_demand_norm * RETAILER_DEMAND_NORM
