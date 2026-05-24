@@ -14,6 +14,7 @@ python train_multi_dc_happo_4x40.py --experiment_name "happo_4x40"
 
 
 python train_multi_dc_mappo_1x7.py --experiment_name "mappo_1x7"
+python train_multi_dc_mappo_2x15.py --experiment_name "mappo_2x15"
 python train_multi_dc_mappo_2x30.py --experiment_name "mappo_2x30"
 python train_multi_dc_mappo_4x40.py --experiment_name "mappo_4x40"
 

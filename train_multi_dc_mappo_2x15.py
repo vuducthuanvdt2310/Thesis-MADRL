@@ -119,7 +119,7 @@ if __name__ == "__main__":
         experiment_name="mappo_training",
         use_eval=True,
         n_eval_rollout_threads=1,
-        eval_interval=10,        # Evaluate every 10 episodes
+        eval_interval=1,        # Evaluate every 10 episodes
         eval_episodes=5,
         log_interval=1,
         n_warmup_evaluations=3,  # Minimum evaluations before early stopping
