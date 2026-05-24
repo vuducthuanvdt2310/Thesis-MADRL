@@ -22,7 +22,7 @@ python train_multi_dc_mappo_4x40.py --experiment_name "mappo_4x40"
 
 testing
 python test_trained_model_gnn.py --model_dir "results/14Apr_gnn_kaggle_vari/run_seed_1/models" --episode_length 90  --num_episodes 5 --experiment_name "eval_gnn"
-python test_trained_model_gnn_1x7.py --model_dir "results/gnn_happo_1x7/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "gnn_1x17"
+python test_trained_model_gnn_1x7.py --model_dir "results/gnn_happo_1x7/run_seed_1/models" --episode_length 70 --num_episodes 5 --experiment_name "gnn_1x17"
 python test_trained_model_gnn_2x30.py --model_dir "results/gnn_happo_2x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "gnn_2x30"
 python test_trained_model_gnn_4x40.py --model_dir "results/gnn_happo_4x40/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "gnn_4x40"
 

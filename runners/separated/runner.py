@@ -419,11 +419,12 @@ class CRunner(BaseRunner):
                 agent_k = "agent%i/" % agent_id + k
                 self.writter.add_scalars(agent_k, {agent_k: v}, total_num_steps)
 
-            # Accumulate group rewards
-            if agent_id < 2:
-                dc_reward += agent_rew         # Agents 0-1 are DCs
+            # Accumulate group rewards (topology-aware: use args.n_dcs).
+            n_dcs = int(getattr(self.all_args, 'n_dcs', 2))
+            if agent_id < n_dcs:
+                dc_reward += agent_rew
             else:
-                retailer_reward += agent_rew   # Agents 2-16 are Retailers
+                retailer_reward += agent_rew
 
         # Log group-level and system-level totals
         self.writter.add_scalar("system/dc_total_reward", dc_reward, total_num_steps)

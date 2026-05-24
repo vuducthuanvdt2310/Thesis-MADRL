@@ -40,7 +40,8 @@ class GNNRunner(object):
         # Read dc_assignments from the same config the environment uses so the
         # GNN graph matches the actual exclusive DC→Retailer sourcing topology.
         print("\nBuilding supply chain graph...")
-        n_dcs = 2
+        # n_dcs is propagated by env_wrappers from the env config (1, 2, 4, ...).
+        n_dcs = int(getattr(self.all_args, 'n_dcs', 2))
         n_retailers = self.num_agents - n_dcs
 
         dc_assignments = None
@@ -52,12 +53,17 @@ class GNNRunner(object):
                 env_cfg = yaml.safe_load(f)
             raw = env_cfg.get('dc_assignments', None)
             if raw is not None:
-                dc_assignments = {
-                    0: [n_dcs + idx for idx in raw['dc_0']],
-                    1: [n_dcs + idx for idx in raw['dc_1']],
-                }
-                print(f"  DC0 → agent IDs {dc_assignments[0]}")
-                print(f"  DC1 → agent IDs {dc_assignments[1]}")
+                # Iterate over all dc_<i> keys present in the config so the graph
+                # is correct for 1-DC, 2-DC, 4-DC, ... topologies alike.
+                dc_assignments = {}
+                for dc_id in range(n_dcs):
+                    key = f'dc_{dc_id}'
+                    if key not in raw:
+                        raise KeyError(
+                            f"dc_assignments missing '{key}' for n_dcs={n_dcs}"
+                        )
+                    dc_assignments[dc_id] = [n_dcs + idx for idx in raw[key]]
+                    print(f"  DC{dc_id} → agent IDs {dc_assignments[dc_id]}")
         except Exception as e:
             print(f"  [WARNING] Could not read dc_assignments ({e}); "
                   f"falling back to fully-bipartite graph.")

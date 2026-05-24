@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python build_network_demand_scenario_input.py)",
+      "Bash(python Network_demand_scenario.py)",
+      "Bash(python -c ' *)"
+    ]
+  }
+}

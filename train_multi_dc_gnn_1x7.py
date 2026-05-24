@@ -122,6 +122,10 @@ if __name__ == "__main__":
 
     # Point to the 1x7 config
     all_args.env_config_path = CONFIG_PATH
+    # Make the topology explicit so the Actor's DC vs Retailer routing
+    # (algorithms/actor_critic.py:_get_reference_demand) and the GNN
+    # adjacency builder both pick up the correct DC count.
+    all_args.n_dcs = N_DCS
 
     # DC obs = 28D, Retailer obs = 22D → max = 28
     all_args.single_agent_obs_dim = 28

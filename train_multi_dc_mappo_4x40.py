@@ -65,6 +65,9 @@ if __name__ == "__main__":
 
     all_args = parse_args(sys.argv[1:], parser)
     all_args.env_config_path = CONFIG_PATH
+    # Make the topology explicit so the Actor's DC vs Retailer routing
+    # (algorithms/actor_critic.py:_get_reference_demand) matches this network.
+    all_args.n_dcs = N_DCS
 
     RESUME_MODEL_DIR = None
     if RESUME_MODEL_DIR: all_args.model_dir = RESUME_MODEL_DIR

@@ -26,6 +26,9 @@ class Actor(nn.Module):
         self._use_naive_recurrent_policy = args.use_naive_recurrent_policy
         self._use_recurrent_policy = args.use_recurrent_policy
         self._recurrent_N = args.recurrent_N
+        # Topology-aware DC count. Falls back to 2 when args has no n_dcs
+        # so legacy callers (e.g. 2-DC baseline) keep their old behaviour.
+        self.n_dcs = int(getattr(args, 'n_dcs', 2))
         self.tpdv = dict(dtype=torch.float32, device=device)
 
         obs_shape = get_shape_from_obs_space(obs_space)
@@ -51,7 +54,8 @@ class Actor(nn.Module):
         if agent_id is None:
             return None
         # Only retailers have explicit demand features in the observation vector.
-        if agent_id < 2:
+        # n_dcs reflects the actual topology (1, 2, or 4) — not hardcoded 2.
+        if agent_id < self.n_dcs:
             return None
 
         # obs: [batch, obs_dim]

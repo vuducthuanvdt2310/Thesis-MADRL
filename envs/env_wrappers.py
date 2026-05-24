@@ -235,16 +235,19 @@ class SubprocVecEnvMultiDC(object):
         """
         # Create parallel environments
         config_path = getattr(all_args, 'env_config_path', 'configs/multi_dc_config.yaml')
-        self.env_list = [MultiDCInventoryEnv(config_path=config_path) 
+        self.env_list = [MultiDCInventoryEnv(config_path=config_path)
                         for i in range(all_args.n_rollout_threads)]
         self.num_envs = all_args.n_rollout_threads
-        
+
         # Get environment properties from first env
-        self.num_agent = self.env_list[0].n_agents  # 5 agents
-        
+        self.num_agent = self.env_list[0].n_agents
+
         # Multi-DC has heterogeneous agents - DCs vs Retailers
-        self.n_dcs = self.env_list[0].n_dcs  # 2
-        self.n_retailers = self.env_list[0].n_retailers  # 3
+        self.n_dcs = self.env_list[0].n_dcs
+        self.n_retailers = self.env_list[0].n_retailers
+        # Propagate n_dcs onto args so downstream code (actor, runner) can
+        # tell DC vs Retailer by topology instead of hardcoding agent_id < 2.
+        all_args.n_dcs = self.n_dcs
         
         # Note: This is continuous action space
         self.discrete_action_space = False
@@ -410,7 +413,8 @@ class DummyVecEnvMultiDC(object):
         self.num_agent = self.env_list[0].n_agents
         self.n_dcs = self.env_list[0].n_dcs
         self.n_retailers = self.env_list[0].n_retailers
-        
+        all_args.n_dcs = self.n_dcs
+
         self.discrete_action_space = False
         self.discrete_action_input = False
         self.force_discrete_action = False
