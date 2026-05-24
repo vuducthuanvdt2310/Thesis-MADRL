@@ -7,7 +7,7 @@ python train_multi_dc_MAPPO.py --experiment_name "24Apr_MAPPO"
 python train_multi_dc_gnn_small.py --experiment_name "small"
 
 python test_trained_model.py --model_dir "results\01Apr_base\run_seed_1\models"  --num_episodes 5  --experiment_name "eval_base"
-python test_trained_model_mappo1.py --model_dir "results\25Apr_MAPPO\run_seed_1\models"  --num_episodes 5  --experiment_name "eval_mappo"
+python test_trained_model_mappo.py --model_dir "results\25Apr_MAPPO\run_seed_1\models"  --num_episodes 5  --experiment_name "eval_mappo"
 python test_trained_model_gnn.py --model_dir "results/14Apr_gnn_kaggle_vari/run_seed_1/models"  --num_episodes 5 --experiment_name "eval_gnn"
 python Test_baseline_basestock.py --experiment_name "basestock_v1"  --num_episodes 10
 

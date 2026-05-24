@@ -42,7 +42,7 @@ from envs.env_wrappers import DummyVecEnvMultiDC
 from algorithms.happo_policy import HAPPO_Policy
 from algorithms.gnn_happo_policy import GNN_HAPPO_Policy
 from utils.graph_utils import build_supply_chain_adjacency, normalize_adjacency
-from test_trained_model_mappo1 import MAPPOModelEvaluatorV1
+from test_trained_model_mappo_2x15 import MAPPOModelEvaluator
 
 PRICE_SCENARIOS = {
     "Scenario_1_Balanced": {
@@ -759,7 +759,7 @@ class GNNModelEvaluator:
 #  SECTION 4 — MAPPO EVALUATOR
 # ============================================================================
 
-class MAPPOPriceEvaluator(MAPPOModelEvaluatorV1):
+class MAPPOPriceEvaluator(MAPPOModelEvaluator):
     def get_full_cost(self):
         costs = []
         for m in self.episode_metrics:

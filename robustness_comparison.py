@@ -53,7 +53,7 @@ from envs.env_wrappers import DummyVecEnvMultiDC
 from algorithms.happo_policy import HAPPO_Policy
 from algorithms.gnn_happo_policy import GNN_HAPPO_Policy
 from utils.graph_utils import build_supply_chain_adjacency, normalize_adjacency
-from test_trained_model_mappo1 import MAPPOModelEvaluatorV1
+from test_trained_model_mappo_2x15 import MAPPOModelEvaluator
 
 
 # ---------------------------------------------------------------------------
@@ -1191,9 +1191,9 @@ class GNNModelEvaluator:
 #  SECTION 4 — MAPPO thin wrapper (adds aggregation helpers)
 # ============================================================================
 
-class MAPPORobustnessEvaluator(MAPPOModelEvaluatorV1):
+class MAPPORobustnessEvaluator(MAPPOModelEvaluator):
     """
-    Extends MAPPOModelEvaluatorV1 with the three aggregation helpers that the
+    Extends MAPPOModelEvaluator with the three aggregation helpers that the
     robustness comparison script expects (same signatures as HAPPOEvaluator /
     GNNModelEvaluator).
     """

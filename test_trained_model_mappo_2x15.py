@@ -1,18 +1,27 @@
 #!/usr/bin/env python
 """
-Test/Evaluation Script for Trained GNN-HAPPO Models
-=====================================================
+Test/Evaluation Script for Trained MAPPO Models
+================================================
 
-This script evaluates a trained GNN-HAPPO model on the multi-DC inventory
-environment. It is DEDICATED to GNN models only — use test_trained_model.py
-for the baseline (standard MLP-HAPPO) models.
+This script evaluates a trained MAPPO model on the multi-DC inventory
+environment.  MAPPO uses a standard MLP actor (decentralised execution)
+with a centralized critic — no GNN or graph structure is required.
+
+Produces:
+  - evaluation_metrics.json
+  - results_mappo_2x15.csv  /  episode_metrics.csv
+  - episode_rewards.png, cost_breakdown.png, cost_breakdown_retailer.png,
+    service_levels.png, detailed_trajectory.png, normalized_trajectory.png,
+    dc_inventory_fluctuation.png, retailer_inventory_fluctuation.png,
+    reward_distribution.png
+  - step_trajectory_ep1.xlsx
 
 Usage:
-    python test_trained_model_gnn.py \
-        --model_dir results/5Mar_1_gnn/run_seed_1/models \
-        --episode_length 365 \
-        --num_episodes 5 \
-        --experiment_name "eval_gnn_365"
+    python test_trained_model_mappo.py \
+        --model_dir results/24Apr_MAPPO/run_seed_1/models \
+        --episode_length 90 \
+        --num_episodes 10 \
+        --experiment_name "eval_mappo"
 """
 
 import sys
@@ -30,8 +39,7 @@ import pandas as pd
 
 from config import get_config
 from envs.env_wrappers import DummyVecEnvMultiDC
-from algorithms.gnn_happo_policy import GNN_HAPPO_Policy
-from utils.graph_utils import build_supply_chain_adjacency, normalize_adjacency
+from algorithms.mappo_policy import MAPPO_Policy
 
 
 # ---------------------------------------------------------------------------
@@ -51,19 +59,16 @@ class NumpyEncoder(json.JSONEncoder):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Evaluate Trained GNN-HAPPO Model')
+    parser = argparse.ArgumentParser(description='Evaluate Trained MAPPO Model')
 
     # Required
     parser.add_argument('--model_dir', type=str, required=True,
                         help='Path to saved model directory (e.g., results/.../models)')
-    parser.add_argument('--config_path', type=str,
-                        default='configs/multi_sku_config.yaml',
-                        help='Path to environment config file (unused but kept for compatibility)')
 
     # Episode settings
-    parser.add_argument('--num_episodes', type=int, default=5,
-                        help='Number of evaluation episodes (default: 100 for validation)')
-    parser.add_argument('--episode_length', type=int, default=90,
+    parser.add_argument('--num_episodes', type=int, default=10,
+                        help='Number of evaluation episodes (default: 10)')
+    parser.add_argument('--episode_length', type=int, default=120,
                         help='Length of each episode in days')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for reproducibility (default: 42)')
@@ -71,36 +76,22 @@ def parse_args():
     # Output
     parser.add_argument('--save_dir', type=str, default='evaluation_results',
                         help='Directory to save evaluation results')
-    parser.add_argument('--experiment_name', type=str, default="eval_gnn",
+    parser.add_argument('--experiment_name', type=str, default=None,
                         help='Name for this evaluation run (default: timestamp)')
 
     # Hardware
     parser.add_argument('--cuda', action='store_true', default=False,
                         help='Use CUDA if available')
 
-    # GNN architecture (must match training config)
-    parser.add_argument('--gnn_type', type=str, default='GAT',
-                        help='GNN type used during training (GAT, GCN, ...)')
-    parser.add_argument('--gnn_hidden_dim', type=int, default=128,
-                        help='GNN hidden dimension used during training')
-    parser.add_argument('--gnn_num_layers', type=int, default=2,
-                        help='Number of GNN layers used during training')
-    parser.add_argument('--num_attention_heads', type=int, default=4,
-                        help='Number of attention heads (for GAT)')
-    parser.add_argument('--gnn_dropout', type=float, default=0.1)
-    parser.add_argument('--use_residual', type=lambda x: x.lower() == 'true',
-                        default=True)
-    parser.add_argument('--critic_pooling', type=str, default='mean')
-
     return parser.parse_args()
 
 
 # ---------------------------------------------------------------------------
-# GNN Evaluator
+# MAPPO Evaluator
 # ---------------------------------------------------------------------------
 
-class GNNModelEvaluator:
-    """Evaluates trained GNN-HAPPO models on the multi-DC inventory environment."""
+class MAPPOModelEvaluator:
+    """Evaluates trained MAPPO models on the multi-DC inventory environment."""
 
     def __init__(self, args):
         self.args = args
@@ -110,7 +101,7 @@ class GNNModelEvaluator:
 
         # Output directory
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        exp_name = args.experiment_name if args.experiment_name else f'eval_gnn_{timestamp}'
+        exp_name = args.experiment_name if args.experiment_name else f'eval_mappo_{timestamp}'
         self.save_dir = Path(args.save_dir) / exp_name
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -119,7 +110,7 @@ class GNNModelEvaluator:
         # 1. Create environment
         self.env = self._create_env()
 
-        # Infer number of SKUs from underlying MultiDC env (for logging demand etc.)
+        # Infer number of SKUs from underlying MultiDC env
         base_env_list = getattr(self.env, 'env_list', getattr(self.env, 'envs', None))
         if base_env_list:
             base_env = base_env_list[0]
@@ -127,16 +118,13 @@ class GNNModelEvaluator:
         else:
             self.n_skus = 3
 
-        # 2. Build graph adjacency
-        self.adj_tensor = self._build_graph()
+        # 2. Detect per-agent obs dims from saved model weights
+        self.obs_dims = self._detect_obs_dims()
 
-        # 3. Detect obs dim AND gnn_type from saved model
-        self.single_agent_obs_dim = self._detect_model_config()
-
-        # 4. Load GNN policies
+        # 3. Load MAPPO policies
         self.policies = self._load_models()
 
-        # 5. Storage
+        # 4. Storage
         self.episode_metrics = []
         self.detailed_trajectory = None
 
@@ -146,7 +134,7 @@ class GNNModelEvaluator:
 
     def _print_header(self):
         print('=' * 70)
-        print('GNN-HAPPO Model Evaluation')
+        print('MAPPO Model Evaluation')
         print('=' * 70)
         print(f'Model directory : {self.args.model_dir}')
         print(f'Num episodes    : {self.args.num_episodes}')
@@ -164,93 +152,42 @@ class GNNModelEvaluator:
             episode_length=self.args.episode_length,
             n_eval_rollout_threads=1,
             use_centralized_V=True,
-            algorithm_name='gnn_happo',
+            algorithm_name='mappo',
         )
         all_args = parser.parse_known_args([])[0]
         env = DummyVecEnvMultiDC(all_args)
 
         self.n_agents = env.num_agent if hasattr(env, 'num_agent') else 17
-        self.n_dcs = env.n_dcs if hasattr(env, 'n_dcs') else 2
         print(f'[OK] Environment created')
-        print(f'     Agents         : {self.n_agents} ({self.n_dcs} DCs + {self.n_agents - self.n_dcs} Retailers)')
+        print(f'     Agents         : {self.n_agents} (2 DCs + {self.n_agents - 2} Retailers)')
         obs_dims = [env.observation_space[i].shape[0] for i in range(self.n_agents)]
         print(f'     Obs dims       : DC={obs_dims[0]}D, Retailer={obs_dims[2]}D')
         print(f'     Action dim     : {env.action_space[0].shape[0]}D\n')
         return env
 
-    def _build_graph(self):
-        print('Building supply chain graph...')
-        adj = build_supply_chain_adjacency(
-            n_dcs=self.n_dcs, n_retailers=self.n_agents - self.n_dcs, self_loops=True
-        )
-        adj = normalize_adjacency(adj, method='symmetric')
-        adj_tensor = torch.FloatTensor(adj).to(self.device)
-        print(f'[OK] Graph: {adj.shape[0]} nodes, {int((adj > 0).sum())} edges\n')
-        return adj_tensor
-
-    def _detect_model_config(self):
-        """Read obs dim AND gnn_type from agent-0 saved model state dict."""
+    def _detect_obs_dims(self):
+        """Detect per-agent obs dims from env. Auto-adjusts if saved model has different dim."""
+        dims = [self.env.observation_space[i].shape[0] for i in range(self.n_agents)]
+        # Try to detect from agent-0 weights (handles train/eval obs dim mismatch)
         model_dir = Path(self.args.model_dir)
         agent0_files = sorted(model_dir.glob('actor_agent0*.pt'))
-        if not agent0_files:
-            raise FileNotFoundError(f'No actor_agent0 .pt file found in {model_dir}')
-
-        sd = torch.load(str(agent0_files[0]), map_location='cpu')
-        keys = list(sd.keys())
-
-        # --- Detect GNN type ---
-        # GCN layers store: gnn_base.layers.N.weight  /  .bias
-        # GAT layers store: gnn_base.layers.N.W  /  .a
-        if any('gnn_base.layers.0.weight' in k for k in keys):
-            detected_gnn_type = 'GCN'
-        elif any('gnn_base.layers.0.W' in k for k in keys):
-            detected_gnn_type = 'GAT'
-        else:
-            detected_gnn_type = self.args.gnn_type  # fallback to user arg
-
-        # --- Detect obs dim ---
-        gcn_key = 'gnn_base.layers.0.weight'
-        gat_key = 'gnn_base.layers.0.W'
-        if gcn_key in sd:
-            obs_dim = sd[gcn_key].shape[0]  # GCN weight: [in_features, out_features]
-        elif gat_key in sd:
-            obs_dim = sd[gat_key].shape[1]  # GAT W: [num_heads, in_features, head_dim]
-        else:
-            obs_dim = max(
-                self.env.observation_space[i].shape[0] for i in range(self.n_agents)
-            )
-
-        print(f'[Auto] Detected GNN type     : {detected_gnn_type}')
-        print(f'[Auto] Detected obs dim      : {obs_dim}D')
-        if detected_gnn_type != self.args.gnn_type:
-            print(f'       (overrides --gnn_type {self.args.gnn_type})')
-
-        self.detected_gnn_type = detected_gnn_type
-        return obs_dim
+        if agent0_files:
+            sd = torch.load(str(agent0_files[0]), map_location='cpu')
+            if 'base.mlp.fc1.0.weight' in sd:
+                saved_dim = sd['base.mlp.fc1.0.weight'].shape[1]
+                print(f'[Auto] Detected MLP obs dim : {saved_dim}D')
+                dims = [saved_dim] * self.n_agents
+        return dims
 
     def _build_all_args(self):
-        """Build full args namespace for constructing GNN_HAPPO_Policy."""
-        # Use auto-detected gnn_type (from model keys) if available
-        gnn_type = getattr(self, 'detected_gnn_type', self.args.gnn_type)
+        """Build full args namespace for constructing MAPPO_Policy."""
         parser = get_config()
-        parser.add_argument('--gnn_type', type=str, default=gnn_type)
-        parser.add_argument('--gnn_hidden_dim', type=int, default=self.args.gnn_hidden_dim)
-        parser.add_argument('--gnn_num_layers', type=int, default=self.args.gnn_num_layers)
-        parser.add_argument('--num_attention_heads', type=int,
-                            default=self.args.num_attention_heads)
-        parser.add_argument('--gnn_dropout', type=float, default=self.args.gnn_dropout)
-        parser.add_argument('--use_residual',
-                            type=lambda x: x.lower() == 'true',
-                            default=self.args.use_residual)
-        parser.add_argument('--critic_pooling', type=str, default=self.args.critic_pooling)
-        parser.add_argument('--single_agent_obs_dim', type=int,
-                            default=self.single_agent_obs_dim)
         parser.set_defaults(
             env_name='MultiDC',
             scenario_name='inventory_2echelon',
             num_agents=self.n_agents,
             use_centralized_V=True,
-            algorithm_name='gnn_happo',
+            algorithm_name='mappo',
             hidden_size=128,
             layer_N=2,
             use_ReLU=True,
@@ -258,46 +195,41 @@ class GNNModelEvaluator:
             gain=0.01,
             recurrent_N=2,
             use_naive_recurrent_policy=True,
-            single_agent_obs_dim=self.single_agent_obs_dim,
         )
         return parser.parse_known_args([])[0]
 
     def _load_models(self):
-        """Load GNN actor weights for all agents."""
-        print('Loading GNN models...')
+        """Load MAPPO actor weights for all agents."""
+        print('Loading MAPPO models...')
         model_dir = Path(self.args.model_dir)
         if not model_dir.exists():
             raise FileNotFoundError(f'Model directory not found: {model_dir}')
 
         all_args = self._build_all_args()
 
-        # Observation space padded to single_agent_obs_dim (what GNN was trained with)
-        from gymnasium import spaces as gym_spaces
-        padded_obs_space = gym_spaces.Box(
-            low=-np.inf, high=np.inf,
-            shape=(self.single_agent_obs_dim,), dtype=np.float32
-        )
-
         policies = []
         for agent_id in range(self.n_agents):
+            obs_space = self.env.observation_space[agent_id]
+            # Use detected obs dim (handles mismatch)
+            if self.obs_dims[agent_id] != obs_space.shape[0]:
+                from gymnasium import spaces as gym_spaces
+                obs_space = gym_spaces.Box(
+                    low=-np.inf, high=np.inf,
+                    shape=(self.obs_dims[agent_id],), dtype=np.float32
+                )
             share_obs_space = self.env.share_observation_space[agent_id]
             act_space = self.env.action_space[agent_id]
 
-            # Find best checkpoint for this agent
             best_file = self._find_best_model(model_dir, agent_id)
 
-            # Build GNN policy
-            policy = GNN_HAPPO_Policy(
+            policy = MAPPO_Policy(
                 all_args,
-                padded_obs_space,
+                obs_space,
                 share_obs_space,
                 act_space,
-                n_agents=self.n_agents,
-                agent_id=agent_id,
                 device=self.device,
             )
 
-            # Load actor weights
             state_dict = torch.load(str(best_file), map_location=self.device)
             policy.actor.load_state_dict(state_dict)
             policy.actor.eval()
@@ -305,7 +237,7 @@ class GNNModelEvaluator:
             policies.append(policy)
             print(f'  [OK] Agent {agent_id:2d} loaded  <- {best_file.name}')
 
-        print(f'\n[OK] All {self.n_agents} GNN agent models loaded successfully!\n')
+        print(f'\n[OK] All {self.n_agents} MAPPO agent models loaded successfully!\n')
         return policies
 
     def _find_best_model(self, model_dir: Path, agent_id: int) -> Path:
@@ -352,7 +284,7 @@ class GNNModelEvaluator:
         # ───────────────────────────────────────────────────────────────────
 
         print('=' * 70)
-        print(f'Starting GNN Evaluation: {self.args.num_episodes} episode(s)  [seed={seed}]')
+        print(f'Starting MAPPO Evaluation: {self.args.num_episodes} episode(s)  [seed={seed}]')
         print('=' * 70 + '\n')
 
         for ep in range(self.args.num_episodes):
@@ -367,17 +299,13 @@ class GNNModelEvaluator:
         print('\n[OK] Evaluation complete!\n')
 
     def _run_episode(self, episode_num: int, save_trajectory: bool = False) -> dict:
-        """Run one evaluation episode and return metrics."""
+        """Run one evaluation episode using a flat per-agent MAPPO actor."""
         obs, _ = self.env.reset()
-        max_obs_dim = self.single_agent_obs_dim
 
         # RNN states: [1, n_agents, recurrent_N, hidden_size]
-        rnn_states = np.zeros(
-            (1, self.n_agents, 2, 128), dtype=np.float32
-        )
+        rnn_states = np.zeros((1, self.n_agents, 2, 128), dtype=np.float32)
         masks = np.ones((1, self.n_agents, 1), dtype=np.float32)
 
-        # Metrics
         ep_data = {
             'total_reward': 0.0,
             'total_cost': 0.0,
@@ -392,30 +320,31 @@ class GNNModelEvaluator:
             # An order = one (retailer, sku) demand event per step.
             # Fulfilled from on-hand = demand fully covered without adding any backlog.
             'service_level': [0.0] * self.n_agents,
-            '_orders_placed':     [0] * self.n_agents,  # total demand events (count)
-            '_orders_from_stock': [0] * self.n_agents,  # demand events fully met from on-hand
+            '_orders_placed':     [0] * self.n_agents,
+            '_orders_from_stock': [0] * self.n_agents,
             # DC Cycle SL: (orders_received - orders_with_backlog) / orders_received
-            'dc_cycle_service_level': {},   # {dc_id: float}
+            'dc_cycle_service_level': {},
             'final_inventory': None,
             'final_backlog': None,
+            # Trajectory: step-level retail demand & orders per SKU (aggregated)
+            'traj_demand': [np.zeros(self.n_skus) for _ in range(self.args.episode_length)],
+            'traj_orders': [np.zeros(self.n_skus) for _ in range(self.args.episode_length)],
         }
 
         if save_trajectory:
             traj = {
-                'inventory': [[] for _ in range(self.n_agents)],           # total inventory per agent
-                'inventory_skus': [[] for _ in range(self.n_agents)],      # per-SKU inventory per agent
-                'backlog': [[] for _ in range(self.n_agents)],
-                'actions': [[] for _ in range(self.n_agents)],
-                'rewards': [[] for _ in range(self.n_agents)],
-                'demand': [[] for _ in range(self.n_agents)],
-                # Normalized (same scales as env obs): demand, inventory, order qty for retailers
-                'norm_demand': [[] for _ in range(self.n_agents)],
-                'norm_inventory': [[] for _ in range(self.n_agents)],
-                'norm_order': [[] for _ in range(self.n_agents)],
-                # SL: order-count fill rate (0/1 per SKU per step)
-                'orders_placed': [[] for _ in range(self.n_agents)],
+                'inventory':         [[] for _ in range(self.n_agents)],
+                'inventory_skus':    [[] for _ in range(self.n_agents)],
+                'backlog':           [[] for _ in range(self.n_agents)],
+                'actions':           [[] for _ in range(self.n_agents)],
+                'rewards':           [[] for _ in range(self.n_agents)],
+                'demand':            [[] for _ in range(self.n_agents)],
+                'norm_demand':       [[] for _ in range(self.n_agents)],
+                'norm_inventory':    [[] for _ in range(self.n_agents)],
+                'norm_order':        [[] for _ in range(self.n_agents)],
+                'orders_placed':     [[] for _ in range(self.n_agents)],
                 'orders_from_stock': [[] for _ in range(self.n_agents)],
-                'norm_scales': None,  # set once from env (demand_cap, inv_scale, order range)
+                'norm_scales': None,
             }
 
         for step in range(self.args.episode_length):
@@ -424,26 +353,28 @@ class GNNModelEvaluator:
             _pre_env_list = getattr(self.env, 'env_list', getattr(self.env, 'envs', None))
             pre_step_prices = _pre_env_list[0].market_prices.copy() if _pre_env_list else None
 
-            # Build padded structured obs: [1, n_agents, max_obs_dim]
-            obs_structured = np.zeros(
-                (1, self.n_agents, max_obs_dim), dtype=np.float32
-            )
-            for aid in range(self.n_agents):
-                raw = np.stack(obs[:, aid])  # [1, obs_dim_i]
-                d = raw.shape[1]
-                obs_structured[0, aid, :d] = raw[0]
-
             actions_env = []
             raw_actions = {}
+
             for agent_id in range(self.n_agents):
+                # Build per-agent flat obs and pad if model was trained with larger dim
+                obs_agent = np.stack(obs[:, agent_id])          # [1, obs_dim_i]
+                policy_input_dim = self.obs_dims[agent_id]
+                current_obs_dim  = obs_agent.shape[1]
+                if current_obs_dim < policy_input_dim:
+                    padding = np.zeros(
+                        (obs_agent.shape[0], policy_input_dim - current_obs_dim),
+                        dtype=np.float32,
+                    )
+                    obs_agent = np.concatenate([obs_agent, padding], axis=1)
+
                 with torch.no_grad():
                     action, rnn_state = self.policies[agent_id].act(
-                        obs_structured,           # [1, n_agents, max_obs_dim]
-                        self.adj_tensor,
-                        agent_id,
-                        rnn_states[:, agent_id],  # [1, recurrent_N, hidden]
-                        masks[:, agent_id],        # [1, 1]
-                        deterministic=False,  # Sample from distribution → step-varying actions
+                        obs_agent,
+                        rnn_states[:, agent_id],    # [1, recurrent_N, hidden]
+                        masks[:, agent_id],          # [1, 1]
+                        deterministic=True,
+                        agent_id=agent_id,
                     )
 
                 rnn_states[:, agent_id] = (
@@ -458,30 +389,6 @@ class GNNModelEvaluator:
                 )
                 raw_action = action_np[0]
 
-                # ── Heuristic disabled: let the DRL policy decide ────────────
-                # The inventory-conditioned rescaling below is commented out.
-                # With the new obs-dependent DiagGaussian (Method 2), the retrained
-                # policy learns its own mean and std per observation — no heuristic
-                # override is needed. Re-enable only for ablation comparison.
-                #
-                # RETAILER_TARGET_INV = 20.0
-                # DC_TARGET_INV       = 500.0
-                # current_obs = obs_structured[0, agent_id]
-                # if agent_id < 2:
-                #     inv_indices     = [0, 9, 18]
-                #     inv_norm_factor = 1000.0
-                #     target_inv      = DC_TARGET_INV
-                # else:
-                #     inv_indices     = [0, 7, 14]
-                #     inv_norm_factor = 150.0
-                #     target_inv      = RETAILER_TARGET_INV
-                # inventory_weight = np.zeros(self.n_skus, dtype=np.float32)
-                # for sku_idx, obs_idx in enumerate(inv_indices):
-                #     actual_inv = float(current_obs[obs_idx]) * inv_norm_factor
-                #     inventory_weight[sku_idx] = max(0.0, 1.0 - actual_inv / target_inv)
-                # raw_action = raw_action * inventory_weight
-                # ─────────────────────────────────────────────────────────────
-
                 # ── DC IP-sufficiency guard (inference-time) ──────────────────
                 # The trained policy learned to order every step because the old
                 # PBRS heuristic always recommended a large qty (using max lead
@@ -489,10 +396,10 @@ class GNNModelEvaluator:
                 # policy for DC agents when inventory position already covers the
                 # heuristic order-up-to level — the DC simply does not need to
                 # order and ordering only adds holding cost.
-                if agent_id < self.n_dcs and _pre_env_list:
+                if agent_id < 2 and _pre_env_list:
                     _env = _pre_env_list[0]
                     _z     = 1.4   # same safety factor as heuristic
-                    _lt    = 7  # conservative bound
+                    _lt    = 7     # conservative bound
                     _n_ret = len(_env.dc_assignments[agent_id])
                     _zero_action = True
                     for _sku in range(self.n_skus):
@@ -542,10 +449,10 @@ class GNNModelEvaluator:
 
                     # Cost breakdown
                     h_cost = b_cost = o_cost = 0.0
-                    is_dc = agent_id < env_state.n_dcs
+                    is_dc = agent_id < 2
                     if is_dc:
                         dc_idx = agent_id
-                        for sku in range(3):
+                        for sku in range(self.n_skus):
                             h_cost += (env_state.inventory[agent_id][sku]
                                        * env_state.H_dc[dc_idx][sku])
                             # DC's flat backlog[dc_id] is always 0 after per-retailer migration;
@@ -557,33 +464,44 @@ class GNNModelEvaluator:
                             b_cost += dc_owed_sku * env_state.B_dc[dc_idx][sku]
                             if executed_actions[agent_id][sku] > 0:
                                 # Use PRE-STEP price (matches _calculate_rewards inside step())
-                                price = pre_step_prices[sku] if pre_step_prices is not None else env_state.market_prices[sku]
+                                price = (pre_step_prices[sku]
+                                         if pre_step_prices is not None
+                                         else env_state.market_prices[sku])
                                 o_cost += (env_state.C_fixed_dc[dc_idx][sku]
                                            + price * executed_actions[agent_id][sku])
                     else:
-                        r_idx = agent_id - env_state.n_dcs
+                        r_idx = agent_id - 2
                         assigned_dc = env_state.retailer_to_dc[agent_id]
-                        for sku in range(3):
+                        for sku in range(self.n_skus):
                             h_cost += (env_state.inventory[agent_id][sku]
                                        * env_state.H_retailer[r_idx][sku])
                             b_cost += (env_state.backlog[agent_id][sku]
                                        * env_state.B_retailer[r_idx][sku])
                             # Retailers use action[0:3] from their ASSIGNED DC only.
-                            # action[3:6] is UNUSED (always zero — uniform 6D action space).
                             order_qty = executed_actions[agent_id][sku]
                             if order_qty > 0:
                                 o_cost += (env_state.C_fixed_retailer[r_idx][sku]
-                                           + env_state.C_var_retailer[r_idx][assigned_dc][sku] * order_qty)
+                                           + env_state.C_var_retailer[r_idx][assigned_dc][sku]
+                                           * order_qty)
 
                         # --- Retailer Order-Count Fill Rate ---
                         # An order = one (retailer, sku) demand event per step.
                         # Fulfilled from on-hand: demand[sku] covered WITHOUT shortage (no backlog added).
-                        # Read directly from env step_orders_placed / step_orders_from_stock.
-                        for sku in range(3):
+                        for sku in range(self.n_skus):
                             placed = env_state.step_orders_placed.get(agent_id, {}).get(sku, 0)
                             from_stock = env_state.step_orders_from_stock.get(agent_id, {}).get(sku, 0)
                             ep_data['_orders_placed'][agent_id]     += placed
                             ep_data['_orders_from_stock'][agent_id] += from_stock
+
+                            # Trajectory aggregation (Retail Demand vs Orders)
+                            actual_demand = 0.0
+                            if (sku < len(env_state.demand_history) and
+                                    r_idx < len(env_state.demand_history[sku]) and
+                                    len(env_state.demand_history[sku][r_idx]) > 0):
+                                actual_demand = float(env_state.demand_history[sku][r_idx][-1])
+
+                            ep_data['traj_demand'][step][sku] += actual_demand
+                            ep_data['traj_orders'][step][sku] += float(executed_actions[agent_id][sku])
 
                     ep_data['holding_costs'][agent_id] += h_cost
                     ep_data['backlog_costs'][agent_id] += b_cost
@@ -591,7 +509,7 @@ class GNNModelEvaluator:
 
                     inv_vec = env_state.inventory[agent_id]
                     inv = inv_vec.sum()
-                    
+
                     if is_dc:
                         # DC: aggregate per-retailer backlog
                         bl = sum(
@@ -600,7 +518,7 @@ class GNNModelEvaluator:
                         )
                     else:
                         bl = env_state.backlog[agent_id].sum()
-                        
+
                     ep_data['avg_inventory'][agent_id] += inv
                     ep_data['avg_backlog'][agent_id] += bl
 
@@ -611,8 +529,10 @@ class GNNModelEvaluator:
                         )
                         traj['backlog'][agent_id].append(float(bl))
                         traj['rewards'][agent_id].append(reward)
-                        traj['actions'][agent_id].append(executed_actions[agent_id].copy())
-                        if agent_id < env_state.n_dcs:
+                        traj['actions'][agent_id].append(
+                            np.array(executed_actions[agent_id], dtype=float).copy()
+                        )
+                        if agent_id < 2:
                             # DC: actual demand is the sum of orders placed by its assigned retailers
                             demand_vec = np.zeros(self.n_skus, dtype=float)
                             for r_id in env_state.dc_assignments[agent_id]:
@@ -627,49 +547,48 @@ class GNNModelEvaluator:
                             )
                         traj['demand'][agent_id].append(demand_vec.copy())
 
-                        # Normalized demand, inventory, order (same scales as env obs; retailers only)
-                        # Demand: cap = mean + 3*std per SKU (from _get_retailer_observation)
-                        # Inventory: retailer own inv / 150.0
-                        # Order: (qty - 20) / 50 for retailer [20, 70] -> [0, 1]
-                        if agent_id < env_state.n_dcs:
+                        # Normalized values (retailers only — same scales as env obs)
+                        if agent_id < 2:
                             traj['norm_demand'][agent_id].append(np.zeros(self.n_skus, dtype=float))
                             traj['norm_inventory'][agent_id].append(np.zeros(self.n_skus, dtype=float))
                             traj['norm_order'][agent_id].append(np.zeros(self.n_skus, dtype=float))
                         else:
                             dm = getattr(env_state, 'demand_mean', np.ones(self.n_skus) * 1.5)
-                            ds = getattr(env_state, 'demand_std', np.ones(self.n_skus) * 1.0)
+                            ds = getattr(env_state, 'demand_std',  np.ones(self.n_skus) * 1.0)
                             demand_cap = np.maximum(dm + 3.0 * ds, 1e-6)
-                            norm_d = (demand_vec / demand_cap).astype(float)
+                            norm_d   = (demand_vec / demand_cap).astype(float)
                             norm_inv = (np.array(inv_vec, dtype=float) / 150.0)
-                            act = executed_actions[agent_id]
-                            norm_ord = np.clip((np.array(act, dtype=float) - 20.0) / 50.0, 0.0, 1.0)
+                            act_clip = np.array(executed_actions[agent_id], dtype=float)
+                            norm_ord = np.clip(act_clip / 10.0, 0.0, 1.0)
                             traj['norm_demand'][agent_id].append(norm_d)
                             traj['norm_inventory'][agent_id].append(norm_inv)
                             traj['norm_order'][agent_id].append(norm_ord)
 
-                        op = [env_state.step_orders_placed.get(agent_id, {}).get(s, 0) for s in range(self.n_skus)]
-                        ofs = [env_state.step_orders_from_stock.get(agent_id, {}).get(s, 0) for s in range(self.n_skus)]
-                        traj['orders_placed'][agent_id].append(np.array(op, dtype=float))
-                        traj['orders_from_stock'][agent_id].append(np.array(ofs, dtype=float))
+                        op_vec  = np.array([env_state.step_orders_placed.get(agent_id, {}).get(s, 0)
+                                            for s in range(self.n_skus)], dtype=float)
+                        ofs_vec = np.array([env_state.step_orders_from_stock.get(agent_id, {}).get(s, 0)
+                                            for s in range(self.n_skus)], dtype=float)
+                        traj['orders_placed'][agent_id].append(op_vec)
+                        traj['orders_from_stock'][agent_id].append(ofs_vec)
 
                         # Store normalization scales once (from env; same as used in obs)
                         if traj['norm_scales'] is None and hasattr(env_state, 'demand_mean'):
-                            dm = np.array(env_state.demand_mean, dtype=float).flatten()
-                            ds = np.array(env_state.demand_std, dtype=float).flatten()
+                            dm2 = np.array(env_state.demand_mean, dtype=float).flatten()
+                            ds2 = np.array(env_state.demand_std,  dtype=float).flatten()
                             traj['norm_scales'] = {
-                                'demand_mean_0': float(dm[0]) if len(dm) > 0 else 0,
-                                'demand_mean_1': float(dm[1]) if len(dm) > 1 else 0,
-                                'demand_mean_2': float(dm[2]) if len(dm) > 2 else 0,
-                                'demand_std_0': float(ds[0]) if len(ds) > 0 else 0,
-                                'demand_std_1': float(ds[1]) if len(ds) > 1 else 0,
-                                'demand_std_2': float(ds[2]) if len(ds) > 2 else 0,
-                                'demand_cap_0': float(dm[0] + 3 * ds[0]) if len(dm) > 0 else 0,
-                                'demand_cap_1': float(dm[1] + 3 * ds[1]) if len(dm) > 1 else 0,
-                                'demand_cap_2': float(dm[2] + 3 * ds[2]) if len(dm) > 2 else 0,
-                                'inv_scale_retailer': 150.0,
+                                'demand_mean_0': float(dm2[0]) if len(dm2) > 0 else 0,
+                                'demand_mean_1': float(dm2[1]) if len(dm2) > 1 else 0,
+                                'demand_mean_2': float(dm2[2]) if len(dm2) > 2 else 0,
+                                'demand_std_0':  float(ds2[0]) if len(ds2) > 0 else 0,
+                                'demand_std_1':  float(ds2[1]) if len(ds2) > 1 else 0,
+                                'demand_std_2':  float(ds2[2]) if len(ds2) > 2 else 0,
+                                'demand_cap_0':  float(dm2[0] + 3 * ds2[0]) if len(dm2) > 0 else 0,
+                                'demand_cap_1':  float(dm2[1] + 3 * ds2[1]) if len(dm2) > 1 else 0,
+                                'demand_cap_2':  float(dm2[2] + 3 * ds2[2]) if len(dm2) > 2 else 0,
+                                'inv_scale_retailer':    150.0,
                                 'backlog_scale_retailer': 100.0,
-                                'order_min_retailer': 0,
-                                'order_max_retailer': 10.0,
+                                'order_min_retailer':    0,
+                                'order_max_retailer':    10.0,
                             }
 
                 if step == self.args.episode_length - 1:
@@ -693,8 +612,8 @@ class GNNModelEvaluator:
         T = self.args.episode_length
         for agent_id in range(self.n_agents):
             ep_data['avg_inventory'][agent_id] /= T
-            ep_data['avg_backlog'][agent_id] /= T
-            if agent_id >= self.n_dcs:
+            ep_data['avg_backlog'][agent_id]   /= T
+            if agent_id >= 2:
                 # Retailer: order-count Fill Rate
                 # = orders fully met from on-hand / total orders placed (as %)
                 placed     = ep_data['_orders_placed'][agent_id]
@@ -711,7 +630,7 @@ class GNNModelEvaluator:
             self.detailed_trajectory = traj
 
         return ep_data
-                
+
     # ------------------------------------------------------------------
     # Report generation
     # ------------------------------------------------------------------
@@ -752,14 +671,14 @@ class GNNModelEvaluator:
                     m['dc_cycle_service_level'].get(dc_id, 100.0)
                     for m in self.episode_metrics
                 ]))
-                for dc_id in range(self.n_dcs)
+                for dc_id in range(2)
             },
         }
 
         for aid in range(self.n_agents):
-            label = f'{"DC" if aid < self.n_dcs else "Retailer"}_{aid}'
+            label = f'{"DC" if aid < 2 else "Retailer"}_{aid}'
 
-            if aid >= self.n_dcs:
+            if aid >= 2:
                 # Retailer: pooled order-count fill rate across ALL episodes
                 # = total orders_from_stock / total orders_placed  (not average of per-ep %)
                 # Pooling is more accurate when episode SL variance is high.
@@ -791,10 +710,10 @@ class GNNModelEvaluator:
         # System-wide retailer fill rate (pooled across all retailer agents and episodes)
         total_placed_all     = sum(m['_orders_placed'][aid]
                                    for m in self.episode_metrics
-                                   for aid in range(self.n_dcs, self.n_agents))
+                                   for aid in range(2, self.n_agents))
         total_from_stock_all = sum(m['_orders_from_stock'][aid]
                                    for m in self.episode_metrics
-                                   for aid in range(self.n_dcs, self.n_agents))
+                                   for aid in range(2, self.n_agents))
         stats['system_retailer_fill_rate'] = (
             (total_from_stock_all / total_placed_all * 100.0)
             if total_placed_all > 0 else 100.0
@@ -840,7 +759,7 @@ class GNNModelEvaluator:
                 row = {
                     'step': step + 1,
                     'agent_id': aid,
-                    'agent': f'{"DC" if aid < self.n_dcs else "R"}_{aid}',
+                    'agent': f'{"DC" if aid < 2 else "R"}_{aid}',
                     'inv': inv,
                     'backlog': bl,
                     'reward': traj['rewards'][aid][step],
@@ -884,42 +803,39 @@ class GNNModelEvaluator:
         path = self.save_dir / 'evaluation_metrics.json'
         output = {
             'metadata': {
-                'model_dir': str(self.args.model_dir),
-                'algorithm': 'GNN-HAPPO',
-                'num_episodes': self.args.num_episodes,
-                'episode_length': self.args.episode_length,
-                'gnn_type': self.args.gnn_type,
-                'gnn_hidden_dim': self.args.gnn_hidden_dim,
-                'gnn_num_layers': self.args.gnn_num_layers,
-                'single_agent_obs_dim': self.single_agent_obs_dim,
+                'model_dir':       str(self.args.model_dir),
+                'algorithm':       'MAPPO',
+                'num_episodes':    self.args.num_episodes,
+                'episode_length':  self.args.episode_length,
                 'evaluation_date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             },
-            'statistics': stats,
+            'statistics':   stats,
             'episode_data': self.episode_metrics,
         }
         with open(path, 'w') as f:
             json.dump(output, f, indent=2, cls=NumpyEncoder)
         print(f'[OK] Saved metrics JSON: {path.name}')
 
-    RESULTS_CSV_NAME = 'results_gnn_happo.csv'
-
     def _save_metrics_csv(self):
         import csv
         # Primary output: standardised validation file
-        results_path = self.save_dir / self.RESULTS_CSV_NAME
+        results_path = self.save_dir / 'results_mappo_2x15.csv'
         # Also keep the generic name for backward compat
         compat_path  = self.save_dir / 'episode_metrics.csv'
         for path in (results_path, compat_path):
             with open(path, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['Episode_Index', 'Total_Cost', 'Fill_Rate', 'Lost_Sales', 'Avg_Inventory',
-                                 'Total_Holding_Cost', 'Total_Backlog_Cost', 'Total_Ordering_Cost'])
+                writer.writerow([
+                    'Episode_Index', 'Total_Cost', 'Fill_Rate', 'Lost_Sales',
+                    'Avg_Inventory', 'Total_Holding_Cost', 'Total_Backlog_Cost',
+                    'Total_Ordering_Cost',
+                ])
                 for ep_num, m in enumerate(self.episode_metrics):
                     # Fill_Rate: average of per-agent service_level (original method)
                     fill_rate = float(np.mean(m['service_level']))
                     # Lost_Sales: total unfulfilled demand units pooled across all retailer agents
-                    total_placed     = sum(m['_orders_placed'][aid]     for aid in range(self.n_dcs, self.n_agents))
-                    total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(self.n_dcs, self.n_agents))
+                    total_placed     = sum(m['_orders_placed'][aid]     for aid in range(2, self.n_agents))
+                    total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(2, self.n_agents))
                     lost_sales = total_placed - total_from_stock
                     avg_inventory = float(np.mean(m['avg_inventory']))
                     total_holding = float(np.sum(m['holding_costs']))
@@ -965,7 +881,7 @@ class GNNModelEvaluator:
                     label=f'{window}-Ep Moving Avg')
         ax.set_xlabel('Episode', fontsize=12)
         ax.set_ylabel('Total Reward', fontsize=12)
-        ax.set_title('GNN-HAPPO Performance Across Episodes',
+        ax.set_title('MAPPO Performance Across Episodes',
                      fontsize=14, fontweight='bold')
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -991,7 +907,7 @@ class GNNModelEvaluator:
                     fontsize=9, fontweight='bold')
         ax.set_ylabel('Avg Cost / Episode', fontsize=12)
         ax.set_xlabel('Agent', fontsize=12)
-        ax.set_title('GNN-HAPPO Cost Breakdown by Agent',
+        ax.set_title('MAPPO Cost Breakdown by Agent',
                      fontsize=14, fontweight='bold')
         ax.set_xticks(x)
         ax.set_xticklabels(agents, rotation=45, ha='right')
@@ -1019,7 +935,7 @@ class GNNModelEvaluator:
                     fontsize=9, fontweight='bold')
         ax.set_ylabel('Avg Cost / Episode', fontsize=12)
         ax.set_xlabel('Retailer Agent', fontsize=12)
-        ax.set_title('GNN-HAPPO Cost Breakdown by Retailer',
+        ax.set_title('MAPPO Cost Breakdown by Retailer',
                      fontsize=14, fontweight='bold')
         ax.set_xticks(x)
         ax.set_xticklabels(agents, rotation=45, ha='right')
@@ -1088,8 +1004,8 @@ class GNNModelEvaluator:
         fig, axes = plt.subplots(3, 1, figsize=(14, 10), sharex=True)
         for i, aid in enumerate(retailer_ids[:n_show]):
             label = f'R_{aid}'
-            # Per-SKU average for this retailer (or sum; here we use mean across SKUs for one line)
-            norm_d = np.array(traj['norm_demand'][aid], dtype=float)   # [T, n_skus]
+            # Per-SKU average for this retailer (mean across SKUs for one line)
+            norm_d = np.array(traj['norm_demand'][aid], dtype=float)
             norm_inv = np.array(traj['norm_inventory'][aid], dtype=float)
             norm_ord = np.array(traj['norm_order'][aid], dtype=float)
             axes[0].plot(days, norm_d.mean(axis=1), label=label, linewidth=1.2, alpha=0.85)
@@ -1100,7 +1016,7 @@ class GNNModelEvaluator:
             ['Normalized Demand (Ep 1, mean over SKUs)',
              'Normalized Inventory (Ep 1, mean over SKUs)',
              'Normalized Order Qty (Ep 1, mean over SKUs)'],
-            ['Demand / (mean+3*std)', 'Inventory / 150', 'Order: (qty-20)/50']
+            ['Demand / (mean+3*std)', 'Inventory / 150', 'Order: qty / 10']
         ):
             ax.set_title(title, fontsize=12, fontweight='bold')
             ax.set_ylabel(ylabel, fontsize=11)
@@ -1255,7 +1171,7 @@ class GNNModelEvaluator:
                    linewidth=2, label=f'Mean: {np.mean(rewards):.0f}')
         ax.set_xlabel('Total Episode Reward', fontsize=12)
         ax.set_ylabel('Frequency', fontsize=12)
-        ax.set_title('GNN-HAPPO Episode Reward Distribution',
+        ax.set_title('MAPPO Episode Reward Distribution',
                      fontsize=14, fontweight='bold')
         ax.legend()
         ax.grid(True, alpha=0.3)
@@ -1265,7 +1181,7 @@ class GNNModelEvaluator:
 
     def _print_summary(self, stats):
         print('\n' + '=' * 70)
-        print('GNN-HAPPO Evaluation Summary')
+        print('MAPPO Evaluation Summary')
         print('=' * 70)
         print(f"Episodes      : {stats['num_episodes']}")
         print(f"Episode length: {stats['episode_length']} days")
@@ -1301,7 +1217,7 @@ class GNNModelEvaluator:
 
 def main():
     args = parse_args()
-    evaluator = GNNModelEvaluator(args)
+    evaluator = MAPPOModelEvaluator(args)
     evaluator.evaluate()
     evaluator.generate_report()
 

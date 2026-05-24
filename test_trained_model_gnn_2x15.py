@@ -1,18 +1,18 @@
 #!/usr/bin/env python
 """
-Test/Evaluation Script for Trained MAPPO Models
-================================================
+Test/Evaluation Script for Trained GNN-HAPPO Models
+=====================================================
 
-This script evaluates a trained MAPPO model on the multi-DC inventory
-environment.  MAPPO uses a standard MLP actor (decentralised execution)
-with a centralized critic — no GNN or graph structure is required.
+This script evaluates a trained GNN-HAPPO model on the multi-DC inventory
+environment. It is DEDICATED to GNN models only — use test_trained_model.py
+for the baseline (standard MLP-HAPPO) models.
 
 Usage:
-    python test_trained_model_mappo.py \
-        --model_dir results/24Apr_MAPPO/run_seed_1/models \
-        --episode_length 90 \
-        --num_episodes 10 \
-        --experiment_name "eval_mappo"
+    python test_trained_model_gnn.py \
+        --model_dir results/5Mar_1_gnn/run_seed_1/models \
+        --episode_length 365 \
+        --num_episodes 5 \
+        --experiment_name "eval_gnn_365"
 """
 
 import sys
@@ -30,7 +30,8 @@ import pandas as pd
 
 from config import get_config
 from envs.env_wrappers import DummyVecEnvMultiDC
-from algorithms.mappo_policy import MAPPO_Policy
+from algorithms.gnn_happo_policy import GNN_HAPPO_Policy
+from utils.graph_utils import build_supply_chain_adjacency, normalize_adjacency
 
 
 # ---------------------------------------------------------------------------
@@ -50,16 +51,19 @@ class NumpyEncoder(json.JSONEncoder):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Evaluate Trained MAPPO Model')
+    parser = argparse.ArgumentParser(description='Evaluate Trained GNN-HAPPO Model')
 
     # Required
     parser.add_argument('--model_dir', type=str, required=True,
                         help='Path to saved model directory (e.g., results/.../models)')
+    parser.add_argument('--config_path', type=str,
+                        default='configs/multi_sku_config.yaml',
+                        help='Path to environment config file (unused but kept for compatibility)')
 
     # Episode settings
-    parser.add_argument('--num_episodes', type=int, default=10,
-                        help='Number of evaluation episodes (default: 10)')
-    parser.add_argument('--episode_length', type=int, default=120,
+    parser.add_argument('--num_episodes', type=int, default=5,
+                        help='Number of evaluation episodes (default: 100 for validation)')
+    parser.add_argument('--episode_length', type=int, default=90,
                         help='Length of each episode in days')
     parser.add_argument('--seed', type=int, default=42,
                         help='Random seed for reproducibility (default: 42)')
@@ -67,22 +71,36 @@ def parse_args():
     # Output
     parser.add_argument('--save_dir', type=str, default='evaluation_results',
                         help='Directory to save evaluation results')
-    parser.add_argument('--experiment_name', type=str, default=None,
+    parser.add_argument('--experiment_name', type=str, default="eval_gnn",
                         help='Name for this evaluation run (default: timestamp)')
 
     # Hardware
     parser.add_argument('--cuda', action='store_true', default=False,
                         help='Use CUDA if available')
 
+    # GNN architecture (must match training config)
+    parser.add_argument('--gnn_type', type=str, default='GAT',
+                        help='GNN type used during training (GAT, GCN, ...)')
+    parser.add_argument('--gnn_hidden_dim', type=int, default=128,
+                        help='GNN hidden dimension used during training')
+    parser.add_argument('--gnn_num_layers', type=int, default=2,
+                        help='Number of GNN layers used during training')
+    parser.add_argument('--num_attention_heads', type=int, default=4,
+                        help='Number of attention heads (for GAT)')
+    parser.add_argument('--gnn_dropout', type=float, default=0.1)
+    parser.add_argument('--use_residual', type=lambda x: x.lower() == 'true',
+                        default=True)
+    parser.add_argument('--critic_pooling', type=str, default='mean')
+
     return parser.parse_args()
 
 
 # ---------------------------------------------------------------------------
-# MAPPO Evaluator
+# GNN Evaluator
 # ---------------------------------------------------------------------------
 
-class MAPPOModelEvaluator:
-    """Evaluates trained MAPPO models on the multi-DC inventory environment."""
+class GNNModelEvaluator:
+    """Evaluates trained GNN-HAPPO models on the multi-DC inventory environment."""
 
     def __init__(self, args):
         self.args = args
@@ -92,7 +110,7 @@ class MAPPOModelEvaluator:
 
         # Output directory
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        exp_name = args.experiment_name if args.experiment_name else f'eval_mappo_{timestamp}'
+        exp_name = args.experiment_name if args.experiment_name else f'eval_gnn_{timestamp}'
         self.save_dir = Path(args.save_dir) / exp_name
         self.save_dir.mkdir(parents=True, exist_ok=True)
 
@@ -101,7 +119,7 @@ class MAPPOModelEvaluator:
         # 1. Create environment
         self.env = self._create_env()
 
-        # Infer number of SKUs from underlying MultiDC env
+        # Infer number of SKUs from underlying MultiDC env (for logging demand etc.)
         base_env_list = getattr(self.env, 'env_list', getattr(self.env, 'envs', None))
         if base_env_list:
             base_env = base_env_list[0]
@@ -109,13 +127,16 @@ class MAPPOModelEvaluator:
         else:
             self.n_skus = 3
 
-        # 2. Detect per-agent obs dims from saved model weights
-        self.obs_dims = self._detect_obs_dims()
+        # 2. Build graph adjacency
+        self.adj_tensor = self._build_graph()
 
-        # 3. Load MAPPO policies
+        # 3. Detect obs dim AND gnn_type from saved model
+        self.single_agent_obs_dim = self._detect_model_config()
+
+        # 4. Load GNN policies
         self.policies = self._load_models()
 
-        # 4. Storage
+        # 5. Storage
         self.episode_metrics = []
         self.detailed_trajectory = None
 
@@ -125,7 +146,7 @@ class MAPPOModelEvaluator:
 
     def _print_header(self):
         print('=' * 70)
-        print('MAPPO Model Evaluation')
+        print('GNN-HAPPO Model Evaluation')
         print('=' * 70)
         print(f'Model directory : {self.args.model_dir}')
         print(f'Num episodes    : {self.args.num_episodes}')
@@ -143,42 +164,93 @@ class MAPPOModelEvaluator:
             episode_length=self.args.episode_length,
             n_eval_rollout_threads=1,
             use_centralized_V=True,
-            algorithm_name='mappo',
+            algorithm_name='gnn_happo',
         )
         all_args = parser.parse_known_args([])[0]
         env = DummyVecEnvMultiDC(all_args)
 
         self.n_agents = env.num_agent if hasattr(env, 'num_agent') else 17
+        self.n_dcs = env.n_dcs if hasattr(env, 'n_dcs') else 2
         print(f'[OK] Environment created')
-        print(f'     Agents         : {self.n_agents} (2 DCs + {self.n_agents - 2} Retailers)')
+        print(f'     Agents         : {self.n_agents} ({self.n_dcs} DCs + {self.n_agents - self.n_dcs} Retailers)')
         obs_dims = [env.observation_space[i].shape[0] for i in range(self.n_agents)]
         print(f'     Obs dims       : DC={obs_dims[0]}D, Retailer={obs_dims[2]}D')
         print(f'     Action dim     : {env.action_space[0].shape[0]}D\n')
         return env
 
-    def _detect_obs_dims(self):
-        """Detect per-agent obs dims from env. Auto-adjusts if saved model has different dim."""
-        dims = [self.env.observation_space[i].shape[0] for i in range(self.n_agents)]
-        # Try to detect from agent-0 weights (handles train/eval obs dim mismatch)
+    def _build_graph(self):
+        print('Building supply chain graph...')
+        adj = build_supply_chain_adjacency(
+            n_dcs=self.n_dcs, n_retailers=self.n_agents - self.n_dcs, self_loops=True
+        )
+        adj = normalize_adjacency(adj, method='symmetric')
+        adj_tensor = torch.FloatTensor(adj).to(self.device)
+        print(f'[OK] Graph: {adj.shape[0]} nodes, {int((adj > 0).sum())} edges\n')
+        return adj_tensor
+
+    def _detect_model_config(self):
+        """Read obs dim AND gnn_type from agent-0 saved model state dict."""
         model_dir = Path(self.args.model_dir)
         agent0_files = sorted(model_dir.glob('actor_agent0*.pt'))
-        if agent0_files:
-            sd = torch.load(str(agent0_files[0]), map_location='cpu')
-            if 'base.mlp.fc1.0.weight' in sd:
-                saved_dim = sd['base.mlp.fc1.0.weight'].shape[1]
-                print(f'[Auto] Detected MLP obs dim : {saved_dim}D')
-                dims = [saved_dim] * self.n_agents
-        return dims
+        if not agent0_files:
+            raise FileNotFoundError(f'No actor_agent0 .pt file found in {model_dir}')
+
+        sd = torch.load(str(agent0_files[0]), map_location='cpu')
+        keys = list(sd.keys())
+
+        # --- Detect GNN type ---
+        # GCN layers store: gnn_base.layers.N.weight  /  .bias
+        # GAT layers store: gnn_base.layers.N.W  /  .a
+        if any('gnn_base.layers.0.weight' in k for k in keys):
+            detected_gnn_type = 'GCN'
+        elif any('gnn_base.layers.0.W' in k for k in keys):
+            detected_gnn_type = 'GAT'
+        else:
+            detected_gnn_type = self.args.gnn_type  # fallback to user arg
+
+        # --- Detect obs dim ---
+        gcn_key = 'gnn_base.layers.0.weight'
+        gat_key = 'gnn_base.layers.0.W'
+        if gcn_key in sd:
+            obs_dim = sd[gcn_key].shape[0]  # GCN weight: [in_features, out_features]
+        elif gat_key in sd:
+            obs_dim = sd[gat_key].shape[1]  # GAT W: [num_heads, in_features, head_dim]
+        else:
+            obs_dim = max(
+                self.env.observation_space[i].shape[0] for i in range(self.n_agents)
+            )
+
+        print(f'[Auto] Detected GNN type     : {detected_gnn_type}')
+        print(f'[Auto] Detected obs dim      : {obs_dim}D')
+        if detected_gnn_type != self.args.gnn_type:
+            print(f'       (overrides --gnn_type {self.args.gnn_type})')
+
+        self.detected_gnn_type = detected_gnn_type
+        return obs_dim
 
     def _build_all_args(self):
-        """Build full args namespace for constructing MAPPO_Policy."""
+        """Build full args namespace for constructing GNN_HAPPO_Policy."""
+        # Use auto-detected gnn_type (from model keys) if available
+        gnn_type = getattr(self, 'detected_gnn_type', self.args.gnn_type)
         parser = get_config()
+        parser.add_argument('--gnn_type', type=str, default=gnn_type)
+        parser.add_argument('--gnn_hidden_dim', type=int, default=self.args.gnn_hidden_dim)
+        parser.add_argument('--gnn_num_layers', type=int, default=self.args.gnn_num_layers)
+        parser.add_argument('--num_attention_heads', type=int,
+                            default=self.args.num_attention_heads)
+        parser.add_argument('--gnn_dropout', type=float, default=self.args.gnn_dropout)
+        parser.add_argument('--use_residual',
+                            type=lambda x: x.lower() == 'true',
+                            default=self.args.use_residual)
+        parser.add_argument('--critic_pooling', type=str, default=self.args.critic_pooling)
+        parser.add_argument('--single_agent_obs_dim', type=int,
+                            default=self.single_agent_obs_dim)
         parser.set_defaults(
             env_name='MultiDC',
             scenario_name='inventory_2echelon',
             num_agents=self.n_agents,
             use_centralized_V=True,
-            algorithm_name='mappo',
+            algorithm_name='gnn_happo',
             hidden_size=128,
             layer_N=2,
             use_ReLU=True,
@@ -186,41 +258,46 @@ class MAPPOModelEvaluator:
             gain=0.01,
             recurrent_N=2,
             use_naive_recurrent_policy=True,
+            single_agent_obs_dim=self.single_agent_obs_dim,
         )
         return parser.parse_known_args([])[0]
 
     def _load_models(self):
-        """Load MAPPO actor weights for all agents."""
-        print('Loading MAPPO models...')
+        """Load GNN actor weights for all agents."""
+        print('Loading GNN models...')
         model_dir = Path(self.args.model_dir)
         if not model_dir.exists():
             raise FileNotFoundError(f'Model directory not found: {model_dir}')
 
         all_args = self._build_all_args()
 
+        # Observation space padded to single_agent_obs_dim (what GNN was trained with)
+        from gymnasium import spaces as gym_spaces
+        padded_obs_space = gym_spaces.Box(
+            low=-np.inf, high=np.inf,
+            shape=(self.single_agent_obs_dim,), dtype=np.float32
+        )
+
         policies = []
         for agent_id in range(self.n_agents):
-            obs_space = self.env.observation_space[agent_id]
-            # Use detected obs dim (handles mismatch)
-            if self.obs_dims[agent_id] != obs_space.shape[0]:
-                from gymnasium import spaces as gym_spaces
-                obs_space = gym_spaces.Box(
-                    low=-np.inf, high=np.inf,
-                    shape=(self.obs_dims[agent_id],), dtype=np.float32
-                )
             share_obs_space = self.env.share_observation_space[agent_id]
             act_space = self.env.action_space[agent_id]
 
+            # Find best checkpoint for this agent
             best_file = self._find_best_model(model_dir, agent_id)
 
-            policy = MAPPO_Policy(
+            # Build GNN policy
+            policy = GNN_HAPPO_Policy(
                 all_args,
-                obs_space,
+                padded_obs_space,
                 share_obs_space,
                 act_space,
+                n_agents=self.n_agents,
+                agent_id=agent_id,
                 device=self.device,
             )
 
+            # Load actor weights
             state_dict = torch.load(str(best_file), map_location=self.device)
             policy.actor.load_state_dict(state_dict)
             policy.actor.eval()
@@ -228,7 +305,7 @@ class MAPPOModelEvaluator:
             policies.append(policy)
             print(f'  [OK] Agent {agent_id:2d} loaded  <- {best_file.name}')
 
-        print(f'\n[OK] All {self.n_agents} MAPPO agent models loaded successfully!\n')
+        print(f'\n[OK] All {self.n_agents} GNN agent models loaded successfully!\n')
         return policies
 
     def _find_best_model(self, model_dir: Path, agent_id: int) -> Path:
@@ -412,7 +489,7 @@ class MAPPOModelEvaluator:
                 # policy for DC agents when inventory position already covers the
                 # heuristic order-up-to level — the DC simply does not need to
                 # order and ordering only adds holding cost.
-                if agent_id < 2 and _pre_env_list:
+                if agent_id < self.n_dcs and _pre_env_list:
                     _env = _pre_env_list[0]
                     _z     = 1.4   # same safety factor as heuristic
                     _lt    = 7  # conservative bound
@@ -465,7 +542,7 @@ class MAPPOModelEvaluator:
 
                     # Cost breakdown
                     h_cost = b_cost = o_cost = 0.0
-                    is_dc = agent_id < 2
+                    is_dc = agent_id < env_state.n_dcs
                     if is_dc:
                         dc_idx = agent_id
                         for sku in range(3):
@@ -484,7 +561,7 @@ class MAPPOModelEvaluator:
                                 o_cost += (env_state.C_fixed_dc[dc_idx][sku]
                                            + price * executed_actions[agent_id][sku])
                     else:
-                        r_idx = agent_id - 2
+                        r_idx = agent_id - env_state.n_dcs
                         assigned_dc = env_state.retailer_to_dc[agent_id]
                         for sku in range(3):
                             h_cost += (env_state.inventory[agent_id][sku]
@@ -535,7 +612,7 @@ class MAPPOModelEvaluator:
                         traj['backlog'][agent_id].append(float(bl))
                         traj['rewards'][agent_id].append(reward)
                         traj['actions'][agent_id].append(executed_actions[agent_id].copy())
-                        if agent_id < 2:
+                        if agent_id < env_state.n_dcs:
                             # DC: actual demand is the sum of orders placed by its assigned retailers
                             demand_vec = np.zeros(self.n_skus, dtype=float)
                             for r_id in env_state.dc_assignments[agent_id]:
@@ -554,7 +631,7 @@ class MAPPOModelEvaluator:
                         # Demand: cap = mean + 3*std per SKU (from _get_retailer_observation)
                         # Inventory: retailer own inv / 150.0
                         # Order: (qty - 20) / 50 for retailer [20, 70] -> [0, 1]
-                        if agent_id < 2:
+                        if agent_id < env_state.n_dcs:
                             traj['norm_demand'][agent_id].append(np.zeros(self.n_skus, dtype=float))
                             traj['norm_inventory'][agent_id].append(np.zeros(self.n_skus, dtype=float))
                             traj['norm_order'][agent_id].append(np.zeros(self.n_skus, dtype=float))
@@ -617,7 +694,7 @@ class MAPPOModelEvaluator:
         for agent_id in range(self.n_agents):
             ep_data['avg_inventory'][agent_id] /= T
             ep_data['avg_backlog'][agent_id] /= T
-            if agent_id >= 2:
+            if agent_id >= self.n_dcs:
                 # Retailer: order-count Fill Rate
                 # = orders fully met from on-hand / total orders placed (as %)
                 placed     = ep_data['_orders_placed'][agent_id]
@@ -675,14 +752,14 @@ class MAPPOModelEvaluator:
                     m['dc_cycle_service_level'].get(dc_id, 100.0)
                     for m in self.episode_metrics
                 ]))
-                for dc_id in range(2)
+                for dc_id in range(self.n_dcs)
             },
         }
 
         for aid in range(self.n_agents):
-            label = f'{"DC" if aid < 2 else "Retailer"}_{aid}'
+            label = f'{"DC" if aid < self.n_dcs else "Retailer"}_{aid}'
 
-            if aid >= 2:
+            if aid >= self.n_dcs:
                 # Retailer: pooled order-count fill rate across ALL episodes
                 # = total orders_from_stock / total orders_placed  (not average of per-ep %)
                 # Pooling is more accurate when episode SL variance is high.
@@ -714,10 +791,10 @@ class MAPPOModelEvaluator:
         # System-wide retailer fill rate (pooled across all retailer agents and episodes)
         total_placed_all     = sum(m['_orders_placed'][aid]
                                    for m in self.episode_metrics
-                                   for aid in range(2, self.n_agents))
+                                   for aid in range(self.n_dcs, self.n_agents))
         total_from_stock_all = sum(m['_orders_from_stock'][aid]
                                    for m in self.episode_metrics
-                                   for aid in range(2, self.n_agents))
+                                   for aid in range(self.n_dcs, self.n_agents))
         stats['system_retailer_fill_rate'] = (
             (total_from_stock_all / total_placed_all * 100.0)
             if total_placed_all > 0 else 100.0
@@ -763,7 +840,7 @@ class MAPPOModelEvaluator:
                 row = {
                     'step': step + 1,
                     'agent_id': aid,
-                    'agent': f'{"DC" if aid < 2 else "R"}_{aid}',
+                    'agent': f'{"DC" if aid < self.n_dcs else "R"}_{aid}',
                     'inv': inv,
                     'backlog': bl,
                     'reward': traj['rewards'][aid][step],
@@ -824,10 +901,12 @@ class MAPPOModelEvaluator:
             json.dump(output, f, indent=2, cls=NumpyEncoder)
         print(f'[OK] Saved metrics JSON: {path.name}')
 
+    RESULTS_CSV_NAME = 'results_gnn_happo_2x15.csv'
+
     def _save_metrics_csv(self):
         import csv
         # Primary output: standardised validation file
-        results_path = self.save_dir / 'results_gnn_happo_2x15.csv'
+        results_path = self.save_dir / self.RESULTS_CSV_NAME
         # Also keep the generic name for backward compat
         compat_path  = self.save_dir / 'episode_metrics.csv'
         for path in (results_path, compat_path):
@@ -839,8 +918,8 @@ class MAPPOModelEvaluator:
                     # Fill_Rate: average of per-agent service_level (original method)
                     fill_rate = float(np.mean(m['service_level']))
                     # Lost_Sales: total unfulfilled demand units pooled across all retailer agents
-                    total_placed     = sum(m['_orders_placed'][aid]     for aid in range(2, self.n_agents))
-                    total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(2, self.n_agents))
+                    total_placed     = sum(m['_orders_placed'][aid]     for aid in range(self.n_dcs, self.n_agents))
+                    total_from_stock = sum(m['_orders_from_stock'][aid] for aid in range(self.n_dcs, self.n_agents))
                     lost_sales = total_placed - total_from_stock
                     avg_inventory = float(np.mean(m['avg_inventory']))
                     total_holding = float(np.sum(m['holding_costs']))
@@ -1222,7 +1301,7 @@ class MAPPOModelEvaluator:
 
 def main():
     args = parse_args()
-    evaluator = MAPPOModelEvaluator(args)
+    evaluator = GNNModelEvaluator(args)
     evaluator.evaluate()
     evaluator.generate_report()
 

@@ -19,7 +19,7 @@ from envs.env_wrappers import DummyVecEnvMultiDC
 from algorithms.happo_policy import HAPPO_Policy
 from algorithms.gnn_happo_policy import GNN_HAPPO_Policy
 from utils.graph_utils import build_supply_chain_adjacency, normalize_adjacency
-from test_trained_model_mappo1 import MAPPOModelEvaluatorV1
+from test_trained_model_mappo_2x15 import MAPPOModelEvaluator
 
 class SsPolicy:
     def __init__(self, s_dc, S_dc, s_retailer, S_retailer, n_dcs, n_agents, n_skus):

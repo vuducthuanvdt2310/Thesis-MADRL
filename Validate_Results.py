@@ -22,9 +22,9 @@ Usage:
 
   Optionally override paths:
   python Validate_Results.py \\
-        --gnn_csv   evaluation_results/eval_gnn/results_gnn_happo.csv \\
-        --happo_csv evaluation_results/eval_base/results_standard_happo.csv \\
-        --ss_csv    evaluation_results/ss_v1/results_ss_heuristic.csv \\
+        --gnn_csv   evaluation_results/gnn_2x15/results_gnn_happo_2x15.csv \\
+        --happo_csv evaluation_results/happo_2x15/results_standard_happo_2x15.csv \\
+        --ss_csv    evaluation_results/basestock_2x15/results_ss_heuristic_2x15.csv \\
         --out_dir   validation_output
 """
 
@@ -45,10 +45,10 @@ from scipy import stats
 # ① CONFIGURABLE FILE PATHS  ← edit these if you change filenames / locations
 # ===========================================================================
 PATHS: dict[str, str] = {
-    "GNN-HAPPO":      "evaluation_results/eval_gnn/results_gnn_happo.csv",
-    "Standard-HAPPO": "evaluation_results/eval_base/results_standard_happo.csv",
-    "MAPPO":          "evaluation_results/eval_mappo/results_mappo.csv",
-    "S-s-Heuristic":  "evaluation_results/basestock_v1/results_ss_heuristic.csv",
+    "GNN-HAPPO":      "evaluation_results/gnn_2x15/results_gnn_happo_2x15.csv",
+    "Standard-HAPPO": "evaluation_results/happo_2x15/results_standard_happo_2x15.csv",
+    "MAPPO":          "evaluation_results/mappo_2x15/results_mappo_2x15.csv",
+    "S-s-Heuristic":  "evaluation_results/basestock_2x15/results_ss_heuristic_2x15.csv",
 }
 
 # Metrics to analyse (must match CSV column names exactly)

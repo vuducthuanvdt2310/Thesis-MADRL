@@ -697,7 +697,7 @@ class BaseStockEvaluator:
             json.dump(output, f, indent=2, cls=NumpyEncoder)
         print(f'[OK] Saved metrics JSON : {path.name}')
 
-    RESULTS_CSV_NAME = 'results_ss_heuristic.csv'
+    RESULTS_CSV_NAME = 'results_ss_heuristic_2x15.csv'
 
     def _save_metrics_csv(self):
         # Primary output: standardised validation file

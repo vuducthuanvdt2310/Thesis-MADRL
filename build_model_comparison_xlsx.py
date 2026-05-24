@@ -29,25 +29,25 @@ INSTANCES = [
 CSV_PATHS = {
     "(s,S) Policy": {
         "1x7":         EVAL / "basestock_1x7"  / "results_ss_heuristic_1x7.csv",
-        "2x15 (base)": EVAL / "basestock_v1"   / "results_ss_heuristic.csv",
+        "2x15 (base)": EVAL / "basestock_2x15" / "results_ss_heuristic_2x15.csv",
         "2x30":        EVAL / "basestock_2x30" / "results_ss_heuristic_2x30.csv",
         "4x40":        EVAL / "basestock_4x40" / "results_ss_heuristic_4x40.csv",
     },
     "MAPPO": {
-        "1x7":         EVAL / "mappo_1x7" / "results_standard_mappo_1x7.csv",
-        "2x15 (base)": EVAL / "eval_mappo" / "results_mappo.csv",
+        "1x7":         EVAL / "mappo_1x7"  / "results_standard_mappo_1x7.csv",
+        "2x15 (base)": EVAL / "mappo_2x15" / "results_mappo_2x15.csv",
         "2x30":        EVAL / "mappo_2x30" / "results_standard_mappo_2x30.csv",
         "4x40":        EVAL / "mappo_4x40" / "results_standard_mappo_4x40.csv",
     },
     "HAPPO": {
-        "1x7":         EVAL / "happo_1x7" / "results_standard_happo_1x7.csv",
-        "2x15 (base)": EVAL / "eval_base"  / "results_standard_happo.csv",
+        "1x7":         EVAL / "happo_1x7"  / "results_standard_happo_1x7.csv",
+        "2x15 (base)": EVAL / "happo_2x15" / "results_standard_happo_2x15.csv",
         "2x30":        EVAL / "happo_2x30" / "results_standard_happo_2x30.csv",
         "4x40":        EVAL / "happo_4x40" / "results_standard_happo_4x40.csv",
     },
     "GNN-HAPPO": {
-        "1x7":         EVAL / "gnn_1x7" / "results_gnn_happo_1x7.csv",
-        "2x15 (base)": EVAL / "eval_gnn" / "results_gnn_happo.csv",
+        "1x7":         EVAL / "gnn_1x7"  / "results_gnn_happo_1x7.csv",
+        "2x15 (base)": EVAL / "gnn_2x15" / "results_gnn_happo_2x15.csv",
         "2x30":        EVAL / "gnn_2x30" / "results_gnn_happo_2x30.csv",
         "4x40":        EVAL / "gnn_4x40" / "results_gnn_happo_4x40.csv",
     },
