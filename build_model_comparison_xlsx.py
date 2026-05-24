@@ -34,19 +34,19 @@ CSV_PATHS = {
         "4x40":        EVAL / "basestock_4x40" / "results_ss_heuristic_4x40.csv",
     },
     "MAPPO": {
-        "1x7":         EVAL / "mappo_1x17" / "results_standard_mappo_1x7.csv",
+        "1x7":         EVAL / "mappo_1x7" / "results_standard_mappo_1x7.csv",
         "2x15 (base)": EVAL / "eval_mappo" / "results_mappo.csv",
         "2x30":        EVAL / "mappo_2x30" / "results_standard_mappo_2x30.csv",
         "4x40":        EVAL / "mappo_4x40" / "results_standard_mappo_4x40.csv",
     },
     "HAPPO": {
-        "1x7":         EVAL / "happo_1x17" / "results_standard_happo_1x7.csv",
+        "1x7":         EVAL / "happo_1x7" / "results_standard_happo_1x7.csv",
         "2x15 (base)": EVAL / "eval_base"  / "results_standard_happo.csv",
         "2x30":        EVAL / "happo_2x30" / "results_standard_happo_2x30.csv",
         "4x40":        EVAL / "happo_4x40" / "results_standard_happo_4x40.csv",
     },
     "GNN-HAPPO": {
-        "1x7":         EVAL / "gnn_1x17" / "results_gnn_happo_1x7.csv",
+        "1x7":         EVAL / "gnn_1x7" / "results_gnn_happo_1x7.csv",
         "2x15 (base)": EVAL / "eval_gnn" / "results_gnn_happo.csv",
         "2x30":        EVAL / "gnn_2x30" / "results_gnn_happo_2x30.csv",
         "4x40":        EVAL / "gnn_4x40" / "results_gnn_happo_4x40.csv",

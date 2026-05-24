@@ -116,6 +116,10 @@ class HAPPOEvaluator1x7(ModelEvaluator):
             defaults['single_agent_obs_dim'] = 36
         parser.set_defaults(**defaults)
         all_args = parser.parse_known_args([])[0]
+        # Topology-aware DC count. The Actor reads this to route DC vs Retailer
+        # in _get_reference_demand; without it, n_dcs defaults to 2 and
+        # Retailer_1 is mistreated as DC_1.
+        all_args.n_dcs = N_DCS
 
         # Max obs dim for GNN padding
         max_obs_dim = max([self.env.observation_space[i].shape[0] for i in range(self.args.num_agents)])

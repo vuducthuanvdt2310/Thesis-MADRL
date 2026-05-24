@@ -42,3 +42,11 @@ python Test_baseline_basestock_1x7.py --experiment_name "basestock_1x7"  --num_e
 python Test_baseline_basestock_2x30.py --experiment_name "basestock_2x30"  --num_episodes 10
 python Test_baseline_basestock_4x40.py --experiment_name "basestock_4x40"  --num_episodes 10
 
+200 run
+python test_trained_model_gnn.py --model_dir "results/14Apr_gnn_kaggle_vari/run_seed_1/models" --episode_length 90  --num_episodes 200 --experiment_name "eval_gnn"
+python test_trained_model.py --model_dir "results\01Apr_base\run_seed_1\models"  --num_episodes 200  --experiment_name "eval_base"
+python test_trained_model_mappo1.py --model_dir "results\25Apr_MAPPO\run_seed_1\models"  --num_episodes 200  --experiment_name "eval_mappo"
+python Test_baseline_basestock.py --experiment_name "basestock_v1"  --num_episodes 200
+
+
+

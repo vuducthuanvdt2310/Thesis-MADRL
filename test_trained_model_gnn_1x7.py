@@ -103,7 +103,10 @@ class GNNModelEvaluator1x7(GNNModelEvaluator):
             use_naive_recurrent_policy=True,
             single_agent_obs_dim=self.single_agent_obs_dim,
         )
-        return parser.parse_known_args([])[0]
+        all_args = parser.parse_known_args([])[0]
+        # Topology-aware DC count for the GNN Actor's _get_reference_demand.
+        all_args.n_dcs = N_DCS
+        return all_args
 
     def _calculate_statistics(self):
         """Override: handle 1 DC."""
