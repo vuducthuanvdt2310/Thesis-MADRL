@@ -1,13 +1,13 @@
 #!/usr/bin/env python
 """
-Test/Evaluation Script for Trained GNN-HAPPO Models — 4 DC × 40 Retailer Scale
+Test/Evaluation Script for Trained GNN-HAPPO Models — 4 DC × 15 Retailer Scale
 
-Wraps the existing GNNModelEvaluator from test_trained_model_gnn.py,
-overriding environment creation to use the 4x40 config.
+Wraps GNNModelEvaluator from test_trained_model_gnn_2x15.py, overriding environment
+creation to use the 4x15 config.
 
 Usage:
-    python test_trained_model_gnn_4x40.py \
-        --model_dir results/gnn_happo_4x40/run_seed_1/models \
+    python test_trained_model_gnn_4x15.py \
+        --model_dir results/gnn_happo_4x15/run_seed_1/models \
         --num_episodes 100 --episode_length 365
 """
 
@@ -16,33 +16,28 @@ import os
 import numpy as np
 import torch
 
-# Reuse the full evaluator from the original test script
 from test_trained_model_gnn_2x15 import GNNModelEvaluator, parse_args
 from config import get_config
 from envs.env_wrappers import DummyVecEnvMultiDC
 from utils.graph_utils import build_supply_chain_adjacency, normalize_adjacency
 
-# ================================================================
-# SCALED CONFIG
-# ================================================================
 N_DCS = 4
-N_RETAILERS = 40
-N_AGENTS = N_DCS + N_RETAILERS  # 44
-CONFIG_PATH = 'configs/multi_dc_4x40_config.yaml'
+N_RETAILERS = 15
+N_AGENTS = N_DCS + N_RETAILERS  # 19
+CONFIG_PATH = 'configs/multi_dc_4x15_config.yaml'
 
 
-class GNNModelEvaluator4x40(GNNModelEvaluator):
-    """Evaluator subclass for the 4 DC × 40 Retailer scaled environment."""
+class GNNModelEvaluator4x15(GNNModelEvaluator):
+    """Evaluator subclass for the 4 DC × 15 Retailer scaled environment."""
 
-    RESULTS_CSV_NAME = 'results_gnn_happo_4x40.csv'
+    RESULTS_CSV_NAME = 'results_gnn_happo_4x15.csv'
 
     def _create_env(self):
-        """Override: create env with 4x40 config."""
-        print('Creating evaluation environment (4×40 scale)...')
+        print('Creating evaluation environment (4×15 scale)...')
         parser = get_config()
         parser.set_defaults(
             env_name='MultiDC',
-            scenario_name='inventory_2echelon_4x40',
+            scenario_name='inventory_2echelon_4x15',
             episode_length=self.args.episode_length,
             n_eval_rollout_threads=1,
             use_centralized_V=True,
@@ -62,8 +57,7 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
         return env
 
     def _build_graph(self):
-        """Override: build graph for 4 DCs + 40 retailers."""
-        print('Building supply chain graph (4×40)...')
+        print('Building supply chain graph (4×15)...')
         adj = build_supply_chain_adjacency(
             n_dcs=N_DCS, n_retailers=N_RETAILERS, self_loops=True
         )
@@ -73,7 +67,6 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
         return adj_tensor
 
     def _build_all_args(self):
-        """Override: set num_agents to 44."""
         gnn_type = getattr(self, 'detected_gnn_type', self.args.gnn_type)
         parser = get_config()
         parser.add_argument('--gnn_type', type=str, default=gnn_type)
@@ -90,7 +83,7 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
                             default=self.single_agent_obs_dim)
         parser.set_defaults(
             env_name='MultiDC',
-            scenario_name='inventory_2echelon_4x40',
+            scenario_name='inventory_2echelon_4x15',
             num_agents=self.n_agents,
             use_centralized_V=True,
             algorithm_name='gnn_happo',
@@ -103,15 +96,10 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
             use_naive_recurrent_policy=True,
             single_agent_obs_dim=self.single_agent_obs_dim,
         )
-        all_args = parser.parse_known_args([])[0]
-        # Topology-aware DC count for the GNN Actor's _get_reference_demand.
-        all_args.n_dcs = N_DCS
-        return all_args
+        return parser.parse_known_args([])[0]
 
     def _calculate_statistics(self):
-        """Override: handle N DCs instead of hardcoded 2."""
         stats = super()._calculate_statistics()
-        # Fix dc_cycle_service_level to use N_DCS
         stats['dc_cycle_service_level'] = {
             dc_id: float(np.mean([
                 m['dc_cycle_service_level'].get(dc_id, 100.0)
@@ -122,15 +110,13 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
         return stats
 
     def _run_episode(self, episode_num, save_trajectory=False):
-        """Override: use N_DCS instead of hardcoded 2 for DC detection."""
-        # Temporarily patch the is_dc check boundary
         orig_n_agents = self.n_agents
         metrics = super()._run_episode(episode_num, save_trajectory)
         return metrics
 
     def _print_header(self):
         print('=' * 70)
-        print('GNN-HAPPO Model Evaluation — 4×40 Scale')
+        print('GNN-HAPPO Model Evaluation — 4×15 Scale')
         print('=' * 70)
         print(f'Model directory : {self.args.model_dir}')
         print(f'Config          : {CONFIG_PATH}')
@@ -143,7 +129,7 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
 
     def _print_summary(self, stats):
         print('\n' + '=' * 70)
-        print('GNN-HAPPO Evaluation Summary — 4×40 Scale')
+        print('GNN-HAPPO Evaluation Summary — 4×15 Scale')
         print('=' * 70)
         print(f"Episodes      : {stats['num_episodes']}")
         print(f"Episode length: {stats['episode_length']} days")
@@ -169,7 +155,7 @@ class GNNModelEvaluator4x40(GNNModelEvaluator):
 
 def main():
     args = parse_args()
-    evaluator = GNNModelEvaluator4x40(args)
+    evaluator = GNNModelEvaluator4x15(args)
     evaluator.evaluate()
     evaluator.generate_report()
 

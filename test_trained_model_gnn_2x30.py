@@ -17,7 +17,7 @@ import numpy as np
 import torch
 
 # Reuse the full evaluator from the original test script
-from test_trained_model_gnn import GNNModelEvaluator, parse_args
+from test_trained_model_gnn_2x15 import GNNModelEvaluator, parse_args
 from config import get_config
 from envs.env_wrappers import DummyVecEnvMultiDC
 from utils.graph_utils import build_supply_chain_adjacency, normalize_adjacency

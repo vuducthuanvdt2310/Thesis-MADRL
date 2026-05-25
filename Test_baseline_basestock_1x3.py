@@ -1,19 +1,19 @@
 #!/usr/bin/env python
 """
-Baseline Evaluation Script: (s,S) Heuristic Policy -- 1 DC x 7 Retailer Scale
+Baseline Evaluation Script: (s,S) Heuristic Policy -- 1 DC x 3 Retailer Scale
 =============================================================================
 
-Thin wrapper around `Test_baseline_basestock.py` that points the environment
-to the 1x7 topology config. All evaluation logic, metrics, plots, CSV/JSON
+Thin wrapper around `Test_baseline_basestock_2x15.py` that points the environment
+to the 1x3 topology config. All evaluation logic, metrics, plots, CSV/JSON
 output formats, and default episode/episode-length settings are inherited
 unchanged from the reference script.
 
 Usage (all arguments optional):
-    python Test_baseline_basestock_1x7.py
-    python Test_baseline_basestock_1x7.py --num_episodes 5 --episode_length 365
-    python Test_baseline_basestock_1x7.py \\
+    python Test_baseline_basestock_1x3.py
+    python Test_baseline_basestock_1x3.py --num_episodes 5 --episode_length 365
+    python Test_baseline_basestock_1x3.py \\
         --s_dc 100 --S_dc 170 --s_retailer 3 --S_retailer 10 \\
-        --experiment_name "basestock_1x7"
+        --experiment_name "basestock_1x3"
 """
 
 import sys
@@ -26,12 +26,12 @@ if str(_HERE) not in sys.path:
 from Test_baseline_basestock_2x15 import BaseStockEvaluator, parse_args
 
 
-CONFIG_PATH_DEFAULT = 'configs/multi_dc_1x7_config.yaml'
+CONFIG_PATH_DEFAULT = 'configs/multi_dc_1x3_config.yaml'
 
 
-class BaseStockEvaluator1x7(BaseStockEvaluator):
-    """1x7 topology-specific evaluator. Only overrides the output CSV name."""
-    RESULTS_CSV_NAME = 'results_ss_heuristic_1x7.csv'
+class BaseStockEvaluator1x3(BaseStockEvaluator):
+    """1x3 topology-specific evaluator. Only overrides the output CSV name."""
+    RESULTS_CSV_NAME = 'results_ss_heuristic_1x3.csv'
 
 
 def main():
@@ -41,13 +41,13 @@ def main():
     if args.config_path == 'configs/multi_dc_config.yaml':
         args.config_path = CONFIG_PATH_DEFAULT
 
-    print('\n=== (s,S) Heuristic Configuration (1x7) ===')
+    print('\n=== (s,S) Heuristic Configuration (1x3) ===')
     print(f'  Config file              : {args.config_path}')
     print(f'  DC       (s, S) per SKU  : ({args.s_dc}, {args.S_dc})')
     print(f'  Retailer (s, S) per SKU  : ({args.s_retailer}, {args.S_retailer})')
     print('===========================================\n')
 
-    evaluator = BaseStockEvaluator1x7(args)
+    evaluator = BaseStockEvaluator1x3(args)
     evaluator.evaluate()
     evaluator.generate_report()
 

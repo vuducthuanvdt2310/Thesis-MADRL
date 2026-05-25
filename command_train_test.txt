@@ -29,7 +29,7 @@ python test_trained_model_happo_1x7.py --model_dir "results/happo_1x7/run_seed_1
 python test_trained_model_happo_2x30.py --model_dir "results/happo_2x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_2x30"
 python test_trained_model_happo_4x40.py --model_dir "results/happo_4x40/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_4x40"
 
-python test_trained_model_mappo_2x15.py --model_dir "results\25Apr_MAPPO\run_seed_1\models"  --num_episodes 5  --experiment_name "mappo_2x15"
+python test_trained_model_mappo_2x15.py --model_dir "results\mappo_2x15\run_seed_1\models"  --num_episodes 5  --experiment_name "mappo_2x15"
 python test_trained_model_mappo_1x7.py --model_dir "results/mappo_1x7/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_1x7"
 python test_trained_model_mappo_2x30.py --model_dir "results/mappo_2x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_2x30"
 python test_trained_model_mappo_4x40.py --model_dir "results/mappo_4x40/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_4x40"
@@ -43,9 +43,11 @@ python Test_baseline_basestock_4x40.py --experiment_name "basestock_4x40"  --epi
 200 run
 python test_trained_model_gnn_2x15.py --model_dir "results/14Apr_gnn_kaggle_vari/run_seed_1/models" --episode_length 90  --num_episodes 200 --experiment_name "gnn_2x15"
 python test_trained_model_happo_2x15.py --model_dir "results\01Apr_base\run_seed_1\models"  --num_episodes 200  --experiment_name "happo_2x15"
-python test_trained_model_mappo_2x15.py --model_dir "results\25Apr_MAPPO\run_seed_1\models"  --num_episodes 200  --experiment_name "mappo_2x15"
+python test_trained_model_mappo_2x15.py --model_dir "results\mappo_2x15\run_seed_1\models"  --num_episodes 200  --experiment_name "mappo_2x15"
 python Test_baseline_basestock_2x15.py --experiment_name "basestock_2x15"  --num_episodes 200
 
+
+Network 
 1x7
 python test_trained_model_gnn_1x7.py --model_dir "results/gnn_happo_1x7/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "gnn_1x7"
 python test_trained_model_happo_1x7.py --model_dir "results/happo_1x7/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_1x7"
@@ -63,3 +65,80 @@ python test_trained_model_gnn_2x30.py --model_dir "results/gnn_happo_2x30/run_se
 python test_trained_model_happo_2x30.py --model_dir "results/happo_2x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_2x30"
 python test_trained_model_mappo_2x30.py --model_dir "results/mappo_2x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_2x30"
 python Test_baseline_basestock_2x30.py --experiment_name "basestock_2x30" --episode_length 90 --num_episodes 5
+
+
+python test_trained_model_gnn_4x40.py --model_dir "results/gnn_happo_4x40/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "gnn_4x40"
+python test_trained_model_happo_4x40.py --model_dir "results/happo_4x40/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_4x40"
+python test_trained_model_mappo_4x40.py --model_dir "results/mappo_4x40/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_4x40"
+python Test_baseline_basestock_4x40.py --experiment_name "basestock_4x40"  --episode_length 90 --num_episodes 5
+
+
+=====================================================
+NEW NETWORKS (1x3, 1x10, 2x20, 2x40, 4x15, 4x30)
+=====================================================
+
+1x3
+train
+python train_multi_dc_gnn_1x3.py --experiment_name "gnn_happo_1x3"
+python train_multi_dc_happo_1x3.py --experiment_name "happo_1x3"
+python train_multi_dc_mappo_1x3.py --experiment_name "mappo_1x3"
+test
+python test_trained_model_gnn_1x3.py --model_dir "results/gnn_happo_1x3/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "gnn_1x3"
+python test_trained_model_happo_1x3.py --model_dir "results/happo_1x3/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_1x3"
+python test_trained_model_mappo_1x3.py --model_dir "results/mappo_1x3/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_1x3"
+python Test_baseline_basestock_1x3.py --experiment_name "basestock_1x3" --episode_length 90 --num_episodes 5
+
+1x10
+train
+python train_multi_dc_gnn_1x10.py --experiment_name "gnn_happo_1x10"
+python train_multi_dc_happo_1x10.py --experiment_name "happo_1x10"
+python train_multi_dc_mappo_1x10.py --experiment_name "mappo_1x10"
+test
+python test_trained_model_gnn_1x10.py --model_dir "results/gnn_happo_1x10/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "gnn_1x10"
+python test_trained_model_happo_1x10.py --model_dir "results/happo_1x10/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_1x10"
+python test_trained_model_mappo_1x10.py --model_dir "results/mappo_1x10/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_1x10"
+python Test_baseline_basestock_1x10.py --experiment_name "basestock_1x10" --episode_length 90 --num_episodes 5
+
+2x20
+train
+python train_multi_dc_gnn_2x20.py --experiment_name "gnn_happo_2x20"
+python train_multi_dc_happo_2x20.py --experiment_name "happo_2x20"
+python train_multi_dc_mappo_2x20.py --experiment_name "mappo_2x20"
+test
+python test_trained_model_gnn_2x20.py --model_dir "results/gnn_happo_2x20/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "gnn_2x20"
+python test_trained_model_happo_2x20.py --model_dir "results/happo_2x20/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_2x20"
+python test_trained_model_mappo_2x20.py --model_dir "results/mappo_2x20/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_2x20"
+python Test_baseline_basestock_2x20.py --experiment_name "basestock_2x20" --episode_length 90 --num_episodes 5
+
+2x40
+train
+python train_multi_dc_gnn_2x40.py --experiment_name "gnn_happo_2x40"
+python train_multi_dc_happo_2x40.py --experiment_name "happo_2x40"
+python train_multi_dc_mappo_2x40.py --experiment_name "mappo_2x40"
+test
+python test_trained_model_gnn_2x40.py --model_dir "results/gnn_happo_2x40/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "gnn_2x40"
+python test_trained_model_happo_2x40.py --model_dir "results/happo_2x40/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_2x40"
+python test_trained_model_mappo_2x40.py --model_dir "results/mappo_2x40/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_2x40"
+python Test_baseline_basestock_2x40.py --experiment_name "basestock_2x40" --episode_length 90 --num_episodes 5
+
+4x15
+train
+python train_multi_dc_gnn_4x15.py --experiment_name "gnn_happo_4x15"
+python train_multi_dc_happo_4x15.py --experiment_name "happo_4x15"
+python train_multi_dc_mappo_4x15.py --experiment_name "mappo_4x15"
+test
+python test_trained_model_gnn_4x15.py --model_dir "results/gnn_happo_4x15/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "gnn_4x15"
+python test_trained_model_happo_4x15.py --model_dir "results/happo_4x15/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_4x15"
+python test_trained_model_mappo_4x15.py --model_dir "results/mappo_4x15/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_4x15"
+python Test_baseline_basestock_4x15.py --experiment_name "basestock_4x15" --episode_length 90 --num_episodes 5
+
+4x30
+train
+python train_multi_dc_gnn_4x30.py --experiment_name "gnn_happo_4x30"
+python train_multi_dc_happo_4x30.py --experiment_name "happo_4x30"
+python train_multi_dc_mappo_4x30.py --experiment_name "mappo_4x30"
+test
+python test_trained_model_gnn_4x30.py --model_dir "results/gnn_happo_4x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "gnn_4x30"
+python test_trained_model_happo_4x30.py --model_dir "results/happo_4x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_4x30"
+python test_trained_model_mappo_4x30.py --model_dir "results/mappo_4x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_4x30"
+python Test_baseline_basestock_4x30.py --experiment_name "basestock_4x30" --episode_length 90 --num_episodes 5

@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from pathlib import Path
 
-from test_trained_model import ModelEvaluator, NumpyEncoder, parse_test_args
+from test_trained_model_happo_2x15 import ModelEvaluator, NumpyEncoder, parse_test_args
 from algorithms.happo_policy import HAPPO_Policy
 from config import get_config
 from envs.env_wrappers import DummyVecEnvMultiDC

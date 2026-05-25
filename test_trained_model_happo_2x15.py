@@ -57,7 +57,7 @@ def parse_test_args():
     # Testing parameters
     parser.add_argument('--num_episodes', type=int, default=10,
                        help='Number of evaluation episodes to run (default: 100 for validation)')
-    parser.add_argument('--episode_length', type=int, default=110,
+    parser.add_argument('--episode_length', type=int, default=90,
                        help='Length of each episode (days)')
     parser.add_argument('--seed', type=int, default=42,
                        help='Random seed for reproducibility (default: 42)')

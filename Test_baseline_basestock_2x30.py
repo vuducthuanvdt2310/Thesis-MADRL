@@ -23,7 +23,7 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from Test_baseline_basestock import BaseStockEvaluator, parse_args
+from Test_baseline_basestock_2x15 import BaseStockEvaluator, parse_args
 
 
 CONFIG_PATH_DEFAULT = 'configs/multi_dc_2x30_config.yaml'
