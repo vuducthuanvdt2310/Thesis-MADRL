@@ -61,8 +61,8 @@ TRAINING_JOBS = [
     (False,  "train_multi_dc_mappo_2x20.py", "mappo_2x20"),
 
     # ----- 2 DCs x 40 Retailers -----
-    (False,  "train_multi_dc_gnn_2x40.py",   "gnn_happo_2x40"),
-    (False,  "train_multi_dc_happo_2x40.py", "happo_2x40"),
+    (True,  "train_multi_dc_gnn_2x40.py",   "gnn_happo_2x40"),
+    (True,  "train_multi_dc_happo_2x40.py", "happo_2x40"),
     (True,  "train_multi_dc_mappo_2x40.py", "mappo_2x40"),
 
     # ----- 4 DCs x 15 Retailers -----
