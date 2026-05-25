@@ -46,34 +46,34 @@ STOP_ON_ERROR = False
 
 TRAINING_JOBS = [
     # ----- 1 DC x 3 Retailers -----
-    (True,  "train_multi_dc_gnn_1x3.py",    "gnn_happo_1x3"),
-    (True,  "train_multi_dc_happo_1x3.py",  "happo_1x3"),
-    (True,  "train_multi_dc_mappo_1x3.py",  "mappo_1x3"),
+    (False,  "train_multi_dc_gnn_1x3.py",    "gnn_happo_1x3"),
+    (False,  "train_multi_dc_happo_1x3.py",  "happo_1x3"),
+    (False,  "train_multi_dc_mappo_1x3.py",  "mappo_1x3"),
 
     # ----- 1 DC x 10 Retailers -----
-    (True,  "train_multi_dc_gnn_1x10.py",   "gnn_happo_1x10"),
-    (True,  "train_multi_dc_happo_1x10.py", "happo_1x10"),
-    (True,  "train_multi_dc_mappo_1x10.py", "mappo_1x10"),
+    (False,  "train_multi_dc_gnn_1x10.py",   "gnn_happo_1x10"),
+    (False,  "train_multi_dc_happo_1x10.py", "happo_1x10"),
+    (False,  "train_multi_dc_mappo_1x10.py", "mappo_1x10"),
 
     # ----- 2 DCs x 20 Retailers -----
-    (True,  "train_multi_dc_gnn_2x20.py",   "gnn_happo_2x20"),
-    (True,  "train_multi_dc_happo_2x20.py", "happo_2x20"),
-    (True,  "train_multi_dc_mappo_2x20.py", "mappo_2x20"),
+    (False,  "train_multi_dc_gnn_2x20.py",   "gnn_happo_2x20"),
+    (False,  "train_multi_dc_happo_2x20.py", "happo_2x20"),
+    (False,  "train_multi_dc_mappo_2x20.py", "mappo_2x20"),
 
     # ----- 2 DCs x 40 Retailers -----
-    (True,  "train_multi_dc_gnn_2x40.py",   "gnn_happo_2x40"),
-    (True,  "train_multi_dc_happo_2x40.py", "happo_2x40"),
+    (False,  "train_multi_dc_gnn_2x40.py",   "gnn_happo_2x40"),
+    (False,  "train_multi_dc_happo_2x40.py", "happo_2x40"),
     (True,  "train_multi_dc_mappo_2x40.py", "mappo_2x40"),
 
     # ----- 4 DCs x 15 Retailers -----
-    (False,  "train_multi_dc_gnn_4x15.py",   "gnn_happo_4x15"),
-    (False,  "train_multi_dc_happo_4x15.py", "happo_4x15"),
-    (False,  "train_multi_dc_mappo_4x15.py", "mappo_4x15"),
+    (True,  "train_multi_dc_gnn_4x15.py",   "gnn_happo_4x15"),
+    (True,  "train_multi_dc_happo_4x15.py", "happo_4x15"),
+    (True,  "train_multi_dc_mappo_4x15.py", "mappo_4x15"),
 
     # ----- 4 DCs x 30 Retailers -----
-    (False,  "train_multi_dc_gnn_4x30.py",   "gnn_happo_4x30"),
-    (False,  "train_multi_dc_happo_4x30.py", "happo_4x30"),
-    (False,  "train_multi_dc_mappo_4x30.py", "mappo_4x30"),
+    (True,  "train_multi_dc_gnn_4x30.py",   "gnn_happo_4x30"),
+    (True,  "train_multi_dc_happo_4x30.py", "happo_4x30"),
+    (True,  "train_multi_dc_mappo_4x30.py", "mappo_4x30"),
 ]
 
 # =============================================================================
