@@ -679,6 +679,101 @@ def build_scenario_sheet(ws: Worksheet, agg: pd.DataFrame, networks: list[str],
     ws.freeze_panes = "B4"
 
 
+def build_network_validation(ws: Worksheet, agg: pd.DataFrame,
+                             networks: list[str], scenarios: dict,
+                             metric: str, title: str) -> None:
+    """Build a 'network_validation'-style sheet.
+
+    Layout (matches the user's template image):
+      col 1: Validate            -> "Network 1" .. "Network N"
+      col 2: Demand scenario     -> "Scen 1" / "Scen 2" / "Scen 3"
+      col 3-6: Base stock, MAPPO, HAPPO, GNN  -> value per metric
+
+    metric:
+      "cost"     -> Mean Total Cost (VND thousands)
+      "fill"     -> Mean Fill Rate (%)
+      "gap_cost" -> Cost Gap % vs GNN-HAPPO  (positive = GNN cheaper)
+    """
+    ws.cell(row=1, column=1, value=title).font = Font(bold=True, size=14)
+
+    headers = ["Validate", "Demand scenario", "Base stock",
+               "MAPPO", "HAPPO", "GNN"]
+    for j, h in enumerate(headers, start=1):
+        ws.cell(row=3, column=j, value=h)
+    style_header(ws, 3, len(headers))
+
+    scen_keys = list(scenarios.keys())   # preserves S1 -> S2 -> S3 order
+    scen_shorts = [scenarios[k]["short"] for k in scen_keys]
+    scen_labels_compact = [f"Scen {i+1}" for i in range(len(scen_keys))]
+
+    if metric == "cost":
+        col_in_agg = "Mean_Total_Cost"
+        fmt = "#,##0.00"
+        scale = 1 / 1000.0
+    elif metric == "fill":
+        col_in_agg = "Mean_Fill_Rate"
+        fmt = "0.00"
+        scale = 1.0
+    elif metric == "gap_cost":
+        col_in_agg = "Mean_Total_Cost"  # used as input to gap formula
+        fmt = "0.00"
+        scale = 1.0
+    else:
+        raise ValueError(f"Unknown metric {metric!r}")
+
+    r = 4
+    for net_idx, net in enumerate(networks, start=1):
+        block_start = r
+        for sc_idx, scen_short in enumerate(scen_shorts):
+            ws.cell(row=r, column=1, value=f"Network {net_idx}").alignment = CENTER
+            ws.cell(row=r, column=2, value=scen_labels_compact[sc_idx]).alignment = CENTER
+
+            bs_v = lookup(agg, MODEL_LABELS["basestock"], net, scen_short, col_in_agg)
+            ma_v = lookup(agg, MODEL_LABELS["mappo"],     net, scen_short, col_in_agg)
+            ha_v = lookup(agg, MODEL_LABELS["happo"],     net, scen_short, col_in_agg)
+            gn_v = lookup(agg, MODEL_LABELS["gnn"],       net, scen_short, col_in_agg)
+
+            if metric == "gap_cost":
+                # Cost-gap %: (baseline - gnn) / baseline * 100, GNN reference = 0
+                def _gap(b):
+                    if np.isnan(b) or np.isnan(gn_v) or b == 0:
+                        return float("nan")
+                    return (b - gn_v) / b * 100.0
+                values = [_gap(bs_v), _gap(ma_v), _gap(ha_v),
+                          0.0 if not np.isnan(gn_v) else float("nan")]
+            else:
+                values = [
+                    bs_v * scale if not np.isnan(bs_v) else float("nan"),
+                    ma_v * scale if not np.isnan(ma_v) else float("nan"),
+                    ha_v * scale if not np.isnan(ha_v) else float("nan"),
+                    gn_v * scale if not np.isnan(gn_v) else float("nan"),
+                ]
+
+            for col, v in zip([3, 4, 5, 6], values):
+                cell = ws.cell(row=r, column=col,
+                               value=(None if np.isnan(v) else v))
+                cell.number_format = fmt
+                cell.alignment = RIGHT
+                if np.isnan(v):
+                    cell.fill = MISS_FILL
+                elif metric == "gap_cost" and col != 6:
+                    # green for GNN beats baseline (positive), red otherwise
+                    cell.font = POS_FONT if v >= 0 else NEG_FONT
+            ws.cell(row=r, column=6).fill = GNN_FILL  # always highlight GNN col
+
+            for c in range(1, len(headers) + 1):
+                ws.cell(row=r, column=c).border = BORDER
+            r += 1
+
+        # Merge the "Network N" label across its 3 scenario rows
+        ws.merge_cells(start_row=block_start, start_column=1,
+                       end_row=r - 1, end_column=1)
+        ws.cell(row=block_start, column=1).alignment = CENTER
+
+    autosize(ws, [12, 18, 14, 14, 14, 16])
+    ws.freeze_panes = "C4"
+
+
 def build_gap_summary(ws: Worksheet, agg: pd.DataFrame, networks: list[str],
                       scenarios: dict) -> None:
     ws.cell(row=1, column=1, value="Gap-% Summary vs GNN-HAPPO"
@@ -821,6 +916,21 @@ def write_excel(df: pd.DataFrame, out_path: Path, networks: list[str],
     for sc_val in scenarios.values():
         ws = wb.create_sheet(sc_val["sheet"])
         build_scenario_sheet(ws, agg, networks, sc_val["short"], sc_val["label"])
+    build_network_validation(
+        wb.create_sheet("NetVal_Cost"), agg, networks, scenarios,
+        metric="cost",
+        title="Network Validation -- Average Total Cost (VND thousands)",
+    )
+    build_network_validation(
+        wb.create_sheet("NetVal_FillRate"), agg, networks, scenarios,
+        metric="fill",
+        title="Network Validation -- Average Fill Rate (%)",
+    )
+    build_network_validation(
+        wb.create_sheet("NetVal_Gap"), agg, networks, scenarios,
+        metric="gap_cost",
+        title="Network Validation -- Cost Gap % vs GNN-HAPPO (positive = GNN cheaper)",
+    )
     build_gap_summary(wb.create_sheet("Gap_Summary"), agg, networks, scenarios)
     build_raw(wb.create_sheet("Raw_Data"), df)
     build_methodology(wb.create_sheet("Methodology"), num_episodes,
