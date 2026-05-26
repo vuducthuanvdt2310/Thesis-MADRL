@@ -234,16 +234,20 @@ class SubprocVecEnvMultiDC(object):
             all_args: Configuration arguments with n_rollout_threads
         """
         # Create parallel environments
-        self.env_list = [MultiDCInventoryEnv(config_path='configs/multi_dc_config.yaml') 
+        config_path = getattr(all_args, 'env_config_path', 'configs/multi_dc_config.yaml')
+        self.env_list = [MultiDCInventoryEnv(config_path=config_path)
                         for i in range(all_args.n_rollout_threads)]
         self.num_envs = all_args.n_rollout_threads
-        
+
         # Get environment properties from first env
-        self.num_agent = self.env_list[0].n_agents  # 5 agents
-        
+        self.num_agent = self.env_list[0].n_agents
+
         # Multi-DC has heterogeneous agents - DCs vs Retailers
-        self.n_dcs = self.env_list[0].n_dcs  # 2
-        self.n_retailers = self.env_list[0].n_retailers  # 3
+        self.n_dcs = self.env_list[0].n_dcs
+        self.n_retailers = self.env_list[0].n_retailers
+        # Propagate n_dcs onto args so downstream code (actor, runner) can
+        # tell DC vs Retailer by topology instead of hardcoding agent_id < 2.
+        all_args.n_dcs = self.n_dcs
         
         # Note: This is continuous action space
         self.discrete_action_space = False
@@ -251,35 +255,30 @@ class SubprocVecEnvMultiDC(object):
         self.force_discrete_action = False
         
         
-        # === UNIFORM ACTION SPACES (All agents 6D) ===
-        # DC agents: use first 3 dimensions, last 3 ignored
-        # Retailer agents: use all 6 dimensions
-        # This uniformity is required for HAPPO runner compatibility
+        # === UNIFORM 3D ACTION SPACE ===
+        # All agents (DCs and retailers) use 3 continuous actions — one per SKU.
+        # Each retailer is assigned to exactly one DC, so no need for 6D anymore.
+        self.action_dim = 3  # One per SKU (n_skus = 3)
         
-        self.action_dim = 6  # Uniform for all agents
-        
+        # Observation dims from env (DC=28D, Retailer=22D)
+        self.max_obs_dim = self.env_list[0].obs_dim_dc           # 28 — largest obs dim
+        self.retailer_obs_dim = self.env_list[0].obs_dim_retailer # 22
+
         # Initialize empty lists
         self.action_space = []
         self.observation_space = []
         self.share_observation_space = []
-        
+
         for agent_id in range(self.num_agent):
-            # Observations remain heterogeneous
-            if agent_id < self.n_dcs:
-                obs_dim = 30  # DC observation (increased from 27)
-            else:
-                obs_dim = 36  # Retailer observation (reduced from 42)
-            
+            # All agents use max_obs_dim; retailer obs are zero-padded to match
             self.observation_space.append(
-                spaces.Box(low=0, high=1, shape=(obs_dim,), dtype=np.float32)
+                spaces.Box(low=0, high=1, shape=(self.max_obs_dim,), dtype=np.float32)
             )
-            
-            # All agents have same 6D action space
             self.action_space.append(
-                spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
+                spaces.Box(low=0, high=70, shape=(self.action_dim,), dtype=np.float32)
             )
-        # Shared observation space (concatenate all observations)
-        total_obs_dim = 30 * self.n_dcs + 36 * self.n_retailers  # 168 (30*2 + 36*3)
+        # Shared obs: concatenate all padded agent obs  28 * 17 = 476
+        total_obs_dim = self.max_obs_dim * self.num_agent
         self.share_observation_space = [
             spaces.Box(low=-np.inf, high=+np.inf, shape=(total_obs_dim,), dtype=np.float32)
             for _ in range(self.num_agent)
@@ -326,10 +325,14 @@ class SubprocVecEnvMultiDC(object):
             rew_arrays.append(env_rews)
             done_arrays.append(env_dones)
         
-        # Use dtype=object for heterogeneous agent observations
-        # Rewards need shape (n_envs, n_agents, 1) for buffer
-        rewards_reshaped = np.expand_dims(np.array(rew_arrays), axis=-1)
-        return np.array(obs_arrays, dtype=object), rewards_reshaped, np.array(done_arrays), infos
+        # Zero-pad shorter obs (retailers 21D) to max_obs_dim (27D)
+        obs_np = np.zeros((self.num_envs, self.num_agent, self.max_obs_dim), dtype=np.float32)
+        for env_idx in range(self.num_envs):
+            for agent_id in range(self.num_agent):
+                a_obs = obs[env_idx][agent_id]
+                obs_np[env_idx, agent_id, :len(a_obs)] = a_obs
+        rewards_reshaped = np.expand_dims(np.array(rew_arrays, dtype=np.float32), axis=-1)
+        return obs_np, rewards_reshaped, np.array(done_arrays), infos
     
     def reset(self):
         """Reset all parallel environments."""
@@ -341,8 +344,13 @@ class SubprocVecEnvMultiDC(object):
             env_obs = [env_obs_dict[agent_id] for agent_id in range(self.num_agent)]
             obs_arrays.append(env_obs)
         
-        # Use dtype=object for heterogeneous agent observations
-        return np.array(obs_arrays, dtype=object), None
+        # Zero-pad shorter obs (retailers 21D) to max_obs_dim (27D)
+        obs_np = np.zeros((self.num_envs, self.num_agent, self.max_obs_dim), dtype=np.float32)
+        for env_idx, obs_dict in enumerate(obs_list):
+            for agent_id in range(self.num_agent):
+                a_obs = obs_dict[agent_id]
+                obs_np[env_idx, agent_id, :len(a_obs)] = a_obs
+        return obs_np, None
     
     def close(self):
         """Close all environments."""
@@ -381,47 +389,58 @@ class SubprocVecEnvMultiDC(object):
         # Return empty list for compatibility
         return []
 
+    def decay_shaping_weight(self, decay_rate: float = 0.995) -> float:
+        """Anneal the heuristic shaping weight across all parallel envs.
+
+        Calls decay_shaping_weight(decay_rate) on every environment in the
+        pool and returns the weight from the first env (they stay in sync).
+        """
+        w = 1.0
+        for env in self.env_list:
+            w = env.decay_shaping_weight(decay_rate)
+        return w
+
 
 class DummyVecEnvMultiDC(object):
     """Single (non-parallel) environment wrapper for Multi-DC."""
     
     def __init__(self, all_args):
         """Initialize single Multi-DC environment for evaluation."""
-        self.env_list = [MultiDCInventoryEnv(config_path='configs/multi_dc_config.yaml')]
+        config_path = getattr(all_args, 'env_config_path', 'configs/multi_dc_config.yaml')
+        self.env_list = [MultiDCInventoryEnv(config_path=config_path)]
         self.num_envs = 1
         
         self.num_agent = self.env_list[0].n_agents
         self.n_dcs = self.env_list[0].n_dcs
         self.n_retailers = self.env_list[0].n_retailers
-        
+        all_args.n_dcs = self.n_dcs
+
         self.discrete_action_space = False
         self.discrete_action_input = False
         self.force_discrete_action = False
         
         
-        # Configure spaces (uniform 6D actions)
+        # Observation dims from env (DC=28D, Retailer=22D)
+        self.max_obs_dim = self.env_list[0].obs_dim_dc           # 28
+        self.retailer_obs_dim = self.env_list[0].obs_dim_retailer # 22
+
+        # Configure spaces
         self.action_space = []
         self.observation_space = []
         self.share_observation_space = []
-        
-        self.action_dim = 6  # Uniform for all agents
-        
+
+        self.action_dim = 3  # 3D: one order qty per SKU (uniform for all agents)
+
         for agent_id in range(self.num_agent):
-            # Heterogeneous observations
-            if agent_id < self.n_dcs:
-                obs_dim = 30
-            else:
-                obs_dim = 36  # Reduced from 42
-            
+            # All agents use max_obs_dim; retailers are zero-padded
             self.observation_space.append(
-                spaces.Box(low=0, high=1, shape=(obs_dim,), dtype=np.float32)
+                spaces.Box(low=0, high=1, shape=(self.max_obs_dim,), dtype=np.float32)
             )
-            # Uniform 6D actions
             self.action_space.append(
-                spaces.Box(low=0, high=50, shape=(self.action_dim,), dtype=np.float32)
+                spaces.Box(low=0, high=70, shape=(self.action_dim,), dtype=np.float32)
             )
-        
-        total_obs_dim = 30 * self.n_dcs + 36 * self.n_retailers  # 168
+
+        total_obs_dim = self.max_obs_dim * self.num_agent  # 28 * 17 = 476
         self.share_observation_space = [
             spaces.Box(low=-np.inf, high=+np.inf, shape=(total_obs_dim,), dtype=np.float32)
             for _ in range(self.num_agent)
@@ -437,24 +456,28 @@ class DummyVecEnvMultiDC(object):
         
         obs_dict, rew_dict, done_dict, info_dict = env.step(action_dict)
         
-        # Convert to arrays
-        obs = [[obs_dict[i] for i in range(self.num_agent)]]
         rews = [[rew_dict[i] for i in range(self.num_agent)]]
         dones = [[done_dict[i] for i in range(self.num_agent)]]
-        
-        # Use dtype=object for heterogeneous observations
-        # Rewards need shape (n_envs, n_agents, 1) for buffer
-        rewards_reshaped = np.expand_dims(np.array(rews), axis=-1)
-        return np.array(obs, dtype=object), rewards_reshaped, np.array(dones), [info_dict]
+
+        # Zero-pad shorter obs (retailers 21D) to max_obs_dim (27D)
+        obs_np = np.zeros((1, self.num_agent, self.max_obs_dim), dtype=np.float32)
+        for agent_id in range(self.num_agent):
+            a_obs = obs_dict[agent_id]
+            obs_np[0, agent_id, :len(a_obs)] = a_obs
+        rewards_reshaped = np.expand_dims(np.array(rews, dtype=np.float32), axis=-1)
+        return obs_np, rewards_reshaped, np.array(dones), [info_dict]
     
     def reset(self):
         """Reset the single environment."""
         env = self.env_list[0]
         obs_dict = env.reset()
         
-        obs = [[obs_dict[i] for i in range(self.num_agent)]]
-        # Use dtype=object for heterogeneous observations
-        return np.array(obs, dtype=object), None
+        # Zero-pad shorter obs (retailers 21D) to max_obs_dim (27D)
+        obs_np = np.zeros((1, self.num_agent, self.max_obs_dim), dtype=np.float32)
+        for agent_id in range(self.num_agent):
+            a_obs = obs_dict[agent_id]
+            obs_np[0, agent_id, :len(a_obs)] = a_obs
+        return obs_np, None
     
     def close(self):
         """Close environment."""
@@ -481,4 +504,8 @@ class DummyVecEnvMultiDC(object):
     def get_eval_bw_res(self):
         """Return evaluation bullwhip results (for compatibility)."""
         return []
+
+    def decay_shaping_weight(self, decay_rate: float = 0.995) -> float:
+        """Anneal the heuristic shaping weight for the single eval env."""
+        return self.env_list[0].decay_shaping_weight(decay_rate)
 

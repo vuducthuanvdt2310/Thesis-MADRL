@@ -6,23 +6,35 @@ environment:
   max_days: 365  # Episode length
   
   lead_time:
-    # Supplier → DC (long-distance, variable)
+    # Supplier → DC (reduced from 15-25 to 7-14 days)
+    # With 15 retailers demanding ~1.41 units/step/SKU each, a DC sees ~10.5 units/step/SKU
+    # drain. At 25-day lead time the DC needed 250+ units buffer — causing high holding costs.
+    # At 7-14 days the DC only needs ~75-150 units buffer, reducing holding cost significantly
+    # and allowing faster recovery from stockouts, which prevents retailer backlog cascades.
     supplier_to_dc:
       distribution: "uniform"
       min: 7
       max: 14
     
-    # DC → Retailer (regional, fast)
+    # DC → Retailer (fixed at 1 day; variable lead time only for supplier→DC)
     dc_to_retailer:
-      distribution: "uniform"
+      distribution: "fixed"
       min: 1
-      max: 1  # Fixed 1-day delivery for easier training
+      max: 1
+
+# DC-to-Retailer exclusive assignment
+# Each retailer can only order from its assigned DC.
+# Values are 0-indexed retailer indices (not agent IDs).
+dc_assignments:
+  dc_0: [0, 1, 2, 3, 4, 5, 6]          # Retailers 0-6  (agent IDs 2-8)
+  dc_1: [7, 8, 9, 10, 11, 12, 13, 14]  # Retailers 7-14 (agent IDs 9-16)
 
 # Constraints (Termination conditions)
 constraints:
-  # Minimum on-shelf quantity for each Retailer x SKU
-  # If inventory drops below this value for ANY SKU at ANY retailer, the episode terminates.
-  on_shelf_quantity:
+  # Safety-stock threshold: a SOFT, continuous penalty (not termination).
+  # Demand mean ~1.41 units/step/SKU. Safety stock = ~3 days demand = ~5 units.
+  # Threshold must be calibrated to actual demand scale.
+  safety_stock_threshold:
     - [5.0, 5.0, 5.0]  # Retailer_0
     - [5.0, 5.0, 5.0]  # Retailer_1
     - [5.0, 5.0, 5.0]  # Retailer_2
@@ -39,132 +51,234 @@ constraints:
     - [5.0, 5.0, 5.0]  # Retailer_13
     - [5.0, 5.0, 5.0]  # Retailer_14
 
+  # Per-unit-per-step penalty for falling below safety_stock_threshold.
+  # Doubled relative to previous value: must be stronger than revenue signal to matter.
+  safety_stock_penalty: 1.0
+
 # Reward parameters
 rewards:
-  survival_reward: 0.0  # Bonus for each step not terminated
-  termination_penalty: 500.0  # Penalty for violation termination
+  survival_reward: 0.0
+  termination_penalty: 50.0
 
-# Cost parameters (Unit: 10,000 VND - e.g., 7.5 = 75,000 VND)
+  # === SALE REVENUE BONUS (key service-level incentive) ===
+  # Retailers earn this per unit of customer demand actually fulfilled each step.
+  # DCs earn this per unit shipped to retailers each step.
+  # Reduced from 5.0 → 2.5 for retailers: previously the very high revenue signal caused
+  # agents to massively over-order just to guarantee zero missed sales, resulting in
+  # holding costs dominating (~95%) the total cost breakdown. Lower revenue still rewards
+  # service level but gives holding/backlog costs meaningful weight.
+  #
+  # Calibration guide:
+  #   demand_mean ~ 1.41 units/step/SKU. At 100% service level a retailer earns:
+  #     3 SKUs * 1.41 * 2.5 = ~10.6 revenue/step
+  #   Holding 5 units costs: 5 * 1.5 = 7.5/step  → meaningful now
+  #   Ordering 3 units costs: 1.0 fixed + 1.2*3 = 4.6 variable = 5.6/order
+  #   => Agents must balance: order enough to serve demand but not so much they hoard.
+  sale_revenue_retailer: 2.5   # per unit of customer demand fulfilled (retailer)
+
+  # === COST WEIGHTS ===
+  # Multipliers applied to individual cost components to prioritize specific behaviors.
+  # For example, setting backlog_weight: 2.0 and holding_weight: 0.5 will strongly
+  # prioritize high service levels even if it means holding more inventory.
+  holding_weight: 0.3
+  backlog_weight: 1.5
+  ordering_weight: 0.1
+  # === EXCESS INVENTORY PENALTY ===
+  # Penalizes holding inventory above a target multiple of daily demand.
+  # This creates a soft cap on stocking behavior: holding a little buffer is fine,
+  # but hoarding 10x demand is heavily penalized.
+  #
+  # target_stock_days: number of days of demand to target (e.g. 5 = 5×mean demand)
+  #   For retailers: target = 5 × 1.41 ≈ 7 units/SKU
+  #   For DCs:       target = 14 × 10.5 ≈ 147 units/SKU (1 full lead-time cycle)
+  # excess_penalty_retailer: cost per unit above target, per step
+  # excess_penalty_dc:       cost per unit above target, per step
+  target_stock_days_retailer: 8    # target = 5 × mean_daily_demand
+  target_stock_days_dc: 14         # target = 14 × dc_daily_drain
+  excess_penalty_retailer: 0.3     # INCREASED: MUST be > sale_revenue (2.5) to stop hoarding!
+  excess_penalty_dc: 0.03          # per unit above target per step (DC scale much larger)
+
+  # Alpha-weighted local + global reward mixing.
+  # Each agent's reward = (1 - alpha) * local + alpha * global_mean.
+  # 0.0 = purely local (old behaviour), 0.2 = recommended, 1.0 = purely global.
+  alpha: 0.2
+
+  # === HEURISTIC-GUIDED REWARD SHAPING (Look-Back PBRS) ===
+  # Φ(s,a) = -k · |a†(s) - a|   where a†(s) is the Dynamic Base-Stock recommendation.
+  # Shaping bonus F = Φ(s_t, a_t) - Φ(s_{t-1}, a_{t-1}) , weighted by shaping_weight.
+  # shaping_weight is annealed by calling env.decay_shaping_weight() in the training loop.
+  #
+  # Tuning guide:
+  #   k            : keep small relative to base reward magnitudes.
+  #                  A value of 0.5 means a 10-unit deviation from the heuristic
+  #                  costs -5 in the shaping term (before /max_days normalisation).
+  #   demand_window: rolling window for heuristic μ/σ estimation (steps).
+  #                  Shorter → reacts faster; longer → smoother signal.
+  #   initial_weight: 1.0 → full shaping at episode 0; decayed by training loop.
+  #   enabled      : set to false to ablate shaping without code changes.
+  heuristic_shaping:
+    enabled: true
+    k: 0.5
+    demand_window: 14
+    initial_weight: 1.0
+
+# Cost parameters (Unit: 10,000 VND)
 costs:
-  # DC Costs (2 DCs × 3 SKUs)
+  # DC Costs (2 DCs x 3 SKUs)
+  # Holding cost kept low: DCs should hold MORE not less (they serve downstream retailers).
   holding_cost_dc:
-    - [0.08, 0.06, 0.12]  # DC_0: 800, 600, 1200 VND/day - realistic 0.5-2% annual rate
-    - [0.07, 0.05, 0.10]  # DC_1
+    - [0.05, 0.05, 0.05]  # DC_0 (slightly reduced to encourage higher DC safety stock)
+    - [0.05, 0.05, 0.05]  # DC_1
 
   backlog_cost_dc:
-    - [1.0, 0.8, 1.5]  # DC_0: 10k, 8k, 15k VND/day - reduced from overly punitive 30-40k
-    - [1.0, 0.8, 1.5]  # DC_1
-  
+    # HIGH penalty: DC stockout cascades to ALL its assigned retailers.
+    # Must be large enough that paying ordering cost < accepting backlog cost.
+    # With sale_revenue_dc=2.0, each unit NOT shipped = lost 2.0 revenue + backlog accumulation.
+    - [3.0, 2.5, 4.0]  # DC_0
+    - [3.0, 2.5, 4.0]  # DC_1
+
   fixed_order_cost_dc:
-    - [100.0, 100.0, 100.0]  # DC_0: 1M VND - High fixed cost to force bulk ordering (Cycle Stock)
-    - [100.0, 100.0, 100.0]  # DC_1
+    # Raised from 0.5 → 2.0: ensures a fixed ordering cost registers visibly
+    # on the chart even against the large market-price variable component.
+    # Still tiny vs DC holding/backlog (thousands per episode).
+    - [2.0, 2.0, 2.0]  # DC_0
+    - [2.0, 2.0, 2.0]  # DC_1
   
-  # Retailer Costs (3 Retailers × 3 SKUs)
-  # BALANCED to match DC cost magnitude - prevent reward explosion
+  # Retailer Costs (15 Retailers x 3 SKUs)
   holding_cost_retailer:
-    - [0.12, 0.10, 0.15]  # Retailer_0: HIGHER than DC to penalize overstocking at retail
-    - [0.12, 0.10, 0.15]  # Retailer_1
-    - [0.12, 0.10, 0.15]  # Retailer_2
-    - [0.12, 0.10, 0.15]  # Retailer_3
-    - [0.12, 0.10, 0.15]  # Retailer_4
-    - [0.12, 0.10, 0.15]  # Retailer_5
-    - [0.12, 0.10, 0.15]  # Retailer_6
-    - [0.12, 0.10, 0.15]  # Retailer_7
-    - [0.12, 0.10, 0.15]  # Retailer_8
-    - [0.12, 0.10, 0.15]  # Retailer_9
-    - [0.12, 0.10, 0.15]  # Retailer_10
-    - [0.12, 0.10, 0.15]  # Retailer_11
-    - [0.12, 0.10, 0.15]  # Retailer_12
-    - [0.12, 0.10, 0.15]  # Retailer_13
-    - [0.12, 0.10, 0.15]  # Retailer_14
+    # Demand mean=1.41/step. 
+    # Increased heavily: we want to penalize retailers for hoarding 100+ units.
+    # At holding_cost ~1.5/unit, 100 units = 150/step. 
+    # With backlog at 6.0/unit, retailers will balance ~4 days of stock instead of massive hoarding.
+    - [0.1, 0.1, 0.2]  # Retailer_0
+    - [0.1, 0.1, 0.2]  # Retailer_1
+    - [0.1, 0.1, 0.2]  # Retailer_2
+    - [0.1, 0.1, 0.2]  # Retailer_3
+    - [0.1, 0.1, 0.2]  # Retailer_4
+    - [0.1, 0.1, 0.2]  # Retailer_5
+    - [0.1, 0.1, 0.2]  # Retailer_6
+    - [0.1, 0.1, 0.2] # Retailer_7
+    - [0.1, 0.1, 0.2]  # Retailer_8
+    - [0.1, 0.1, 0.2]  # Retailer_9
+    - [0.1, 0.1, 0.2]  # Retailer_10
+    - [0.1, 0.1, 0.2]  # Retailer_11
+    - [0.1, 0.1, 0.2]  # Retailer_12
+    - [0.1, 0.1, 0.2]  # Retailer_13
+    - [0.1, 0.1, 0.2]  # Retailer_14
   
   backlog_cost_retailer:
-    - [2.0, 1.8, 2.5]  # Retailer_0: HIGHEST penalty (Lost Sales)
-    - [2.0, 1.8, 2.5]  # Retailer_1
-    - [2.0, 1.8, 2.5]  # Retailer_2
-    - [2.0, 1.8, 2.5]  # Retailer_3
-    - [2.0, 1.8, 2.5]  # Retailer_4
-    - [2.0, 1.8, 2.5]  # Retailer_5
-    - [2.0, 1.8, 2.5]  # Retailer_6
-    - [2.0, 1.8, 2.5]  # Retailer_7
-    - [2.0, 1.8, 2.5]  # Retailer_8
-    - [2.0, 1.8, 2.5]  # Retailer_9
-    - [2.0, 1.8, 2.5]  # Retailer_10
-    - [2.0, 1.8, 2.5]  # Retailer_11
-    - [2.0, 1.8, 2.5]  # Retailer_12
-    - [2.0, 1.8, 2.5]  # Retailer_13
-    - [2.0, 1.8, 2.5]  # Retailer_14
+    # HIGH penalty: must exceed sale_revenue_retailer=5.0 per unit.
+    # If 1 unit of backlog costs 6.0/step, agent must serve demand to avoid rapid loss.
+    # Backlog is CUMULATIVE: 1 unit unserved costs 6.0 * remaining_days (huge late-game).
+    - [6.3, 6.3, 6.3]  # Retailer_0
+    - [6.3, 6.3, 6.3]  # Retailer_1
+    - [6.3, 6.3, 6.3]  # Retailer_2
+    - [6.3, 6.3, 6.3]  # Retailer_3
+    - [6.3, 6.3, 6.3]  # Retailer_4
+    - [6.3, 6.3, 6.3]  # Retailer_5
+    - [6.3, 6.3, 6.3]  # Retailer_6
+    - [6.3, 6.3, 6.3]  # Retailer_7
+    - [6.3, 6.3, 6.3]  # Retailer_8
+    - [6.3, 6.3, 6.3]  # Retailer_9
+    - [6.3, 6.3, 6.3]  # Retailer_10
+    - [6.3, 6.3, 6.3]  # Retailer_11
+    - [6.3, 6.3, 6.3]  # Retailer_12
+    - [6.3, 6.3, 6.3]  # Retailer_13
+    - [6.3, 6.3, 6.3]  # Retailer_14
   
   fixed_order_cost_retailer:
-    - [2.5, 2.5, 2.5]  # Retailer_0
-    - [2.5, 2.5, 2.5]  # Retailer_1
-    - [2.5, 2.5, 2.5]  # Retailer_2
-    - [2.5, 2.5, 2.5]  # Retailer_3
-    - [2.5, 2.5, 2.5]  # Retailer_4
-    - [2.5, 2.5, 2.5]  # Retailer_5
-    - [2.5, 2.5, 2.5]  # Retailer_6
-    - [2.5, 2.5, 2.5]  # Retailer_7
-    - [2.5, 2.5, 2.5]  # Retailer_8
-    - [2.5, 2.5, 2.5]  # Retailer_9
-    - [2.5, 2.5, 2.5]  # Retailer_10
-    - [2.5, 2.5, 2.5]  # Retailer_11
-    - [2.5, 2.5, 2.5]  # Retailer_12
-    - [2.5, 2.5, 2.5]  # Retailer_13
-    - [2.5, 2.5, 2.5]  # Retailer_14
+    # Increased to 1.0/SKU to discourage over-ordering.
+    # Ordering near-demand (~2 units/SKU): (1.0 + 1.2×2)×3 = 10.2/step cost
+    #   vs revenue 21.2/step → net +11/step ✔ still profitable
+    # Ordering at max (10 units/SKU): (1.0 + 1.2×10)×3 = 39/step cost
+    #   vs revenue 21.2/step + holding 12.9/step → net −30/step ✘ strongly penalized
+    - [0.7, 0.7, 0.7]  # Retailer_0
+    - [0.7, 0.7, 0.7]  # Retailer_1
+    - [0.7, 0.7, 0.7]  # Retailer_2
+    - [0.7, 0.7, 0.7]  # Retailer_3
+    - [0.7, 0.7, 0.7]  # Retailer_4
+    - [0.7, 0.7, 0.7]  # Retailer_5
+    - [0.7, 0.7, 0.7]  # Retailer_6
+    - [0.7, 0.7, 0.7] # Retailer_7
+    - [0.7, 0.7, 0.7]  # Retailer_8
+    - [0.7, 0.7, 0.7]  # Retailer_9
+    - [0.7, 0.7, 0.7]  # Retailer_10
+    - [0.7, 0.7, 0.7]  # Retailer_11
+    - [0.7, 0.7, 0.7]  # Retailer_12
+    - [0.7, 0.7, 0.7]  # Retailer_13
+    - [0.7, 0.7, 0.7]  # Retailer_14
   
   # Variable costs for ordering from DCs (per unit transportation/handling)
   # Shape: (n_retailers, n_dcs, n_skus)
-  # REDUCED to balance with DC market prices - prevent high ordering costs
+  # Increased to 1.0-1.5/unit to penalize ordering well above demand.
+  # Each extra unit beyond demand costs 1.2/unit + 1.5 holding/step → strong deterrent to hoarding.
   variable_cost_retailer:
     # Retailer_0
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_1
-    - [ [0.6, 0.5, 0.8],
-        [0.5, 0.4, 0.7] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_2
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_3
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_4
-    - [ [0.6, 0.5, 0.8],
-        [0.5, 0.4, 0.7] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_5
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_6
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_7
-    - [ [0.6, 0.5, 0.8],
-        [0.5, 0.4, 0.7] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_8
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_9
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_10
-    - [ [0.6, 0.5, 0.8],
-        [0.5, 0.4, 0.7] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_11
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_12
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_13
-    - [ [0.6, 0.5, 0.8],
-        [0.5, 0.4, 0.7] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
     # Retailer_14
-    - [ [0.5, 0.4, 0.7],
-        [0.6, 0.5, 0.8] ]
+    - [ [0.5, 0.6, 0.7],
+        [0.5, 0.6, 0.7] ]
 
 # Market Pricing (for DC orders from supplier)
 pricing:
-  base_price: [10.0, 8.0, 15.0]  # Base prices per SKU
-  min_price: [6.0, 4.0, 10.0]    # Price floor
-  max_price: [18.0, 14.0, 25.0]  # Price ceiling
+  # Prices reduced 10x so variable ordering cost competes fairly with holding/backlog costs.
+  # At price=10, ordering 30 units cost 303 immediately vs backlog at 2.5/unit/step →
+  # agents rationally avoided ordering. At price=1.0, ordering 30 units = 33 cost,
+  # which breaks even against just ~1 unit of backlog for ~1 day → ordering is rational.
+  base_price: [50, 40, 45]  # Base prices per SKU (reduced from [10, 8, 15])
+  min_price: [40, 30, 35]   # Price floor  (reduced from [6, 4, 10])
+  max_price: [60, 50, 55]   # Price ceiling (reduced from [18, 14, 25])
   volatility: 0.15  # ±15% typical variation
+
+# base_price: [1.0, 0.8, 1.5]  # Base prices per SKU (reduced from [10, 8, 15])
+#   min_price: [0.6, 0.4, 1.0]   # Price floor  (reduced from [6, 4, 10])
+#   max_price: [1.8, 1.4, 2.5]   # Price ceiling (reduced from [18, 14, 25])
+# Customer Demand Configuration
+demand:
+  # Base mean and std for each SKU
+  mean: [1.41, 1.06, 0.77]
+  std:  [2, 1.4, 1.2]
+
+
+# mean: [1.41, 1.06, 0.77]
+#   std:  [1.99, 1.28, 1.06]

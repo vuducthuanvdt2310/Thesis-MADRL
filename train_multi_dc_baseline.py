@@ -112,18 +112,24 @@ if __name__ == "__main__":
         scenario_name="inventory_2echelon",
         num_agents=17,        # 2 DCs + 15 Retailers
         episode_length=365,  # Days per episode
-        num_env_steps=36500000, # Total training steps
-        n_rollout_threads=10, # Parallel environments
+        num_env_steps=560640, # Total training steps
+        n_rollout_threads=4, # Parallel environments
         n_training_threads=1, # Training threads
         algorithm_name="happo",
         experiment_name="full_training",
         use_eval=True,
         n_eval_rollout_threads=1,
-        eval_interval=1,     # Evaluate every 1 episodes (was 500 - too large!)
+        eval_interval=10,    # Evaluate every 10 episodes (1=too noisy for best-model tracking)
         eval_episodes=5,
         log_interval=1,
         n_warmup_evaluations=3,  # Minimum evaluations before early stopping kicks in
-        n_no_improvement_thres=1000  # Allow 20 evaluations without improvement before stopping
+        n_no_improvement_thres=1000,  # Allow 20 evaluations without improvement before stopping
+        
+        # --- EXPLORATION HYPERPARAMETERS ---
+        # Prevents the pure HAPPO policy from prematurely saturating at the maximum action (10)
+        entropy_coef=0.08,   # Penalizes deterministic actions to encourage exploration
+        std_x_coef=2.0,      # Increases initial action standard deviation
+        std_y_coef=1.5       # Allows the standard deviation to reach higher maximum bounds
     )
     
     all_args = parse_args(sys.argv[1:], parser)
@@ -249,8 +255,8 @@ if __name__ == "__main__":
         
         print(f"Environments created: {envs.num_envs} parallel envs")
         print(f"Agents per env: {num_agents}")
-        print(f"Observation spaces: DCs=30D, Retailers=36D")
-        print(f"Action spaces: DCs=3D continuous, Retailers=6D continuous\n")
+        print(f"Observation spaces: DCs=28D, Retailers=22D (zero-padded to 28D)")
+        print(f"Action spaces: DCs=3D continuous, Retailers=3D continuous\n")
 
         config = {
             "all_args": all_args,
@@ -294,6 +300,7 @@ if __name__ == "__main__":
             import traceback
             traceback.print_exc()
             print(f"{'='*70}\n")
+            break  # Stop training – do not proceed to the next seed on error
             
         finally:
             # Close environments
@@ -323,13 +330,13 @@ if __name__ == "__main__":
             # root_dir is the directory we want to compress
             shutil.make_archive(output_path, 'zip', run_dir)
             
-            print(f"✓ Zip archive created successfully!")
+            print("[OK] Zip archive created successfully!")
             print(f"  Location: {output_path}.zip")
             print(f"  Content:  {run_dir}")
             print("="*70)
             
         except Exception as e:
-            print(f"✗ Failed to create zip archive: {e}")
+            print(f"[FAIL] Failed to create zip archive: {e}")
             print("="*70)
 
     print("\n" + "="*70)

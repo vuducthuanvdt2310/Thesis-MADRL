@@ -29,7 +29,7 @@ from runners.separated.gnn_base_runner import GNNRunner as Runner
 def is_running_in_colab():
     """Check if the script is running in Google Colab."""
     try:
-        import google.colab
+        import google.colab  # type: ignore
         return True
     except ImportError:
         return False
@@ -38,10 +38,10 @@ def mount_google_drive():
     """Mount Google Drive in Colab."""
     try:
         if os.path.exists('/content/drive/MyDrive'):
-            print("✓ Google Drive already mounted!")
+            print("[OK] Google Drive already mounted!")
             return True
 
-        from google.colab import drive
+        from google.colab import drive  # type: ignore
         drive.mount('/content/drive', force_remount=False)
         print("✓ Google Drive mounted successfully!")
         return True
@@ -109,9 +109,10 @@ if __name__ == "__main__":
     # ================================================================
     # GNN-HAPPO SPECIFIC ARGUMENTS
     # ================================================================
-    parser.add_argument('--gnn_type', type=str, default='GAT',
+    parser.add_argument('--gnn_type', type=str, default='GCN',
                        choices=['GAT', 'GCN'],
-                       help='Type of GNN to use')
+                       help='Type of GNN to use. GCN is faster and more stable; '
+                            'use GAT for thesis experiments (--gnn_type GAT)')
     parser.add_argument('--gnn_hidden_dim', type=int, default=128,
                        help='Hidden dimension for GNN layers')
     parser.add_argument('--gnn_num_layers', type=int, default=2,
@@ -126,8 +127,8 @@ if __name__ == "__main__":
     parser.add_argument('--critic_pooling', type=str, default='mean',
                        choices=['mean', 'max', 'concat'],
                        help='Pooling method for critic')
-    parser.add_argument('--single_agent_obs_dim', type=int, default=36,
-                       help='Single agent observation dimension (use max: 36 for retailers)')
+    parser.add_argument('--single_agent_obs_dim', type=int, default=30,
+                       help='Single agent observation dimension (both DCs and Retailers: 30D)')
 
     # ================================================================
     # DEFAULT CONFIGURATION — IDENTICAL to baseline for fair comparison
@@ -138,8 +139,14 @@ if __name__ == "__main__":
         scenario_name="inventory_2echelon",
         num_agents=17,        # 2 DCs + 15 Retailers
         episode_length=365,   # Days per episode
-        num_env_steps=36500000,  # Total training steps (same as baseline)
-        n_rollout_threads=10,    # Parallel environments (same as baseline)
+        # ----------------------------------------------------------------
+        # Scale: reduce for quick runs; increase for thesis experiments.
+        #   Fast test  : num_env_steps=7300,  n_rollout_threads=2
+        #   Normal run : num_env_steps=3650000, n_rollout_threads=4
+        #   Full thesis: num_env_steps=36500000, n_rollout_threads=10
+        # ----------------------------------------------------------------
+        num_env_steps=36500000,   # 10,000 episodes (good starting point)
+        n_rollout_threads=4,     # Parallel environments — 4 is safe on most machines
         n_training_threads=1,
         algorithm_name="gnn_happo",
         experiment_name="gnn_happo_full",
@@ -149,13 +156,28 @@ if __name__ == "__main__":
         eval_episodes=5,
         log_interval=1,
         n_warmup_evaluations=3,
-        n_no_improvement_thres=1000
+        n_no_improvement_thres=1000,
+        
+        # --- EXPLORATION HYPERPARAMETERS ---
+        # entropy_coef: Higher = more entropy regularisation = less policy collapse.
+        #   0.01 (default) caused the policy mean to converge to a constant.
+        #   0.08 keeps the policy stochastic long enough to explore order quantities.
+        entropy_coef=0.08,
+        # std_x_coef: Scales the log_std input before sigmoid, effectively setting
+        #   the initial action std. Higher = wider initial distribution.
+        std_x_coef=2.0,
+        # std_y_coef: Maximum reachable action std = softplus(...) clamped to this value.
+        #   Previously 0.5 (max std ≈ 0.5), which was too small when the mean is near 3.0
+        #   because most samples still clip to 3.0. Increasing to 1.5 gives the agent
+        #   enough noise to sample actions down to 0 even when its mean is near 3.0.
+        std_y_coef=1.5,
     )
 
     all_args = parse_args(sys.argv[1:], parser)
 
-    # CRITICAL: Force single_agent_obs_dim to 36 (max obs dim for retailers)
-    all_args.single_agent_obs_dim = 36
+    # CRITICAL: single_agent_obs_dim must equal the LARGEST obs dim across all agents.
+    # DC obs = 28D, Retailer obs = 22D → max = 28. All observations are zero-padded to this.
+    all_args.single_agent_obs_dim = 28
 
     # --- Resume Training (Optional) ---
     RESUME_MODEL_DIR = None
@@ -166,6 +188,8 @@ if __name__ == "__main__":
     # --------------------------------------------------
 
     seeds = all_args.seed
+    if isinstance(seeds, int):
+        seeds = [seeds]   # Normalize: --seed 0 gives int; default gives list
 
     print("="*70)
     print("GNN-HAPPO Training (Proposed Method)")
@@ -237,8 +261,8 @@ if __name__ == "__main__":
 
         print(f"Environments created: {envs.num_envs} parallel envs")
         print(f"Agents per env: {num_agents}")
-        print(f"Observation spaces: DCs=27D, Retailers=36D (padded to 36D for GNN)")
-        print(f"Action spaces: DCs=3D continuous, Retailers=6D continuous\n")
+        print(f"Observation spaces: DC=27D, Retailer=21D (zero-padded to 27D for GNN)")
+        print(f"Action spaces: DCs=3D continuous, Retailers=3D continuous\n")
 
         config = {
             "all_args": all_args,
@@ -305,7 +329,7 @@ if __name__ == "__main__":
             print("="*70)
 
         except Exception as e:
-            print(f"✗ Failed to create zip archive: {e}")
+            print(f"[FAIL] Failed to create zip archive: {e}")
             print("="*70)
 
     print("\n" + "="*70)

@@ -1,3 +1,42 @@
-tensorboard --logdir "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\15Feb_1\run_seed_1\logs"
+tensorboard --logdir "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\14Apr_gnn_kaggle_vari\run_seed_1\logs"
 
+<<<<<<< HEAD
 python train_multi_dc_baseline.py --experiment_name "18Feb_02" --model_dir "results/18Feb_02/run_seed_1"
+=======
+python train_multi_dc_baseline.py --experiment_name "01Apr_base" --model_dir "results/05Mar_2base/run_seed_1"
+python train_multi_dc_gnn.py --experiment_name "14Apr_gnn_kaggle_vari2" --model_dir "results/14Apr_gnn_kaggle_vari2/run_seed_1"
+python train_multi_dc_gnn_1x7.py --experiment_name "1x7"
+python train_multi_dc_MAPPO.py --experiment_name "24Apr_MAPPO"
+python train_multi_dc_gnn_small.py --experiment_name "small"
+
+python test_trained_model.py --model_dir "results\01Apr_base\run_seed_1\models"  --num_episodes 5  --experiment_name "eval_base"
+python test_trained_model_mappo.py --model_dir "results\25Apr_MAPPO\run_seed_1\models"  --num_episodes 5  --experiment_name "eval_mappo"
+python test_trained_model_gnn.py --model_dir "results/14Apr_gnn_kaggle_vari/run_seed_1/models"  --num_episodes 5 --experiment_name "eval_gnn"
+python Test_baseline_basestock.py --experiment_name "basestock_v1"  --num_episodes 10
+
+python test_trained_model_gnn_4x40.py --model_dir "results/gnn_happo_4x40/run_seed_1/models" --episode_length 90 --num_episodes 1 --experiment_name "4x40"
+python test_trained_model_gnn_2x30.py --model_dir "results/03May_2x30/run_seed_1/models" --episode_length 90 --num_episodes 1 --experiment_name "2x30"
+python test_trained_model_gnn_1x7.py --model_dir "results/03May_2x30/run_seed_1/models" --episode_length 90 --num_episodes 1 --experiment_name "1x17"
+python test_trained_model_gnn.py --model_dir "results/small/run_seed_1/models" --episode_length 90 --num_episodes 1 --experiment_name "test_small"
+#small
+
+
+base= 01Apr
+mappo=25Apr
+gnn= 14Apr_gnn_kaggle_vari
+
+python test_trained_model.py --model_dir "results\06May_HAPPO\run_seed_1\models" --episode_length 120 --num_episodes 1  --experiment_name "eval_base-test"
+
+git add .
+git commit -m "update"
+git push origin main --force
+
+python test_trained_model.py --model_dir "results\21Apr_base_colab\run_seed_1\models" --episode_length 120 --num_episodes 20  --experiment_name "eval_base"
+python test_handover.py
+
+tensorboard --logdir results1
+tensorboard --logdir results_sensitive
+tensorboard --logdir results\lr_sensi
+tensorboard --logdir heuristiconoff
+tensorboard --logdir present
+>>>>>>> ba07f2faf9c67537da43464e1ae413e97180387a

@@ -37,11 +37,46 @@ class GNNRunner(object):
         self.num_agents = config['num_agents']
 
         # Build and normalize adjacency matrix
+        # Read dc_assignments from the same config the environment uses so the
+        # GNN graph matches the actual exclusive DC→Retailer sourcing topology.
         print("\nBuilding supply chain graph...")
-        adj = build_supply_chain_adjacency(n_dcs=2, n_retailers=15, self_loops=True)
+        # n_dcs is propagated by env_wrappers from the env config (1, 2, 4, ...).
+        n_dcs = int(getattr(self.all_args, 'n_dcs', 2))
+        n_retailers = self.num_agents - n_dcs
+
+        dc_assignments = None
+        try:
+            import yaml
+            config_path = getattr(self.all_args, 'env_config_path',
+                                  'configs/multi_dc_config.yaml')
+            with open(config_path, 'r') as f:
+                env_cfg = yaml.safe_load(f)
+            raw = env_cfg.get('dc_assignments', None)
+            if raw is not None:
+                # Iterate over all dc_<i> keys present in the config so the graph
+                # is correct for 1-DC, 2-DC, 4-DC, ... topologies alike.
+                dc_assignments = {}
+                for dc_id in range(n_dcs):
+                    key = f'dc_{dc_id}'
+                    if key not in raw:
+                        raise KeyError(
+                            f"dc_assignments missing '{key}' for n_dcs={n_dcs}"
+                        )
+                    dc_assignments[dc_id] = [n_dcs + idx for idx in raw[key]]
+                    print(f"  DC{dc_id} → agent IDs {dc_assignments[dc_id]}")
+        except Exception as e:
+            print(f"  [WARNING] Could not read dc_assignments ({e}); "
+                  f"falling back to fully-bipartite graph.")
+
+        adj = build_supply_chain_adjacency(
+            n_dcs=n_dcs,
+            n_retailers=n_retailers,
+            self_loops=True,
+            dc_assignments=dc_assignments,
+        )
         adj = normalize_adjacency(adj, method='symmetric')
         self.adj_tensor = torch.FloatTensor(adj).to(self.device)
-        print(f"✓ Graph created: {adj.shape[0]} nodes, {np.sum(adj > 0)} edges\n")
+        print(f"[OK] Graph created: {adj.shape[0]} nodes, {int(np.sum(adj > 0))} edges\n")
 
         # parameters
         self.env_name = self.all_args.env_name
@@ -179,17 +214,10 @@ class GNNRunner(object):
                 f.write("episode,steps,total_episode_reward\n")
 
         # Load training state if available
-        print(f"[DEBUG] self.model_dir = {self.model_dir}")
-
         if self.model_dir is not None:
             state_path = os.path.join(self.model_dir, 'models', 'training_state.pt')
-            print(f"[DEBUG] Checking path 1: {state_path}")
-            print(f"[DEBUG] Path 1 exists: {os.path.exists(state_path)}")
-
             if not os.path.exists(state_path):
                 state_path = os.path.join(self.model_dir, 'training_state.pt')
-                print(f"[DEBUG] Checking path 2: {state_path}")
-                print(f"[DEBUG] Path 2 exists: {os.path.exists(state_path)}")
 
             if os.path.exists(state_path):
                 state = torch.load(state_path, map_location='cpu', weights_only=False)
@@ -197,26 +225,30 @@ class GNNRunner(object):
                 best_reward = state.get('best_reward', float('-inf'))
                 best_bw = state.get('best_bw', [])
                 record = state.get('record', 0)
-                print(f"✓ Loaded training state from: {state_path}")
-                print(f"✓ Resuming training from episode {start_episode} with best reward {best_reward:.2f}")
+                print(f"[OK] Loaded training state from: {state_path}")
+                print(f"[OK] Resuming training from episode {start_episode} with best reward {best_reward:.2f}")
             else:
                 print(f"[WARNING] No training_state.pt found. Starting with best_reward = -inf")
 
         for episode in range(start_episode, episodes):
             episode_rewards = []
+            episode_sl_log = []  # Collect step SL values for TensorBoard logging
             total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads
 
             if episode % self.eval_interval == 0 and self.use_eval:
-                re, bw_res = self.eval()
+                eval_sl_list = []  # Collect eval SL values
+                re, bw_res = self.eval(eval_sl_list)
                 print()
                 print("Eval total episode reward: ", re, " Eval ordering fluctuation measurement (downstream to upstream): ", bw_res)
 
                 if re > best_reward and episode > 0:
                     self.save(reward=re)
 
-                # Log evaluation reward to TensorBoard
+                # Log evaluation reward and service level to TensorBoard
                 self.writter.add_scalar("eval/total_episode_reward", re, total_num_steps)
                 self.writter.add_scalar("eval/bullwhip_effect", np.mean(bw_res) if len(bw_res) > 0 else 0, total_num_steps)
+                if eval_sl_list:
+                    self.writter.add_scalar("eval/service_level", np.mean(eval_sl_list), total_num_steps)
 
                 if re > best_reward and episode > 0:
                     training_state = {
@@ -226,7 +258,7 @@ class GNNRunner(object):
                         'record': record
                     }
                     torch.save(training_state, os.path.join(self.save_dir, "training_state.pt"))
-                    print(f"✓ Better model saved! Reward: {re:.2f} (previous best: {best_reward:.2f})")
+                    print(f"[OK] Better model saved! Reward: {re:.2f} (previous best: {best_reward:.2f})")
                     best_reward = re
                     best_bw = bw_res
                     record = 0
@@ -267,6 +299,22 @@ class GNNRunner(object):
                        values, actions, action_log_probs, \
                        rnn_states, rnn_states_critic
 
+                # Collect step service level from infos for training logging
+                try:
+                    sl_vals = []
+                    for env_infos in infos:
+                        if isinstance(env_infos, (list, tuple)):
+                            for agent_info in env_infos:
+                                if isinstance(agent_info, dict) and 'step_service_level' in agent_info:
+                                    sl_vals.append(agent_info['step_service_level'])
+                                    break
+                        elif isinstance(env_infos, dict) and 'step_service_level' in env_infos:
+                            sl_vals.append(env_infos['step_service_level'])
+                    if sl_vals:
+                        episode_sl_log.append(np.mean(sl_vals))
+                except Exception:
+                    pass
+
                 self.insert(data)
 
             # Episode-level CSV logging
@@ -277,13 +325,24 @@ class GNNRunner(object):
             except Exception as e:
                 print(f"Error writing to CSV: {e}")
 
-            # Compute returns and update network
+            # ── Anneal heuristic shaping weight once per episode ─────────────
+            # decay_rate=0.998 → shaping_weight reaches ~0.13 after 1000 episodes
+            #                  → ~0.02 after 2000 episodes (effectively off)
+            # Adjust decay_rate in the call below to match your episode budget.
+            SHAPING_DECAY_RATE = 0.998
+            shaping_w = self.envs.decay_shaping_weight(decay_rate=SHAPING_DECAY_RATE)
+            self.writter.add_scalar("train/shaping_weight", shaping_w, total_num_steps)
+
             self.compute()
             train_infos = self.train()
 
             # Log training metrics to TensorBoard
             if episode % self.log_interval == 0:
                 self.log_train(train_infos, total_num_steps)
+                # Log average training service level
+                if episode_sl_log:
+                    self.writter.add_scalar("train/service_level", np.mean(episode_sl_log), total_num_steps)
+                episode_sl_log = []
 
             # Console log
             if episode % self.log_interval == 0:
@@ -521,7 +580,12 @@ class GNNRunner(object):
     # eval() — GNN version: uses structured obs + adjacency matrix
     # =========================================================================
     @torch.no_grad()
-    def eval(self):
+    def eval(self, eval_sl_list=None):
+        """Run evaluation episodes and return total reward + bullwhip.
+
+        Args:
+            eval_sl_list: Optional list to append per-step service level values into.
+        """
         overall_reward = []
         eval_num = self.eval_envs.get_eval_num()
 
@@ -553,7 +617,7 @@ class GNNRunner(object):
                             eval_rnn_states[:, agent_id],
                             eval_masks[:, agent_id],
                             None,
-                            deterministic=True)
+                            deterministic=False)  # Stochastic: step-varying actions in eval
 
                     eval_rnn_states[:, agent_id] = _t2n(temp_rnn_state)
                     action = eval_actions.detach().cpu().numpy()
@@ -599,6 +663,23 @@ class GNNRunner(object):
                 # Calculate system reward for this step (sum of all agents)
                 step_reward = np.sum(np.mean(eval_rewards, axis=0))
                 overall_reward.append(step_reward)
+
+                # Collect service level from infos
+                if eval_sl_list is not None:
+                    try:
+                        sl_vals = []
+                        for env_infos in eval_infos:
+                            if isinstance(env_infos, (list, tuple)):
+                                for agent_info in env_infos:
+                                    if isinstance(agent_info, dict) and 'step_service_level' in agent_info:
+                                        sl_vals.append(agent_info['step_service_level'])
+                                        break
+                            elif isinstance(env_infos, dict) and 'step_service_level' in env_infos:
+                                sl_vals.append(env_infos['step_service_level'])
+                        if sl_vals:
+                            eval_sl_list.append(np.mean(sl_vals))
+                    except Exception:
+                        pass
 
                 eval_dones_env = np.all(eval_dones, axis=1)
 
@@ -731,17 +812,24 @@ class GNNRunner(object):
                     critic_opt_path = max(critic_opt_files, key=lambda x: float(x.split('_reward_')[1].replace('.pt', '')))
                     self.policy[agent_id].critic_optimizer.load_state_dict(torch.load(critic_opt_path, map_location=self.device))
 
-        print("✓ All models loaded successfully!")
+        print("[OK] All models loaded successfully!")
 
     # =========================================================================
     # log_train() — same as CRunner.log_train()
     # =========================================================================
     def log_train(self, train_infos, total_num_steps):
         total_agent_reward = 0
+        total_policy_loss = 0
+        total_value_loss = 0
+
         for agent_id in range(self.num_agents):
             agent_rew = np.mean(self.buffer[agent_id].rewards)
             train_infos[agent_id]["average_step_rewards"] = agent_rew
             total_agent_reward += agent_rew
+            
+            # Accumulate losses to calculate an average for the whole model
+            total_policy_loss += train_infos[agent_id].get('policy_loss', 0)
+            total_value_loss += train_infos[agent_id].get('value_loss', 0)
 
             for k, v in train_infos[agent_id].items():
                 agent_k = "agent%i/" % agent_id + k
@@ -750,6 +838,10 @@ class GNNRunner(object):
         # Log total system reward (sum of all agents)
         self.writter.add_scalar("system/total_average_step_reward", total_agent_reward, total_num_steps)
         self.writter.add_scalar("system/total_episode_reward_estimated", total_agent_reward * self.episode_length, total_num_steps)
+        
+        # Log average losses across all agents
+        self.writter.add_scalar("system/average_policy_loss", total_policy_loss / self.num_agents, total_num_steps)
+        self.writter.add_scalar("system/average_value_loss", total_value_loss / self.num_agents, total_num_steps)
 
     def log_env(self, env_infos, total_num_steps):
         for k, v in env_infos.items():

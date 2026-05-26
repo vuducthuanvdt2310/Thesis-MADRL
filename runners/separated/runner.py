@@ -35,19 +35,13 @@ class CRunner(BaseRunner):
                 f.write("episode,steps,total_episode_reward\n")
 
         # Load training state if available and model_dir is set
-        print(f"[DEBUG] self.model_dir = {self.model_dir}")
-        
+
         if self.model_dir is not None:
             # Try loading from models/ subdirectory first (where it's actually saved)
             state_path = os.path.join(self.model_dir, 'models', 'training_state.pt')
-            print(f"[DEBUG] Checking path 1: {state_path}")
-            print(f"[DEBUG] Path 1 exists: {os.path.exists(state_path)}")
-            
             if not os.path.exists(state_path):
                 # Fallback to model_dir directly
                 state_path = os.path.join(self.model_dir, 'training_state.pt')
-                print(f"[DEBUG] Checking path 2: {state_path}")
-                print(f"[DEBUG] Path 2 exists: {os.path.exists(state_path)}")
             
             if os.path.exists(state_path):
                 # Load to CPU to avoid issues if saved on GPU
@@ -64,11 +58,13 @@ class CRunner(BaseRunner):
 
         for episode in range(start_episode, episodes):
             episode_rewards = []
+            episode_sl_log = []  # Collect step SL values during training for logging
             # Calculate total steps for logging (used in eval and training logs)
             total_num_steps = (episode + 1) * self.episode_length * self.n_rollout_threads
 
             if episode % self.eval_interval == 0 and self.use_eval:
-                re, bw_res = self.eval()
+                eval_sl_list = []  # Collect eval SL values
+                re, bw_res = self.eval(eval_sl_list)
                 print()
                 print("Eval total episode reward: ", re, " Eval ordering fluctuation measurement (downstream to upstream): ", bw_res)
                 
@@ -79,9 +75,11 @@ class CRunner(BaseRunner):
                 if(re > best_reward and episode > 0):
                     self.save(reward=re)
                 
-                # Log evaluation reward to TensorBoard
+                # Log evaluation reward and service level to TensorBoard
                 self.writter.add_scalar("eval/total_episode_reward", re, total_num_steps)
                 self.writter.add_scalar("eval/bullwhip_effect", np.mean(bw_res) if len(bw_res) > 0 else 0, total_num_steps)
+                if eval_sl_list:
+                    self.writter.add_scalar("eval/service_level", np.mean(eval_sl_list), total_num_steps)
 
                 if(re > best_reward and episode > 0):
                     # Save training state
@@ -133,6 +131,17 @@ class CRunner(BaseRunner):
                        values, actions, action_log_probs, \
                        rnn_states, rnn_states_critic 
                 
+                # Collect step service level from infos for training logging
+                # infos: list of dicts per env (length = n_rollout_threads), each containing
+                # 'step_service_level' for every agent (same value replicated across agents)
+                try:
+                    step_sl_vals = [info.get('step_service_level', None) for env_info in infos for info in (env_info if isinstance(env_info, (list, tuple)) else [env_info])]
+                    step_sl_vals = [v for v in step_sl_vals if v is not None]
+                    if step_sl_vals:
+                        episode_sl_log.append(np.mean(step_sl_vals))
+                except Exception:
+                    pass
+                
                 # insert data into buffer
                 self.insert(data)
 
@@ -147,6 +156,15 @@ class CRunner(BaseRunner):
                 print(f"Error writing to CSV: {e}")
             # -------------------------------------------------------
 
+            # ── Anneal heuristic shaping weight once per episode ─────────────
+            # Mirrors gnn_base_runner.py exactly so baseline and GNN are comparable.
+            # decay_rate=0.998 → shaping_weight reaches ~0.13 after 1000 episodes
+            #                  → ~0.02 after 2000 episodes (effectively off)
+            SHAPING_DECAY_RATE = 0.998
+            shaping_w = self.envs.decay_shaping_weight(decay_rate=SHAPING_DECAY_RATE)
+            self.writter.add_scalar("train/shaping_weight", shaping_w, total_num_steps)
+            # ─────────────────────────────────────────────────────────────────
+
             # compute return and update network
             self.compute()
             train_infos = self.train()
@@ -155,9 +173,12 @@ class CRunner(BaseRunner):
             # total_num_steps is now calculated at start of loop
 
             # Log training metrics to TensorBoard
-            # Ensure logging happens based on log_interval to capture gradual improvement consistently
             if episode % self.log_interval == 0:
                 self.log_train(train_infos, total_num_steps)
+                # Log average training service level
+                if episode_sl_log:
+                    self.writter.add_scalar("train/service_level", np.mean(episode_sl_log), total_num_steps)
+                episode_sl_log = []
 
             # Console log information (keep episode-based for readability)
             if episode % self.log_interval == 0:
@@ -269,8 +290,8 @@ class CRunner(BaseRunner):
             if self.algorithm_name == "gnn_happo":
                 # GNN-HAPPO requires adjacency matrix and structured observations [batch, n_agents, obs_dim]
                 # Reconstruct structured observations from individual agent buffers
+                max_obs_dim = max(self.envs.observation_space[i].shape[0] for i in range(self.num_agents))
                 batch_size = self.buffer[agent_id].obs[step].shape[0]
-                max_obs_dim = 36  # Max dimension (retailers have 36D, DCs have 27D)
                 obs_structured = np.zeros((batch_size, self.num_agents, max_obs_dim), dtype=np.float32)
                 
                 # Fill in observations for all agents
@@ -298,7 +319,8 @@ class CRunner(BaseRunner):
                         self.buffer[agent_id].rnn_states[step],
                         self.buffer[agent_id].rnn_states_critic[step],
                         self.buffer[agent_id].masks[step],
-                        avail_actions)
+                        avail_actions,
+                        agent_id=agent_id)
 
             value_collector.append(_t2n(value))
             action_numpy = _t2n(action)
@@ -375,23 +397,54 @@ class CRunner(BaseRunner):
 
     def log_train(self, train_infos, total_num_steps):
         total_agent_reward = 0
+        dc_reward = 0
+        retailer_reward = 0
+        total_policy_loss = 0
+        total_value_loss = 0
+
         for agent_id in range(self.num_agents):
             agent_rew = np.mean(self.buffer[agent_id].rewards)
             train_infos[agent_id]["average_step_rewards"] = agent_rew
             total_agent_reward += agent_rew
+
+            # Accumulate losses to calculate an average for the whole model
+            total_policy_loss += train_infos[agent_id].get('policy_loss', 0)
+            total_value_loss += train_infos[agent_id].get('value_loss', 0)
+
+            # Log each agent's reward individually
+            self.writter.add_scalar(f"agent_reward/agent{agent_id}", agent_rew, total_num_steps)
             
+            # Log all training info per agent (policy_loss, value_loss, etc.)
             for k, v in train_infos[agent_id].items():
                 agent_k = "agent%i/" % agent_id + k
                 self.writter.add_scalars(agent_k, {agent_k: v}, total_num_steps)
-        
-        # Log total system reward (sum of all agents)
+
+            # Accumulate group rewards (topology-aware: use args.n_dcs).
+            n_dcs = int(getattr(self.all_args, 'n_dcs', 2))
+            if agent_id < n_dcs:
+                dc_reward += agent_rew
+            else:
+                retailer_reward += agent_rew
+
+        # Log group-level and system-level totals
+        self.writter.add_scalar("system/dc_total_reward", dc_reward, total_num_steps)
+        self.writter.add_scalar("system/retailer_total_reward", retailer_reward, total_num_steps)
         self.writter.add_scalar("system/total_average_step_reward", total_agent_reward, total_num_steps)
-        # Also log the estimated total episode reward (step_reward * episode_length) for easier comparison with eval
+        # Estimated episode reward for easy comparison with eval
         self.writter.add_scalar("system/total_episode_reward_estimated", total_agent_reward * self.episode_length, total_num_steps)
+        
+        # Log average losses across all agents
+        self.writter.add_scalar("system/average_policy_loss", total_policy_loss / self.num_agents, total_num_steps)
+        self.writter.add_scalar("system/average_value_loss", total_value_loss / self.num_agents, total_num_steps)
     
     @torch.no_grad()
-    def eval(self):
-        
+    def eval(self, eval_sl_list=None):
+        """Run evaluation episodes and return total reward + bullwhip.
+
+        Args:
+            eval_sl_list: Optional list to append per-step service level values into.
+                          Populated in-place so the caller can log them.
+        """
         overall_reward = []
         eval_num = self.eval_envs.get_eval_num()
 
@@ -405,12 +458,8 @@ class CRunner(BaseRunner):
             
             # For GNN-HAPPO: Reshape observations to [batch, n_agents, obs_dim]
             if self.algorithm_name == "gnn_happo":
-                # eval_obs is a list/array of per-environment observations
-                # Each env has observations for all agents
-                # We need to convert to [batch, n_agents, obs_dim] where obs_dim may vary per agent
-                
-                # Get max obs dim for padding (retailers have 36D, DCs have 27D)
-                max_obs_dim = max([self.envs.observation_space[i].shape[0] for i in range(self.num_agents)])
+                # Get max obs dim for padding (DC=28D max)
+                max_obs_dim = 28
                 
                 # Create structured observations [batch, n_agents, max_obs_dim]
                 eval_obs_structured = np.zeros((self.n_eval_rollout_threads, self.num_agents, max_obs_dim), dtype=np.float32)
@@ -445,7 +494,7 @@ class CRunner(BaseRunner):
                                 eval_rnn_states[:,agent_id],
                                 eval_masks[:,agent_id],
                                 None,
-                                deterministic=True)
+                                deterministic=False)  # Stochastic: step-varying actions
                     else:
                         # Standard HAPPO
                         eval_actions, temp_rnn_state = \
@@ -454,7 +503,8 @@ class CRunner(BaseRunner):
                                 eval_rnn_states[:,agent_id],
                                 eval_masks[:,agent_id],
                                 None,
-                                deterministic=True)
+                                deterministic=False,
+                                agent_id=agent_id)  # Stochastic: step-varying actions
                     
                     eval_rnn_states[:,agent_id]=_t2n(temp_rnn_state)
                     action = eval_actions.detach().cpu().numpy()
@@ -509,6 +559,24 @@ class CRunner(BaseRunner):
                 # eval_rewards shape: [n_threads, n_agents, 1]
                 step_reward = np.sum(np.mean(eval_rewards, axis=0))
                 overall_reward.append(step_reward)
+
+                # Collect service level from infos
+                if eval_sl_list is not None:
+                    try:
+                        sl_vals = []
+                        for env_infos in eval_infos:
+                            # env_infos may be a list/dict per agent
+                            if isinstance(env_infos, (list, tuple)):
+                                for agent_info in env_infos:
+                                    if isinstance(agent_info, dict) and 'step_service_level' in agent_info:
+                                        sl_vals.append(agent_info['step_service_level'])
+                                        break  # same value for all agents in the env
+                            elif isinstance(env_infos, dict) and 'step_service_level' in env_infos:
+                                sl_vals.append(env_infos['step_service_level'])
+                        if sl_vals:
+                            eval_sl_list.append(np.mean(sl_vals))
+                    except Exception:
+                        pass
 
                 eval_dones_env = np.all(eval_dones, axis=1)
 

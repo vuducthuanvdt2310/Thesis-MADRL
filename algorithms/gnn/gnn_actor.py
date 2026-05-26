@@ -51,6 +51,9 @@ class GNNActor(nn.Module):
         self.hidden_size = args.hidden_size
         self.args = args
         self.n_agents = n_agents
+        # Topology-aware DC count. Defaults to 2 so legacy callers (the 2-DC
+        # baseline) keep their old behaviour when n_dcs is not set on args.
+        self.n_dcs = int(getattr(args, 'n_dcs', 2))
         self._gain = args.gain
         self._use_orthogonal = args.use_orthogonal
         self._use_policy_active_masks = args.use_policy_active_masks
@@ -101,9 +104,22 @@ class GNNActor(nn.Module):
             self.rnn = RNNLayer(self.hidden_size, self.hidden_size, 
                                self._recurrent_N, self._use_orthogonal)
         
-        # Action head (same as standard HAPPO)
-        self.act = ACTLayer(action_space, self.hidden_size, 
-                           self._use_orthogonal, self._gain, args)
+        # Action head: pass action bounds so DiagGaussian uses tanh-squashing
+        # to map outputs into [action_low, action_low + action_range].
+        # Without action_low/action_range, DiagGaussian outputs a raw (unscaled)
+        # Gaussian centred near 0 (orthogonal init with gain=0.01), which gets
+        # hard-clipped to the minimum bound (1 for retailers, 0 for DCs) by
+        # _clip_actions in the environment — causing the "always order 1" behaviour.
+        if hasattr(action_space, 'high') and hasattr(action_space, 'low'):
+            action_low   = float(action_space.low[0])
+            action_range = float(action_space.high[0] - action_space.low[0])
+        else:
+            action_low   = None
+            action_range = None
+
+        self.act = ACTLayer(action_space, self.hidden_size,
+                           self._use_orthogonal, self._gain, args,
+                           action_low, action_range)
         
         self.to(device)
     
@@ -150,8 +166,32 @@ class GNNActor(nn.Module):
         if self._use_naive_recurrent_policy or self._use_recurrent_policy:
             actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
         
+        # ── Approach A: extract reference_demand from raw observation ─────────
+        # Retailers (agent_id >= self.n_dcs): demand at obs indices [6, 13, 20],
+        # normalised by demand_cap ≈ 3.8. Denormalise back to physical units so
+        # DiagGaussian can compute a sensible adjustment (±1 unit around the real
+        # demand).
+        # DCs (agent_id < self.n_dcs): no direct demand obs → pass None, use
+        # tanh fallback. self.n_dcs is propagated by env_wrappers from the env
+        # config (1, 2, 4, ...), so this works for every topology.
+        #
+        # obs shape: [batch, n_agents, padded_obs_dim=28]
+        # agent raw obs: obs[:, agent_id, :]   shape: [batch, 28]
+        RETAILER_DEMAND_INDICES = [6, 13, 20]  # indices in the 28D padded obs
+        RETAILER_DEMAND_NORM    = 3.8          # demand_cap = mean + 3×std
+        if agent_id >= self.n_dcs:  # Retailer
+            agent_raw_obs    = obs[:, agent_id, :]                             # [batch, 28]
+            ref_demand_norm  = agent_raw_obs[:, RETAILER_DEMAND_INDICES]       # [batch, 3]
+            reference_demand = ref_demand_norm * RETAILER_DEMAND_NORM          # [batch, 3] physical
+        else:              # DC — no explicit demand feature, keep tanh squashing
+            reference_demand = None
+        # ─────────────────────────────────────────────────────────────────────
+
         # Action distribution
-        actions, action_log_probs = self.act(actor_features, available_actions, deterministic)
+        actions, action_log_probs = self.act(
+            actor_features, available_actions, deterministic,
+            reference_demand=reference_demand
+        )
         
         return actions, action_log_probs, rnn_states
     
@@ -195,6 +235,18 @@ class GNNActor(nn.Module):
         if self._use_naive_recurrent_policy or self._use_recurrent_policy:
             actor_features, rnn_states = self.rnn(actor_features, rnn_states, masks)
         
+        # ── Approach A: same demand extraction as forward() ───────────────────
+        # Uses self.n_dcs (topology-aware) instead of the legacy hardcoded 2.
+        RETAILER_DEMAND_INDICES = [6, 13, 20]
+        RETAILER_DEMAND_NORM    = 3.8
+        if agent_id >= self.n_dcs:
+            agent_raw_obs    = obs[:, agent_id, :]
+            ref_demand_norm  = agent_raw_obs[:, RETAILER_DEMAND_INDICES]
+            reference_demand = ref_demand_norm * RETAILER_DEMAND_NORM
+        else:
+            reference_demand = None
+        # ─────────────────────────────────────────────────────────────────────
+
         # Evaluate actions
         if self.args.algorithm_name == "hatrpo":
             action_log_probs, dist_entropy, action_mu, action_std, all_probs = \
@@ -206,7 +258,8 @@ class GNNActor(nn.Module):
         else:
             action_log_probs, dist_entropy = self.act.evaluate_actions(
                 actor_features, action, available_actions,
-                active_masks=active_masks if self._use_policy_active_masks else None
+                active_masks=active_masks if self._use_policy_active_masks else None,
+                reference_demand=reference_demand
             )
             return action_log_probs, dist_entropy
 

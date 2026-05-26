@@ -184,6 +184,8 @@ class GATLayer(nn.Module):
         
         # Softmax to get attention weights: [batch, num_heads, n_agents, n_agents]
         attention = F.softmax(e, dim=-1)
+        # Guard: if a row is fully masked (-inf), softmax produces NaN. Replace with 0.
+        attention = torch.nan_to_num(attention, nan=0.0)
         attention = self.dropout_layer(attention)
         
         # Aggregate neighbor features using attention weights

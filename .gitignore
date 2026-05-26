@@ -1,9 +1,87 @@
-# Exclude nested git repository
+# ─── Nested repo / archives ───────────────────────────────────────────
 SC_reinforcement_learning - backorder_2612real/
-
-# Exclude training results (models, logs, checkpoints)
-results/
-
-# Exclude zip files
 *.zip
-09Feb_test1.zip
+
+# ─── Python caches / bytecode ─────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# ─── IDE / OS ─────────────────────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.claude/settings.local.json
+
+# ─── Training output / results ────────────────────────────────────────
+results/
+results1/
+results_sensitive/
+results_entropy/
+results_hyper/
+
+robustness_results/
+validation_output/
+heuristiconoff/
+bullwhip_output/
+convergence_results/
+saves/
+test_data/
+training_log.txt
+
+# ─── TensorBoard / logs ───────────────────────────────────────────────
+present/
+runs/
+logs/
+events.out.tfevents.*
+
+# ─── Plotting / charting scripts (analysis only) ──────────────────────
+plot_*.py
+replot_*.py
+plots/
+
+# ─── Validation / ANOVA / statistical scripts ─────────────────────────
+Validate_*.py
+
+# ─── Robustness / sensitivity / scenario analysis ─────────────────────
+robustness_comparison.py
+sensitivity_analysis_*.py
+sample_size_calculation.py
+Network_demand_scenario.py
+build_network_demand_scenario_input.py
+train_sensitivity_*.py
+
+# ─── MILP benchmark ──────────────────────────────────────────────────
+solve_milp_*.py
+
+# ─── Misc analysis / thesis helpers / one-off scripts ─────────────────
+bullwhip_scatter.py
+lead_time_comparison.py
+build_model_comparison_xlsx.py
+summarize_decision_variable.py
+_chap5_cost.py
+optuna_search.py
+debug_action_generation.py
+verify_3d_test.py
+test_heuristic_teacher.py
+test_episode_convergence_gnn.py
+test_evaluator_topology.py
+
+# ─── Generated artifacts in repo root ─────────────────────────────────
+*.png
+*.html
+*.pdf
+*.gif
+*.svg
+handover_log.csv
+
+# ─── Resolved markdown notes (auto-generated) ─────────────────────────
+*.md.resolved

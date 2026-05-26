@@ -65,41 +65,42 @@ class GNN_HAPPO():
     
     def _reconstruct_structured_obs(self, share_obs_batch):
         """
-        Reconstruct structured observations [batch, n_agents, max_obs_dim] from concatenated share_obs_batch.
-        
+        Reconstruct structured observations [batch, n_agents, obs_dim] from concatenated share_obs_batch.
+
+        All agents now have uniform 28D observations (DC=28D, Retailer=22D zero-padded to 28D), so:
+            total_obs_dim = n_agents * 28  (e.g. 17 * 28 = 476)
+
         Args:
             share_obs_batch: Concatenated observations [batch, total_obs_dim]
-                where total_obs_dim = 2*27 + 15*36 = 594
-        
+
         Returns:
-            obs_structured: [batch, n_agents, max_obs_dim] where max_obs_dim=36
+            obs_structured: [batch, n_agents, 28]
         """
         batch_size = share_obs_batch.shape[0]
         n_agents = self.n_agents
-        max_obs_dim = 36
-        
+        obs_dim = 28   # max obs dim: DC=28D (retailer 22D zero-padded to 28D)
+        expected_total = n_agents * obs_dim
+
         # Convert to numpy for slicing
         if isinstance(share_obs_batch, torch.Tensor):
             share_obs_np = share_obs_batch.detach().cpu().numpy()
         else:
-            share_obs_np = share_obs_batch
-        
-        obs_structured = np.zeros((batch_size, n_agents, max_obs_dim), dtype=np.float32)
-        
-        # Extract observations for each agent from concatenated array
-        # First 2 agents (DCs): 27D each
-        # Next 15 agents (Retailers): 36D each
+            share_obs_np = np.asarray(share_obs_batch, dtype=np.float32)
+
+        actual_total = share_obs_np.shape[-1]
+        assert actual_total == expected_total, (
+            f"[GNN Trainer] share_obs_batch last dim {actual_total} != "
+            f"n_agents*obs_dim ({n_agents}*{obs_dim}={expected_total}). "
+            f"Check that share_observation_space is built as {n_agents}x{obs_dim}D."
+        )
+
+        obs_structured = np.zeros((batch_size, n_agents, obs_dim), dtype=np.float32)
+
         offset = 0
         for agent_id in range(n_agents):
-            if agent_id < 2:  # DCs
-                obs_dim = 27
-            else:  # Retailers
-                obs_dim = 36
-            
-            # Extract this agent's observations and pad if necessary
-            obs_structured[:, agent_id, :obs_dim] = share_obs_np[:, offset:offset+obs_dim]
+            obs_structured[:, agent_id, :] = share_obs_np[:, offset:offset + obs_dim]
             offset += obs_dim
-        
+
         return obs_structured
     
     def cal_value_loss(self, values, value_preds_batch, return_batch, active_masks_batch):
@@ -204,6 +205,7 @@ class GNN_HAPPO():
             )
         else:
             actor_grad_norm = get_gard_norm(self.policy.actor.parameters())
+        actor_grad_norm = float(actor_grad_norm)
         
         self.policy.actor_optimizer.step()
         

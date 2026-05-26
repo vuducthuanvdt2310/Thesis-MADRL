@@ -10,7 +10,7 @@ class ACTLayer(nn.Module):
     :param use_orthogonal: (bool) whether to use orthogonal initialization.
     :param gain: (float) gain of the output layer of the network.
     """
-    def __init__(self, action_space, inputs_dim, use_orthogonal, gain, args=None):
+    def __init__(self, action_space, inputs_dim, use_orthogonal, gain, args=None, action_low=None, action_range=None):
         super(ACTLayer, self).__init__()
         self.mixed_action = False
         self.multi_discrete = False
@@ -20,7 +20,7 @@ class ACTLayer(nn.Module):
             self.action_out = Categorical(inputs_dim, action_dim, use_orthogonal, gain)
         elif action_space.__class__.__name__ == "Box":
             action_dim = action_space.shape[0]
-            self.action_out = DiagGaussian(inputs_dim, action_dim, use_orthogonal, gain, args)
+            self.action_out = DiagGaussian(inputs_dim, action_dim, use_orthogonal, gain, args, action_low, action_range)
         elif action_space.__class__.__name__ == "MultiBinary":
             action_dim = action_space.shape[0]
             self.action_out = Bernoulli(inputs_dim, action_dim, use_orthogonal, gain)
@@ -35,16 +35,18 @@ class ACTLayer(nn.Module):
             self.mixed_action = True
             continous_dim = action_space[0].shape[0]
             discrete_dim = action_space[1].n
-            self.action_outs = nn.ModuleList([DiagGaussian(inputs_dim, continous_dim, use_orthogonal, gain, args),
+            self.action_outs = nn.ModuleList([DiagGaussian(inputs_dim, continous_dim, use_orthogonal, gain, args, action_low, action_range),
                                               Categorical(inputs_dim, discrete_dim, use_orthogonal, gain)])
     
-    def forward(self, x, available_actions=None, deterministic=False):
+    def forward(self, x, available_actions=None, deterministic=False, reference_demand=None):
         """
         Compute actions and action logprobs from given input.
         :param x: (torch.Tensor) input to network.
         :param available_actions: (torch.Tensor) denotes which actions are available to agent
                                   (if None, all actions available)
         :param deterministic: (bool) whether to sample from action distribution or return the mode.
+        :param reference_demand: (torch.Tensor or None) per-SKU demand for Approach A.
+                                 Shape [batch, n_skus]. Pass None to use standard tanh squashing.
 
         :return actions: (torch.Tensor) actions to take.
         :return action_log_probs: (torch.Tensor) log probabilities of taken actions.
@@ -76,8 +78,9 @@ class ACTLayer(nn.Module):
             action_log_probs = torch.cat(action_log_probs, -1)
         
         else:
-            action_logits = self.action_out(x, available_actions)
-            actions = action_logits.mode() if deterministic else action_logits.sample() 
+            # Pass reference_demand to DiagGaussian (ignored by Categorical/Bernoulli)
+            action_logits = self.action_out(x, available_actions, reference_demand)
+            actions = action_logits.mode() if deterministic else action_logits.sample()
             action_log_probs = action_logits.log_probs(actions)
         
         return actions, action_log_probs
@@ -104,14 +107,16 @@ class ACTLayer(nn.Module):
         
         return action_probs
 
-    def evaluate_actions(self, x, action, available_actions=None, active_masks=None):
+    def evaluate_actions(self, x, action, available_actions=None, active_masks=None,
+                         reference_demand=None):
         """
         Compute log probability and entropy of given actions.
         :param x: (torch.Tensor) input to network.
         :param action: (torch.Tensor) actions whose entropy and log probability to evaluate.
         :param available_actions: (torch.Tensor) denotes which actions are available to agent
-                                                              (if None, all actions available)
+                                                               (if None, all actions available)
         :param active_masks: (torch.Tensor) denotes whether an agent is active or dead.
+        :param reference_demand: (torch.Tensor or None) per-SKU demand for Approach A.
 
         :return action_log_probs: (torch.Tensor) log probabilities of the input actions.
         :return dist_entropy: (torch.Tensor) action distribution entropy for the given inputs.
@@ -152,7 +157,8 @@ class ACTLayer(nn.Module):
             dist_entropy = torch.tensor(dist_entropy).mean()
         
         else:
-            action_logits = self.action_out(x, available_actions)
+            # Pass reference_demand to DiagGaussian for Approach A mean anchoring
+            action_logits = self.action_out(x, available_actions, reference_demand)
             action_log_probs = action_logits.log_probs(action)
             if active_masks is not None:
                 if self.action_type=="Discrete":
