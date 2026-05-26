@@ -48,24 +48,14 @@ plot_*.py
 replot_*.py
 plots/
 
-# ─── Validation / ANOVA / statistical scripts ─────────────────────────
-Validate_*.py
 
-# ─── Robustness / sensitivity / scenario analysis ─────────────────────
-robustness_comparison.py
-sensitivity_analysis_*.py
-sample_size_calculation.py
-Network_demand_scenario.py
-build_network_demand_scenario_input.py
+
 train_sensitivity_*.py
 
 # ─── MILP benchmark ──────────────────────────────────────────────────
 solve_milp_*.py
 
-# ─── Misc analysis / thesis helpers / one-off scripts ─────────────────
-bullwhip_scatter.py
-lead_time_comparison.py
-build_model_comparison_xlsx.py
+
 summarize_decision_variable.py
 _chap5_cost.py
 optuna_search.py
