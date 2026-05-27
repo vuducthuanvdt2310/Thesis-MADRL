@@ -1,12 +1,10 @@
 """Generate the input workbook Network_demand_scenario_input.xlsx.
 
 Two sheets ('Total_Cost' and 'Fill_Rate'), each with one row per
-(Instance, Scenario) pair and one column per model. The Instance 2 (2x15) rows
-are pre-populated from evaluation_results/robustness_comparison/robustness_summary.csv
-so the user can see the expected format and the magnitudes. The Instance 1 (1x7)
-and Instance 3 (2x30) rows are left blank for the user to fill in.
+(Network, Scenario) pair and one column per model.  All 10 network
+topologies are included.  Cells are yellow (to be filled by user).
 
-Run once to (re)generate the template. The plotting script reads from it.
+Run once to (re)generate the template.  The chart script reads from it.
 """
 
 from pathlib import Path
@@ -21,10 +19,16 @@ ROBUST_CSV = ROOT / "evaluation_results" / "robustness_comparison" / "robustness
 OUTPUT = ROOT / "Network_demand_scenario_input.xlsx"
 
 INSTANCES = [
-    ("Instance 1", "1x7"),
-    ("Instance 2", "2x15"),
-    ("Instance 3", "2x30"),
-    ("Instance 4", "4x40"),
+    ("Network 1",  "1x3"),
+    ("Network 2",  "1x7"),
+    ("Network 3",  "1x10"),
+    ("Network 4",  "2x15"),
+    ("Network 5",  "2x20"),
+    ("Network 6",  "2x30"),
+    ("Network 7",  "2x40"),
+    ("Network 8",  "4x15"),
+    ("Network 9",  "4x30"),
+    ("Network 10", "4x40"),
 ]
 SCENARIOS = ["S1-Balanced", "S2-High", "S3-Extreme"]
 MODELS = ["(s,S) Policy", "MAPPO", "HAPPO", "GNN-HAPPO"]
@@ -39,7 +43,8 @@ ROBUST_MODEL_MAP = {
 
 
 def load_2x15_prefill() -> dict:
-    """Return {(scenario, model): (cost, fill)} from robustness_summary.csv."""
+    """Return {(scenario, model): (cost, fill)} from robustness_summary.csv.
+    Returns empty dict if file is missing — all cells left yellow."""
     if not ROBUST_CSV.exists():
         return {}
     df = pd.read_csv(ROBUST_CSV)
@@ -119,26 +124,25 @@ def build_notes_sheet(ws) -> None:
     notes = [
         "",
         "Fill in the YELLOW cells with the mean Total Cost (VND, NOT divided by 1000) and",
-        "mean Fill Rate (%) per (Instance × Scenario × Model). GREEN cells are pre-filled",
-        "from evaluation_results/robustness_comparison/robustness_summary.csv (2x15 only).",
+        "mean Fill Rate (%) per (Network x Scenario x Model).",
         "",
         "Sheets:",
-        "  • Total_Cost  — values in raw VND (the plotting script divides by 1000).",
-        "  • Fill_Rate   — values in % (0–100).",
+        "  Total_Cost  — values in raw VND (the chart script divides by 1000).",
+        "  Fill_Rate   — values in % (0-100).",
         "",
         "Scenarios:",
-        "  • S1-Balanced  — low-stress, matches training distribution",
-        "  • S2-High      — elevated demand means, mixed stress",
-        "  • S3-Extreme   — original means + high volatility",
+        "  S1-Balanced  — low-stress, matches training distribution",
+        "  S2-High      — elevated demand means, mixed stress",
+        "  S3-Extreme   — original means + high volatility",
         "",
-        "Instances:",
-        "  • Instance 1 (1x7)   — 1 DC × 7 retailers",
-        "  • Instance 2 (2x15)  — 2 DCs × 15 retailers (thesis base, pre-filled)",
-        "  • Instance 3 (2x30)  — 2 DCs × 30 retailers",
-        "  • Instance 4 (4x40)  — 4 DCs × 40 retailers",
+        "Networks (10 topologies):",
+    ]
+    for inst_label, net in INSTANCES:
+        notes.append(f"  {inst_label} ({net})")
+    notes += [
         "",
-        "Once filled, run:  python Network_demand_scenario.py",
-        "Outputs: total_cost_comparison.png and fill_rate_comparison.png",
+        "Once filled, run:  python Network_demand_vechart.py",
+        "Outputs: NetworkDemand_cost_comparison.png, NetworkDemand_fill_rate_comparison.png",
     ]
     for line in notes:
         ws.append([line])
