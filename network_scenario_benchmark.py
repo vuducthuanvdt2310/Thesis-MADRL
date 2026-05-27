@@ -156,14 +156,8 @@ def model_dir_for(model: str, net: str) -> Path | None:
     if model == "basestock":
         return None
     if model == "gnn":
-        # 2x15 was trained by train_multi_dc_gnn.py -> experiment "gnn_happo_full"
-        if net == "2x15":
-            return ROOT / "results" / "gnn_happo_full" / "run_seed_1" / "models"
         return ROOT / "results" / f"gnn_happo_{net}" / "run_seed_1" / "models"
     if model == "happo":
-        # 2x15 was trained by train_multi_dc_baseline.py -> experiment "full_training"
-        if net == "2x15":
-            return ROOT / "results" / "full_training" / "run_seed_1" / "models"
         return ROOT / "results" / f"happo_{net}" / "run_seed_1" / "models"
     if model == "mappo":
         return ROOT / "results" / f"mappo_{net}" / "run_seed_1" / "models"
