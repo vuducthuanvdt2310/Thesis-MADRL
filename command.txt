@@ -1,4 +1,4 @@
-tensorboard --logdir "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\14Apr_gnn_kaggle_vari\run_seed_1\logs"
+tensorboard --logdir "D:\thuan\thesis\Multi-Agent-Deep-Reinforcement-Learning-on-Multi-Echelon-Inventory-Management\results\gnn_happo_2x15\run_seed_1\logs"
 
 
 =======
