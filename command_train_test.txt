@@ -130,8 +130,6 @@ python test_trained_model_gnn_4x30.py --model_dir "results/gnn_happo_4x30/run_se
 python test_trained_model_happo_4x30.py --model_dir "results/happo_4x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_4x30"
 python test_trained_model_mappo_4x30.py --model_dir "results/mappo_4x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_4x30"
 python Test_baseline_basestock_4x30.py --experiment_name "basestock_4x30" --episode_length 90 --num_episodes 5
-
-
 4x15
 train
 python train_multi_dc_gnn_4x15.py --experiment_name "gnn_happo_4x15"
@@ -155,3 +153,19 @@ python test_trained_model_gnn_4x30.py --model_dir "results/gnn_happo_4x30/run_se
 python test_trained_model_happo_4x30.py --model_dir "results/happo_4x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "happo_4x30"
 python test_trained_model_mappo_4x30.py --model_dir "results/mappo_4x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "mappo_4x30"
 python Test_baseline_basestock_4x30.py --experiment_name "basestock_4x30" --episode_length 90 --num_episodes 5
+
+
+=====================================================
+BASESTOCK TEST ALL 10 NETWORKS - SINGLE RUN
+=====================================================
+
+python Test_baseline_basestock_1x3.py --experiment_name "basestock_1x3" --episode_length 90 --num_episodes 5
+python Test_baseline_basestock_1x7.py --experiment_name "basestock_1x7" --episode_length 90 --num_episodes 5
+python Test_baseline_basestock_1x10.py --experiment_name "basestock_1x10" --episode_length 90 --num_episodes 5
+python Test_baseline_basestock_2x15.py --experiment_name "basestock_2x15" --episode_length 90 --num_episodes 5
+python Test_baseline_basestock_2x20.py --experiment_name "basestock_2x20" --episode_length 90 --num_episodes 5
+python Test_baseline_basestock_2x30.py --experiment_name "basestock_2x30" --episode_length 90 --num_episodes 5
+python Test_baseline_basestock_2x40.py --experiment_name "basestock_2x40" --episode_length 90 --num_episodes 5
+python Test_baseline_basestock_4x15.py --experiment_name "basestock_4x15" --episode_length 90 --num_episodes 5
+python Test_baseline_basestock_4x30.py --experiment_name "basestock_4x30" --episode_length 90 --num_episodes 5
+python Test_baseline_basestock_4x40.py --experiment_name "basestock_4x40" --episode_length 90 --num_episodes 5
