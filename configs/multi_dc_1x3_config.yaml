@@ -7,6 +7,11 @@ environment:
   n_retailers: 3
   max_days: 365
 
+  # Starting inventory per SKU (DC bumped: single DC serves all retailers)
+  initial_inventory:
+    dc: 1500.0
+    retailer: 170.0
+
   lead_time:
     supplier_to_dc:
       distribution: "uniform"

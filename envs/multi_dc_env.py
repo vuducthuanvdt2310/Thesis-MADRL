@@ -38,6 +38,9 @@ class MultiDCInventoryEnv:
         self.lt_supplier_to_dc_min = self.config['environment']['lead_time']['supplier_to_dc']['min']
         self.lt_supplier_to_dc_max = self.config['environment']['lead_time']['supplier_to_dc']['max']
         self.lt_dc_to_retailer = 1
+        init_inv_cfg = self.config['environment'].get('initial_inventory', {})
+        self.init_inventory_dc = float(init_inv_cfg.get('dc', 500.0))
+        self.init_inventory_retailer = float(init_inv_cfg.get('retailer', 30.0))
         self.max_days = self.config['environment']['max_days']
         self.current_day = 0
         self._load_cost_parameters()
@@ -136,9 +139,9 @@ class MultiDCInventoryEnv:
         self.current_day = 0
         for agent_id in range(self.n_agents):
             if agent_id in self.dc_ids:
-                self.inventory[agent_id] = np.full(self.n_skus, 500.0, dtype=np.float32)
+                self.inventory[agent_id] = np.full(self.n_skus, self.init_inventory_dc, dtype=np.float32)
             else:
-                self.inventory[agent_id] = np.full(self.n_skus, 30.0, dtype=np.float32)
+                self.inventory[agent_id] = np.full(self.n_skus, self.init_inventory_retailer, dtype=np.float32)
             self.backlog[agent_id] = np.zeros(self.n_skus, dtype=np.float32)
             self.pipeline[agent_id] = []
         self.market_prices = self.base_market_price.copy()
