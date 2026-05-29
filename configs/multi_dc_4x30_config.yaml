@@ -7,6 +7,11 @@ environment:
   n_retailers: 30
   max_days: 365
 
+  # Starting inventory per SKU. ~84% fill at default (500/30) -> bumped to lift toward ~90%.
+  initial_inventory:
+    dc: 1000.0
+    retailer: 80.0
+
   lead_time:
     supplier_to_dc:
       distribution: "uniform"
