@@ -15,7 +15,7 @@ def parse_args():
     parser.add_argument(
         "--num_episodes",
         type=int,
-        default=50,
+        default=150,
         help="Number of training episodes per entropy value (default: 100)",
     )
     parser.add_argument(
