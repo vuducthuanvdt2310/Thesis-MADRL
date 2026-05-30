@@ -4,19 +4,19 @@ import sys
 import time
 
 
-ENTROPY_COEFS = [0.001, 0.005, 0.01, 0.05, 0.1]
+LEARNING_RATES = [0.001, 0.0005, 0.0001]
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Sensitivity Analysis for GNN-HAPPO entropy_coef"
+        description="Sensitivity Analysis for GNN-HAPPO learning rate"
     )
 
     parser.add_argument(
         "--num_episodes",
         type=int,
         default=50,
-        help="Number of training episodes per entropy value (default: 100)",
+        help="Number of training episodes per learning-rate value (default: 50)",
     )
     parser.add_argument(
         "--episode_length",
@@ -51,8 +51,8 @@ def main(args):
     num_env_steps = args.num_episodes * args.episode_length
 
     print("=" * 80)
-    print("Starting Sensitivity Analysis for entropy_coef")
-    print(f"Values to test: {ENTROPY_COEFS}")
+    print("Starting Sensitivity Analysis for lr")
+    print(f"Values to test: {LEARNING_RATES}")
     print(f"Training for target ~{args.num_episodes} episodes per configuration")
     print(f"Episode length: {args.episode_length} days")
     print(f"Seed: {args.seed}")
@@ -61,18 +61,18 @@ def main(args):
     sensitivity_results = []
     start_total_time = time.time()
 
-    for coef in ENTROPY_COEFS:
+    for lr in LEARNING_RATES:
         print(f"\n{'#' * 80}")
-        print(f"Starting Run: entropy_coef = {coef} (seed = {args.seed})")
+        print(f"Starting Run: lr = {lr} (seed = {args.seed})")
         print(f"{'#' * 80}\n")
 
-        experiment_name = f"gnn_happo_sensi_entropy_{coef}"
+        experiment_name = f"gnn_happo_sensi_lr_{lr}"
 
         cmd = [
             sys.executable,
             "train_multi_dc_gnn.py",
-            "--entropy_coef",
-            str(coef),
+            "--lr",
+            str(lr),
             "--num_env_steps",
             str(num_env_steps),
             "--episode_length",
@@ -91,7 +91,7 @@ def main(args):
         try:
             subprocess.run(cmd, check=True)
         except subprocess.CalledProcessError as exc:
-            print(f"Error during training with entropy_coef={coef}: {exc}")
+            print(f"Error during training with lr={lr}: {exc}")
             print("Continuing to the next value...")
             continue
 
@@ -100,14 +100,14 @@ def main(args):
 
         sensitivity_results.append(
             {
-                "entropy_coef": coef,
+                "lr": lr,
                 "time_taken_sec": elapsed_seconds,
                 "time_str": time_str,
                 "experiment_name": experiment_name,
             }
         )
 
-        print(f"\n--> Training for entropy_coef={coef} completed in {time_str}.")
+        print(f"\n--> Training for lr={lr} completed in {time_str}.")
 
     print("\n" + "=" * 80)
     print("SENSITIVITY ANALYSIS SUMMARY REPORT")
@@ -115,13 +115,13 @@ def main(args):
     print(f"Total target episodes per configuration: {args.num_episodes}")
     print(f"Seed used: {args.seed}")
     print(
-        f"{'Entropy Coef':<15} | {'Experiment':<30} | "
+        f"{'Learning Rate':<15} | {'Experiment':<26} | "
         f"{'Time Taken (Seconds)':<22} | {'Time Formatted':<15}"
     )
-    print("-" * 95)
+    print("-" * 91)
     for res in sensitivity_results:
         print(
-            f"{res['entropy_coef']:<15.4f} | {res['experiment_name']:<30} | "
+            f"{res['lr']:<15.6f} | {res['experiment_name']:<26} | "
             f"{res['time_taken_sec']:<22.2f} | {res['time_str']:<15}"
         )
     print("=" * 80)
