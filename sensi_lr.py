@@ -4,7 +4,7 @@ import sys
 import time
 
 
-LEARNING_RATES = [0.001, 0.0005, 0.0001]
+LEARNING_RATES = [0.001, 0.005, 0.01, 0.05, 0.1]
 
 
 def parse_args():
