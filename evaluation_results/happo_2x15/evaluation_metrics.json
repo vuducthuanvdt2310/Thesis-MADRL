@@ -1,9 +1,9 @@
 {
   "metadata": {
-    "model_dir": "results\\01Apr_base\\run_seed_1\\models",
+    "model_dir": "results\\happo_2x15\\run_seed_1\\models",
     "num_episodes": 5,
     "episode_length": 90,
-    "evaluation_date": "2026-05-26 23:22:25"
+    "evaluation_date": "2026-05-30 11:47:32"
   },
   "statistics": {
     "num_episodes": 5,

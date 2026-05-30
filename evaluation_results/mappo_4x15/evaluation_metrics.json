@@ -3,7 +3,7 @@
     "model_dir": "results/mappo_4x15/run_seed_1/models",
     "num_episodes": 5,
     "episode_length": 90,
-    "evaluation_date": "2026-05-26 18:52:43"
+    "evaluation_date": "2026-05-30 10:50:48"
   },
   "statistics": {
     "num_episodes": 5,

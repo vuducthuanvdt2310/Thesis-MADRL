@@ -3,7 +3,7 @@
     "model_dir": "results/happo_4x15/run_seed_1/models",
     "num_episodes": 5,
     "episode_length": 90,
-    "evaluation_date": "2026-05-26 18:51:12"
+    "evaluation_date": "2026-05-30 10:49:58"
   },
   "statistics": {
     "num_episodes": 5,

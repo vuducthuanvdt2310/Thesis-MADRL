@@ -8,7 +8,7 @@
     "gnn_hidden_dim": 128,
     "gnn_num_layers": 2,
     "single_agent_obs_dim": 28,
-    "evaluation_date": "2026-05-25 23:20:08"
+    "evaluation_date": "2026-05-30 10:45:07"
   },
   "statistics": {
     "num_episodes": 5,

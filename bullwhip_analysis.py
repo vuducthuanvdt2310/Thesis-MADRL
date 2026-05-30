@@ -124,25 +124,19 @@ def compute_agent_bwe(df: pd.DataFrame, agent_id: int) -> dict:
 
 
 def compute_dc_bwe(df: pd.DataFrame, dc_id: int, retailer_ids: list[int]) -> dict:
-    """DC-level BWE: aggregate retailer demand → DC vs DC orders to supplier."""
+    """DC-level BWE: retailer orders arriving at DC vs DC orders to supplier."""
     dc_df = df[df["agent_id"] == dc_id].sort_values("step")
-    steps = sorted(df["step"].unique())
-
     bwe_vars, bwe_cvs, oars = [], [], []
     for sku in range(N_SKUS):
-        # Aggregate demand arriving at this DC = sum of retailer demands
-        agg_demand = np.zeros(len(steps))
-        for r_id in retailer_ids:
-            r_df = df[df["agent_id"] == r_id].sort_values("step")
-            agg_demand += r_df[f"demand_{sku}"].to_numpy(dtype=float)
-
+        # DC demand_k is already logged as aggregate retailer orders to this DC.
+        dc_demand = dc_df[f"demand_{sku}"].to_numpy(dtype=float)
         dc_orders = dc_df[f"order_{sku}"].to_numpy(dtype=float)
 
-        var_d = float(np.var(agg_demand, ddof=1)) if len(agg_demand) > 1 else 0.0
+        var_d = float(np.var(dc_demand, ddof=1)) if len(dc_demand) > 1 else 0.0
         var_o = float(np.var(dc_orders, ddof=1)) if len(dc_orders) > 1 else 0.0
-        std_d = float(np.std(agg_demand, ddof=1)) if len(agg_demand) > 1 else 0.0
+        std_d = float(np.std(dc_demand, ddof=1)) if len(dc_demand) > 1 else 0.0
         std_o = float(np.std(dc_orders, ddof=1)) if len(dc_orders) > 1 else 0.0
-        mean_d = float(np.mean(agg_demand))
+        mean_d = float(np.mean(dc_demand))
         mean_o = float(np.mean(dc_orders))
 
         bwe_vars.append(safe_ratio(var_o, var_d))
@@ -475,9 +469,9 @@ def build_methodology(ws: Worksheet) -> None:
             "and order_k time series. Average across SKUs, then average across all "
             "retailers in the network."),
         ("DC-level BWE",
-            "Aggregate demand = sum of demand_k across all retailers assigned to the DC. "
-            "DC orders = the DC's own order_k to supplier. BWE = Var(DC_orders) / "
-            "Var(Agg_demand). Average across SKUs, then across DCs."),
+            "DC demand_k in step_trajectory_ep1.xlsx is the aggregate retailer orders "
+            "arriving at that DC. DC orders = the DC's own order_k to supplier. "
+            "BWE = Var(DC_orders) / Var(DC_demand). Average across SKUs, then across DCs."),
         ("", ""),
         ("BWE Reduction %",
             "(Baseline_BWE - GNN_BWE) / Baseline_BWE x 100. "

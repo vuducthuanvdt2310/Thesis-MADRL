@@ -3,7 +3,7 @@
     "model_dir": "results/happo_2x20/run_seed_1/models",
     "num_episodes": 5,
     "episode_length": 90,
-    "evaluation_date": "2026-05-25 23:21:44"
+    "evaluation_date": "2026-05-30 10:45:37"
   },
   "statistics": {
     "num_episodes": 5,
