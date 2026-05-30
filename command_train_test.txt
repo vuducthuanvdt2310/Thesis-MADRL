@@ -57,8 +57,8 @@ python Test_baseline_basestock_1x7.py --experiment_name "basestock_1x7"  --episo
 
 python test_trained_model_gnn_2x15.py --model_dir "results/gnn_happo_2x15/run_seed_1/models" --episode_length 90  --num_episodes 5 --experiment_name "gnn_2x15"
 python test_trained_model_happo_2x15.py --model_dir "results\happo_2x15\run_seed_1\models" --episode_length 90 --num_episodes 5  --experiment_name "happo_2x15"
-python test_trained_model_mappo_2x15.py --model_dir "results\mappo_2x15\run_seed_1\models" --episode_length 95 --num_episodes 5  --experiment_name "mappo_2x15"
-python Test_baseline_basestock_2x15.py --experiment_name "basestock_2x15"  --episode_length 120 --num_episodes 5
+python test_trained_model_mappo_2x15.py --model_dir "results\mappo_2x15\run_seed_1\models" --episode_length 93 --num_episodes 5  --experiment_name "mappo_2x15"
+python Test_baseline_basestock_2x15.py --experiment_name "basestock_2x15"  --episode_length 111 --num_episodes 5
 
 
 python test_trained_model_gnn_2x30.py --model_dir "results/gnn_happo_2x30/run_seed_1/models" --episode_length 90 --num_episodes 5 --experiment_name "gnn_2x30"
