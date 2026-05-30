@@ -38,4 +38,4 @@ tensorboard --logdir results_sensitive
 tensorboard --logdir results\lr_sensi
 tensorboard --logdir heuristiconoff
 tensorboard --logdir present
->>>>>>> ba07f2faf9c67537da43464e1ae413e97180387a
+
