@@ -165,6 +165,8 @@ def model_dir_for(model: str, net: str) -> Path | None:
 
 
 def config_path_for(net: str) -> str:
+    if net == "2x15":
+        return "configs/multi_dc_config.yaml"
     return f"configs/multi_dc_{net}_config.yaml"
 
 
